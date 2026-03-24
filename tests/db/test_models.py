@@ -1,17 +1,19 @@
 import re
 import uuid
+from typing import Any
 
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import AgentRecord, MemoryBlockRecord, MessageRecord
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
-async def assert_round_trips(session, record, expected_fields: dict):
+async def assert_round_trips(session: AsyncSession, record: Any, expected_fields: dict):
     """Add a record, flush, refresh from DB, and assert each expected field matches."""
     session.add(record)
     await session.flush()
@@ -21,7 +23,7 @@ async def assert_round_trips(session, record, expected_fields: dict):
         assert actual == expected, f"Field '{field}': expected {expected!r}, got {actual!r}"
 
 
-async def assert_timestamps_auto_populated(session, record):
+async def assert_timestamps_auto_populated(session: AsyncSession, record: Any):
     """Verify created_at and updated_at are set automatically on creation and within 5 minutes of now (rough sanity check on accuracy)."""
     await session.refresh(record)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -39,7 +41,7 @@ async def assert_timestamps_auto_populated(session, record):
     lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="uuid-test", description="", content="", char_limit=100, position=0),
     lambda agent_id: MessageRecord(agent_id=agent_id, type="ModelRequest", content="{}", input_tokens=None, timestamp=datetime.now(timezone.utc)),
 ])
-async def test_id_auto_generated_as_uuid_string(session, sample_agent_record, make_record):
+async def test_id_auto_generated_as_uuid_string(session: AsyncSession, sample_agent_record: AgentRecord, make_record: Any):
     """All models auto-generate a UUID string id on insert — not required at construction."""
     record = make_record(sample_agent_record.id)
     assert record.id is None, "id should not be set before flush"
@@ -53,7 +55,7 @@ async def test_id_auto_generated_as_uuid_string(session, sample_agent_record, ma
 
 # --- AgentRecord ---
 
-async def test_agent_record_stores_all_fields(session):
+async def test_agent_record_stores_all_fields(session: AsyncSession):
     # Use naive datetimes: SQLAlchemy DateTime stores TEXT in SQLite and may strip
     # timezone info depending on the timezone= flag, making tz-aware comparisons brittle.
     fields = {
@@ -67,7 +69,7 @@ async def test_agent_record_stores_all_fields(session):
     await assert_round_trips(session, AgentRecord(**fields), fields)
 
 
-async def test_agent_config_structure(session, sample_agent_record):
+async def test_agent_config_structure(session: AsyncSession, sample_agent_record: AgentRecord):
     """AgentConfig JSON contains required keys with correct types."""
     config = sample_agent_record.agent_config
     assert isinstance(config["model_name"], str)
@@ -76,21 +78,21 @@ async def test_agent_config_structure(session, sample_agent_record):
     assert isinstance(config["soft_limit"], int)
 
 
-async def test_agent_record_null_defaults(session, sample_agent_record):
+async def test_agent_record_null_defaults(session: AsyncSession, sample_agent_record: AgentRecord):
     """context_window_start and compiled_at are both NULL on a freshly created agent."""
     await session.refresh(sample_agent_record)
     assert sample_agent_record.context_window_start is None
     assert sample_agent_record.compiled_at is None
 
 
-async def test_agent_record_timestamps_auto_populated(session, sample_agent_record):
+async def test_agent_record_timestamps_auto_populated(session: AsyncSession, sample_agent_record: AgentRecord):
     """created_at and updated_at are automatically set when an agent is created."""
     await assert_timestamps_auto_populated(session, sample_agent_record)
 
 
 # --- MemoryBlockRecord ---
 
-async def test_memory_block_stores_all_fields(session, sample_agent_record):
+async def test_memory_block_stores_all_fields(session: AsyncSession, sample_agent_record: AgentRecord):
     await assert_round_trips(
         session,
         MemoryBlockRecord(
@@ -112,7 +114,7 @@ async def test_memory_block_stores_all_fields(session, sample_agent_record):
     )
 
 
-async def test_memory_block_timestamps_auto_populated(session, sample_agent_record):
+async def test_memory_block_timestamps_auto_populated(session: AsyncSession, sample_agent_record: AgentRecord):
     """created_at and updated_at are automatically set when a memory block is created."""
     block = MemoryBlockRecord(
         agent_id=sample_agent_record.id, label="auto-ts", description="", content="x", char_limit=2000, position=0,
@@ -122,7 +124,7 @@ async def test_memory_block_timestamps_auto_populated(session, sample_agent_reco
     await assert_timestamps_auto_populated(session, block)
 
 
-async def test_memory_block_fk_enforced(session):
+async def test_memory_block_fk_enforced(session: AsyncSession):
     """Cannot create a MemoryBlockRecord referencing a nonexistent agent."""
     block = MemoryBlockRecord(
         agent_id=str(uuid.uuid4()),
@@ -137,7 +139,7 @@ async def test_memory_block_fk_enforced(session):
         await session.flush()
 
 
-async def test_memory_block_unique_label_per_agent(session, sample_agent_record):
+async def test_memory_block_unique_label_per_agent(session: AsyncSession, sample_agent_record: AgentRecord):
     """Two blocks with the same label under the same agent violate the unique constraint."""
     session.add(MemoryBlockRecord(
         agent_id=sample_agent_record.id, label="persona", description="", content="first", char_limit=2000, position=0,
@@ -151,7 +153,7 @@ async def test_memory_block_unique_label_per_agent(session, sample_agent_record)
 
 # --- MessageRecord ---
 
-async def test_message_record_stores_all_fields(session, sample_agent_record):
+async def test_message_record_stores_all_fields(session: AsyncSession, sample_agent_record: AgentRecord):
     content = '{"parts": [{"type": "text", "content": "Hello"}]}'
     ts = datetime(2026, 1, 1, 12, 0, 0)  # naive — avoids timezone round-trip brittleness
     await assert_round_trips(
@@ -173,7 +175,7 @@ async def test_message_record_stores_all_fields(session, sample_agent_record):
     )
 
 
-async def test_message_fk_enforced(session):
+async def test_message_fk_enforced(session: AsyncSession):
     """Cannot create a MessageRecord referencing a nonexistent agent."""
     message = MessageRecord(
         agent_id=str(uuid.uuid4()),
@@ -187,7 +189,7 @@ async def test_message_fk_enforced(session):
         await session.flush()
 
 
-async def test_message_input_tokens_nullable(session, sample_agent_record):
+async def test_message_input_tokens_nullable(session: AsyncSession, sample_agent_record: AgentRecord):
     """input_tokens may be NULL — only set on the final response row that closes a run."""
     await assert_round_trips(
         session,
@@ -204,7 +206,7 @@ async def test_message_input_tokens_nullable(session, sample_agent_record):
 
 # --- Cascade delete ---
 
-async def test_cascade_delete_removes_blocks_and_messages(session, sample_agent_record):
+async def test_cascade_delete_removes_blocks_and_messages(session: AsyncSession, sample_agent_record: AgentRecord):
     """Deleting an agent cascades to all associated blocks and messages."""
     block = MemoryBlockRecord(agent_id=sample_agent_record.id, label="persona", description="", content="x", char_limit=2000, position=0)
     message = MessageRecord(agent_id=sample_agent_record.id, type="ModelRequest", content="{}", input_tokens=None, timestamp=datetime.now(timezone.utc))
@@ -223,7 +225,7 @@ async def test_cascade_delete_removes_blocks_and_messages(session, sample_agent_
 
 # --- JSON round-trip ---
 
-async def test_json_fields_round_trip(session, sample_agent_record):
+async def test_json_fields_round_trip(session: AsyncSession, sample_agent_record: AgentRecord):
     """Nested JSON structures in AgentConfig and message content survive a write-read cycle."""
     complex_config = {
         "model_name": "claude-opus-4",
