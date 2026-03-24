@@ -98,25 +98,15 @@ async def test_agent_record_timestamps_auto_populated(session: AsyncSession, sam
 # --- MemoryBlockRecord ---
 
 async def test_memory_block_stores_all_fields(session: AsyncSession, sample_agent_record: AgentRecord):
-    await assert_round_trips(
-        session,
-        MemoryBlockRecord(
-            agent_id=sample_agent_record.id,
-            label="persona",
-            description="The agent's persona.",
-            content="I am a helpful assistant.",
-            char_limit=2000,
-            position=0,
-        ),
-        {
-            "agent_id": sample_agent_record.id,
-            "label": "persona",
-            "description": "The agent's persona.",
-            "content": "I am a helpful assistant.",
-            "char_limit": 2000,
-            "position": 0,
-        },
-    )
+    fields = {
+        "agent_id": sample_agent_record.id,
+        "label": "persona",
+        "description": "The agent's persona.",
+        "content": "I am a helpful assistant.",
+        "char_limit": 2000,
+        "position": 0,
+    }
+    await assert_round_trips(session, MemoryBlockRecord(**fields), fields)
 
 
 async def test_memory_block_timestamps_auto_populated(session: AsyncSession, sample_agent_record: AgentRecord):
@@ -159,25 +149,14 @@ async def test_memory_block_unique_label_per_agent(session: AsyncSession, sample
 # --- MessageRecord ---
 
 async def test_message_record_stores_all_fields(session: AsyncSession, sample_agent_record: AgentRecord):
-    content = '{"parts": [{"type": "text", "content": "Hello"}]}'
-    ts = datetime(2026, 1, 1, 12, 0, 0)  # naive — avoids timezone round-trip brittleness
-    await assert_round_trips(
-        session,
-        MessageRecord(
-            agent_id=sample_agent_record.id,
-            type="ModelRequest",
-            content=content,
-            input_tokens=150,
-            timestamp=ts,
-        ),
-        {
-            "agent_id": sample_agent_record.id,
-            "type": "ModelRequest",
-            "content": content,
-            "input_tokens": 150,
-            "timestamp": ts,
-        },
-    )
+    fields = {
+        "agent_id": sample_agent_record.id,
+        "type": "ModelRequest",
+        "content": '{\"parts\": [{\"type\": \"text\", \"content\": \"Hello\"}]}',
+        "input_tokens": 150,
+        "timestamp": datetime(2026, 1, 1, 12, 0, 0),  # naive — avoids timezone round-trip brittleness
+    }
+    await assert_round_trips(session, MessageRecord(**fields), fields)
 
 
 async def test_message_fk_enforced(session: AsyncSession):
