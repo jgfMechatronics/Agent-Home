@@ -1,7 +1,7 @@
 import re
 import uuid
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -22,10 +22,14 @@ async def assert_round_trips(session, record, expected_fields: dict):
 
 
 async def assert_timestamps_auto_populated(session, record):
-    """Verify created_at and updated_at are set automatically on creation."""
+    """Verify created_at and updated_at are set automatically on creation and within 5 minutes of now (rough sanity check on accuracy)."""
     await session.refresh(record)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    five_minutes = timedelta(minutes=5)
     assert record.created_at is not None, "created_at should be auto-populated on insert"
-    assert record.updated_at is not None, "updated_at should be auto-populated on insert"
+    assert record.updated_at is not None, "updated_at should be auto-populated on update"
+    assert abs(now - record.created_at) < five_minutes, f"created_at {record.created_at!r} is not within 5 minutes of now"
+    assert abs(now - record.updated_at) < five_minutes, f"updated_at {record.updated_at!r} is not within 5 minutes of now"
 
 
 # --- UUID auto-generation ---
@@ -50,30 +54,17 @@ async def test_id_auto_generated_as_uuid_string(session, sample_agent_record, ma
 # --- AgentRecord ---
 
 async def test_agent_record_stores_all_fields(session):
-    agent_config = {"model_name": "claude-sonnet-4-20250514", "tool_names": ["tool_a"], "soft_limit": 8000}
     # Use naive datetimes: SQLAlchemy DateTime stores TEXT in SQLite and may strip
     # timezone info depending on the timezone= flag, making tz-aware comparisons brittle.
-    compiled_at = datetime(2026, 1, 1, 12, 0, 0)
-    context_window_start = datetime(2026, 1, 1, 13, 0, 0)
-    await assert_round_trips(
-        session,
-        AgentRecord(
-            name="my-agent",
-            agent_config=agent_config,
-            system_instructions="Be helpful.",
-            compiled_system_prompt="<compiled>Be helpful.</compiled>",
-            compiled_at=compiled_at,
-            context_window_start=context_window_start,
-        ),
-        {
-            "name": "my-agent",
-            "agent_config": agent_config,
-            "system_instructions": "Be helpful.",
-            "compiled_system_prompt": "<compiled>Be helpful.</compiled>",
-            "compiled_at": compiled_at,
-            "context_window_start": context_window_start,
-        },
-    )
+    fields = {
+        "name": "my-agent",
+        "agent_config": {"model_name": "claude-sonnet-4-20250514", "tool_names": ["tool_a"], "soft_limit": 8000},
+        "system_instructions": "Be helpful.",
+        "compiled_system_prompt": "<compiled>Be helpful.</compiled>",
+        "sys_prompt_compiled_at": datetime(2026, 1, 1, 12, 0, 0),
+        "context_window_start": datetime(2026, 1, 1, 13, 0, 0),
+    }
+    await assert_round_trips(session, AgentRecord(**fields), fields)
 
 
 async def test_agent_config_structure(session, sample_agent_record):
