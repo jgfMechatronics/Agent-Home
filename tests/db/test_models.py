@@ -76,7 +76,8 @@ async def test_agent_config_structure(session: AsyncSession, sample_agent_record
     assert isinstance(config["model_name"], str)
     assert isinstance(config["tool_names"], list)
     assert all(isinstance(t, str) for t in config["tool_names"])
-    assert isinstance(config["soft_limit"], int)
+    assert isinstance(config["soft_compaction_limit"], int)
+    assert isinstance(config["is_deletable"], bool)
 
 
 async def test_agent_record_null_defaults(session: AsyncSession, sample_agent_record: AgentRecord):
@@ -228,12 +229,7 @@ async def test_cascade_delete_removes_blocks_and_messages(session: AsyncSession,
 
 async def test_json_fields_round_trip(session: AsyncSession, sample_agent_record: AgentRecord):
     """Nested JSON structures in AgentConfig and message content survive a write-read cycle."""
-    complex_config = {
-        "model_name": "claude-opus-4",
-        "tool_names": ["a", "b", "c"],
-        "soft_limit": 99999,
-        "extra_flag": True,
-    }
+    complex_config = {**SAMPLE_AGENT_CONFIG, "extra_flag": True}
     agent = AgentRecord(name="json-test", agent_config=complex_config, system_instructions="")
     session.add(agent)
     await session.flush()

@@ -8,7 +8,8 @@ from db.models import AgentRecord, Base
 SAMPLE_AGENT_CONFIG = {
     "model_name": "claude-sonnet-4-20250514",
     "tool_names": ["memory_replace", "memory_insert"],
-    "soft_limit": 10000,
+    "soft_compaction_limit": 10000,
+    "is_deletable": True,
 }
 
 
