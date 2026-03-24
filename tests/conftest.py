@@ -21,13 +21,14 @@ async def session():
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    async with AsyncSession(engine) as async_session:
-        yield async_session
-
-    await engine.dispose()
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        
+        async with AsyncSession(engine) as async_session:
+            yield async_session
+    finally:
+        await engine.dispose()
 
 
 @pytest_asyncio.fixture
