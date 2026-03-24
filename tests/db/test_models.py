@@ -45,7 +45,7 @@ async def assert_timestamps_auto_populated(session: AsyncSession, record: Any):
 async def test_id_auto_generated_as_uuid_string(session: AsyncSession, sample_agent_record: AgentRecord, make_record: Any):
     """All models auto-generate a UUID string id on insert — not required at construction."""
     record = make_record(sample_agent_record.id)
-    assert record.id is None, "id should not be set before flush"
+    assert record.id is None, "id should not be set before add and flush"
     session.add(record)
     await session.flush()
     await session.refresh(record)
@@ -71,7 +71,10 @@ async def test_agent_record_stores_all_fields(session: AsyncSession):
 
 
 async def test_agent_config_structure(session: AsyncSession, sample_agent_record: AgentRecord):
-    """AgentConfig JSON contains required keys with correct types."""
+    """AgentConfig JSON contains required keys with correct types. Validation responsibility lies with AgentConfig its self
+    So this test is really just a sanity check that we are validating storage and retrieval of an AgentConfig like obj
+    TODO: Delete once AgentConfig implemented and usage included in sample_agent_record"""
+
     config = sample_agent_record.agent_config
     assert isinstance(config["model_name"], str)
     assert isinstance(config["tool_names"], list)
