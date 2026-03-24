@@ -35,9 +35,9 @@ async def assert_timestamps_auto_populated(session, record):
     lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="uuid-test", description="", content="", char_limit=100, position=0),
     lambda agent_id: MessageRecord(agent_id=agent_id, type="ModelRequest", content="{}", input_tokens=None, timestamp=datetime.now(timezone.utc)),
 ])
-async def test_id_auto_generated_as_uuid_string(session, sample_agent, make_record):
+async def test_id_auto_generated_as_uuid_string(session, sample_agent_record, make_record):
     """All models auto-generate a UUID string id on insert — not required at construction."""
-    record = make_record(sample_agent.id)
+    record = make_record(sample_agent_record.id)
     assert record.id is None, "id should not be set before flush"
     session.add(record)
     await session.flush()
@@ -76,34 +76,34 @@ async def test_agent_record_stores_all_fields(session):
     )
 
 
-async def test_agent_config_structure(session, sample_agent):
+async def test_agent_config_structure(session, sample_agent_record):
     """AgentConfig JSON contains required keys with correct types."""
-    config = sample_agent.agent_config
+    config = sample_agent_record.agent_config
     assert isinstance(config["model_name"], str)
     assert isinstance(config["tool_names"], list)
     assert all(isinstance(t, str) for t in config["tool_names"])
     assert isinstance(config["soft_limit"], int)
 
 
-async def test_agent_record_null_defaults(session, sample_agent):
+async def test_agent_record_null_defaults(session, sample_agent_record):
     """context_window_start and compiled_at are both NULL on a freshly created agent."""
-    await session.refresh(sample_agent)
-    assert sample_agent.context_window_start is None
-    assert sample_agent.compiled_at is None
+    await session.refresh(sample_agent_record)
+    assert sample_agent_record.context_window_start is None
+    assert sample_agent_record.compiled_at is None
 
 
-async def test_agent_record_timestamps_auto_populated(session, sample_agent):
+async def test_agent_record_timestamps_auto_populated(session, sample_agent_record):
     """created_at and updated_at are automatically set when an agent is created."""
-    await assert_timestamps_auto_populated(session, sample_agent)
+    await assert_timestamps_auto_populated(session, sample_agent_record)
 
 
 # --- MemoryBlockRecord ---
 
-async def test_memory_block_stores_all_fields(session, sample_agent):
+async def test_memory_block_stores_all_fields(session, sample_agent_record):
     await assert_round_trips(
         session,
         MemoryBlockRecord(
-            agent_id=sample_agent.id,
+            agent_id=sample_agent_record.id,
             label="persona",
             description="The agent's persona.",
             content="I am a helpful assistant.",
@@ -111,7 +111,7 @@ async def test_memory_block_stores_all_fields(session, sample_agent):
             position=0,
         ),
         {
-            "agent_id": sample_agent.id,
+            "agent_id": sample_agent_record.id,
             "label": "persona",
             "description": "The agent's persona.",
             "content": "I am a helpful assistant.",
@@ -121,10 +121,10 @@ async def test_memory_block_stores_all_fields(session, sample_agent):
     )
 
 
-async def test_memory_block_timestamps_auto_populated(session, sample_agent):
+async def test_memory_block_timestamps_auto_populated(session, sample_agent_record):
     """created_at and updated_at are automatically set when a memory block is created."""
     block = MemoryBlockRecord(
-        agent_id=sample_agent.id, label="auto-ts", description="", content="x", char_limit=2000, position=0,
+        agent_id=sample_agent_record.id, label="auto-ts", description="", content="x", char_limit=2000, position=0,
     )
     session.add(block)
     await session.flush()
@@ -146,13 +146,13 @@ async def test_memory_block_fk_enforced(session):
         await session.flush()
 
 
-async def test_memory_block_unique_label_per_agent(session, sample_agent):
+async def test_memory_block_unique_label_per_agent(session, sample_agent_record):
     """Two blocks with the same label under the same agent violate the unique constraint."""
     session.add(MemoryBlockRecord(
-        agent_id=sample_agent.id, label="persona", description="", content="first", char_limit=2000, position=0,
+        agent_id=sample_agent_record.id, label="persona", description="", content="first", char_limit=2000, position=0,
     ))
     session.add(MemoryBlockRecord(
-        agent_id=sample_agent.id, label="persona", description="", content="second", char_limit=2000, position=1,
+        agent_id=sample_agent_record.id, label="persona", description="", content="second", char_limit=2000, position=1,
     ))
     with pytest.raises(IntegrityError):
         await session.flush()
@@ -160,20 +160,20 @@ async def test_memory_block_unique_label_per_agent(session, sample_agent):
 
 # --- MessageRecord ---
 
-async def test_message_record_stores_all_fields(session, sample_agent):
+async def test_message_record_stores_all_fields(session, sample_agent_record):
     content = '{"parts": [{"type": "text", "content": "Hello"}]}'
     ts = datetime(2026, 1, 1, 12, 0, 0)  # naive — avoids timezone round-trip brittleness
     await assert_round_trips(
         session,
         MessageRecord(
-            agent_id=sample_agent.id,
+            agent_id=sample_agent_record.id,
             type="ModelRequest",
             content=content,
             input_tokens=150,
             timestamp=ts,
         ),
         {
-            "agent_id": sample_agent.id,
+            "agent_id": sample_agent_record.id,
             "type": "ModelRequest",
             "content": content,
             "input_tokens": 150,
@@ -196,12 +196,12 @@ async def test_message_fk_enforced(session):
         await session.flush()
 
 
-async def test_message_input_tokens_nullable(session, sample_agent):
+async def test_message_input_tokens_nullable(session, sample_agent_record):
     """input_tokens may be NULL — only set on the final response row that closes a run."""
     await assert_round_trips(
         session,
         MessageRecord(
-            agent_id=sample_agent.id,
+            agent_id=sample_agent_record.id,
             type="ModelResponse",
             content="{}",
             input_tokens=None,
@@ -213,17 +213,17 @@ async def test_message_input_tokens_nullable(session, sample_agent):
 
 # --- Cascade delete ---
 
-async def test_cascade_delete_removes_blocks_and_messages(session, sample_agent):
+async def test_cascade_delete_removes_blocks_and_messages(session, sample_agent_record):
     """Deleting an agent cascades to all associated blocks and messages."""
-    block = MemoryBlockRecord(agent_id=sample_agent.id, label="persona", description="", content="x", char_limit=2000, position=0)
-    message = MessageRecord(agent_id=sample_agent.id, type="ModelRequest", content="{}", input_tokens=None, timestamp=datetime.now(timezone.utc))
+    block = MemoryBlockRecord(agent_id=sample_agent_record.id, label="persona", description="", content="x", char_limit=2000, position=0)
+    message = MessageRecord(agent_id=sample_agent_record.id, type="ModelRequest", content="{}", input_tokens=None, timestamp=datetime.now(timezone.utc))
     session.add(block)
     session.add(message)
     await session.flush()
 
     block_id, message_id = block.id, message.id
 
-    await session.delete(sample_agent)
+    await session.delete(sample_agent_record)
     await session.flush()
 
     assert await session.get(MemoryBlockRecord, block_id) is None
@@ -232,7 +232,7 @@ async def test_cascade_delete_removes_blocks_and_messages(session, sample_agent)
 
 # --- JSON round-trip ---
 
-async def test_json_fields_round_trip(session, sample_agent):
+async def test_json_fields_round_trip(session, sample_agent_record):
     """Nested JSON structures in AgentConfig and message content survive a write-read cycle."""
     complex_config = {
         "model_name": "claude-opus-4",

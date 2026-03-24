@@ -35,7 +35,7 @@ async def session(engine):
 
 
 @pytest_asyncio.fixture
-async def sample_agent(session):
+async def sample_agent_record(session):
     """A persisted AgentRecord for use in tests that require an existing agent."""
     agent = AgentRecord(
         name="test-agent",
