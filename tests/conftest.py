@@ -5,6 +5,12 @@ from sqlalchemy.pool import StaticPool
 
 from db.models import AgentRecord, Base
 
+SAMPLE_AGENT_CONFIG = {
+    "model_name": "claude-sonnet-4-20250514",
+    "tool_names": ["memory_replace", "memory_insert"],
+    "soft_limit": 10000,
+}
+
 
 @pytest_asyncio.fixture
 async def session():
@@ -36,11 +42,7 @@ async def sample_agent_record(session: AsyncSession) -> AgentRecord:
     """A persisted AgentRecord for use in tests that require an existing agent."""
     agent = AgentRecord(
         name="test-agent",
-        agent_config={
-            "model_name": "claude-sonnet-4-20250514",
-            "tool_names": ["memory_replace", "memory_insert"],
-            "soft_limit": 10000,
-        },
+        agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="You are a test agent.",
     )
     session.add(agent)

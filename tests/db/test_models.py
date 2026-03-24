@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, MessageRecord
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -37,7 +38,7 @@ async def assert_timestamps_auto_populated(session: AsyncSession, record: Any):
 # --- UUID auto-generation ---
 
 @pytest.mark.parametrize("make_record", [
-    lambda agent_id: AgentRecord(name="uuid-test", agent_config={"model_name": "m", "tool_names": [], "soft_limit": 1}, system_instructions=""),
+    lambda agent_id: AgentRecord(name="uuid-test", agent_config=SAMPLE_AGENT_CONFIG, system_instructions=""),
     lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="uuid-test", description="", content="", char_limit=100, position=0),
     lambda agent_id: MessageRecord(agent_id=agent_id, type="ModelRequest", content="{}", input_tokens=None, timestamp=datetime.now(timezone.utc)),
 ])
@@ -60,7 +61,7 @@ async def test_agent_record_stores_all_fields(session: AsyncSession):
     # timezone info depending on the timezone= flag, making tz-aware comparisons brittle.
     fields = {
         "name": "my-agent",
-        "agent_config": {"model_name": "claude-sonnet-4-20250514", "tool_names": ["tool_a"], "soft_limit": 8000},
+        "agent_config": SAMPLE_AGENT_CONFIG,
         "system_instructions": "Be helpful.",
         "compiled_system_prompt": "<compiled>Be helpful.</compiled>",
         "sys_prompt_compiled_at": datetime(2026, 1, 1, 12, 0, 0),
