@@ -1,6 +1,6 @@
 import pytest_asyncio
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncEngine
 
 from db.models import AgentRecord, Base
 
@@ -24,7 +24,7 @@ async def engine():
 
 
 @pytest_asyncio.fixture
-async def session(engine):
+async def session(engine : AsyncEngine):
     """Function-scoped session. Each test runs in a savepoint that rolls back after."""
     async with engine.connect() as conn:
         async with conn.begin() as trans:
@@ -35,7 +35,7 @@ async def session(engine):
 
 
 @pytest_asyncio.fixture
-async def sample_agent_record(session):
+async def sample_agent_record(session : AsyncSession):
     """A persisted AgentRecord for use in tests that require an existing agent."""
     agent = AgentRecord(
         name="test-agent",
