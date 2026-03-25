@@ -33,6 +33,12 @@ def memory_block_record(sample_agent_record: AgentRecord) -> MemoryBlockRecord:
     return MemoryBlockRecord(agent_id=sample_agent_record.id, label="persona", content="x", **PARTIAL_MEMORY_BLOCK_FIELDS)
 
 
+@pytest.fixture
+def message_record(sample_agent_record: AgentRecord) -> MessageRecord:
+    """An unpersisted MessageRecord for use in tests that need an existing message."""
+    return MessageRecord(agent_id=sample_agent_record.id, timestamp=datetime(2026, 1, 1, 12, 0, 0), **PARTIAL_MESSAGE_FIELDS)
+
+
 async def assert_round_trips(session: AsyncSession, record: Any, expected_fields: dict):
     """Add a record, flush, refresh from DB, and assert each expected field matches."""
     session.add(record)
@@ -135,14 +141,6 @@ async def test_memory_block_timestamps_auto_populated(session: AsyncSession, mem
     await assert_timestamps_auto_populated(session, memory_block_record)
 
 
-async def test_memory_block_fk_enforced(session: AsyncSession, memory_block_record: MemoryBlockRecord):
-    """Cannot create a MemoryBlockRecord referencing a nonexistent agent."""
-    memory_block_record.agent_id = str(uuid.uuid4())
-    session.add(memory_block_record)
-    with pytest.raises(IntegrityError):
-        await session.flush()
-
-
 async def test_memory_block_unique_label_per_agent(session: AsyncSession, memory_block_record: MemoryBlockRecord):
     """Two blocks with the same label under the same agent violate the unique constraint."""
     session.add(memory_block_record)
@@ -151,47 +149,46 @@ async def test_memory_block_unique_label_per_agent(session: AsyncSession, memory
         await session.flush()
 
 
-# --- MessageRecord ---
+# --- FK enforcement ---
 
-async def test_message_record_stores_all_fields(session: AsyncSession, sample_agent_record: AgentRecord):
-    fields = {
-        "agent_id": sample_agent_record.id,
-        "type": "ModelRequest",
-        "content": '{\"parts\": [{\"type\": \"text\", \"content\": \"Hello\"}]}',
-        "input_tokens": 150,
-        "timestamp": datetime(2026, 1, 1, 12, 0, 0),  # naive — avoids timezone round-trip brittleness
-    }
-    await assert_round_trips(session, MessageRecord(**fields), fields)
-
-
-async def test_message_fk_enforced(session: AsyncSession):
-    """Cannot create a MessageRecord referencing a nonexistent agent."""
-    # TODO: NO agent in the record at all!
-    message = MessageRecord(agent_id=str(uuid.uuid4()), timestamp=datetime.now(timezone.utc), **PARTIAL_MESSAGE_FIELDS)
-    session.add(message)
+@pytest.mark.parametrize("fixture_name", ["memory_block_record", "message_record"])
+async def test_fk_enforced(session: AsyncSession, request: pytest.FixtureRequest, fixture_name: str):
+    """MemoryBlockRecord and MessageRecord cannot reference a nonexistent agent."""
+    record = request.getfixturevalue(fixture_name)
+    record.agent_id = str(uuid.uuid4())
+    session.add(record)
     with pytest.raises(IntegrityError):
         await session.flush()
 
 
-async def test_message_input_tokens_nullable(session: AsyncSession, sample_agent_record: AgentRecord):
+# --- MessageRecord ---
+
+async def test_message_record_stores_all_fields(session: AsyncSession, message_record: MessageRecord):
+    message_record.input_tokens = 150  # use a non-null value to verify integer persistence
+    fields = {
+        "agent_id": message_record.agent_id,
+        "type": message_record.type,
+        "content": message_record.content,
+        "input_tokens": message_record.input_tokens,
+        "timestamp": message_record.timestamp,
+    }
+    await assert_round_trips(session, message_record, fields)
+
+
+async def test_message_input_tokens_nullable(session: AsyncSession, message_record: MessageRecord):
     """input_tokens may be NULL — only set on the final response row that closes a run."""
-    await assert_round_trips(
-        session,
-        MessageRecord(agent_id=sample_agent_record.id, timestamp=datetime.now(timezone.utc), **{**PARTIAL_MESSAGE_FIELDS, "type": "ModelResponse"}),
-        {"input_tokens": None},
-    )
+    await assert_round_trips(session, message_record, {"input_tokens": None})
 
 
 # --- Cascade delete ---
 
-async def test_cascade_delete_removes_blocks_and_messages(session: AsyncSession, sample_agent_record: AgentRecord, memory_block_record: MemoryBlockRecord):
+async def test_cascade_delete_removes_blocks_and_messages(session: AsyncSession, sample_agent_record: AgentRecord, memory_block_record: MemoryBlockRecord, message_record: MessageRecord):
     """Deleting an agent cascades to all associated blocks and messages."""
-    message = MessageRecord(agent_id=sample_agent_record.id, timestamp=datetime.now(timezone.utc), **PARTIAL_MESSAGE_FIELDS)
     session.add(memory_block_record)
-    session.add(message)
+    session.add(message_record)
     await session.flush()
 
-    block_id, message_id = memory_block_record.id, message.id
+    block_id, message_id = memory_block_record.id, message_record.id
 
     await session.delete(sample_agent_record)
     await session.flush()
