@@ -109,7 +109,7 @@ async def test_agent_config_structure(session: AsyncSession, agent_record: Agent
 
 
 async def test_agent_record_null_defaults(session: AsyncSession, agent_record: AgentRecord):
-    """context_window_start and compiled_at are both NULL on a freshly created agent."""
+    """context_window_start and sys_prompt_compiled_at are both NULL on a freshly created agent."""
     await session.refresh(agent_record)
     assert agent_record.context_window_start is None
     assert agent_record.compiled_at is None

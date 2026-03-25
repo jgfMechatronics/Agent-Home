@@ -69,7 +69,7 @@ tests/
 - AgentConfig/settings JSON contains required keys (tool_names, soft_limit, model)
 - tool_names is a JSON array of strings
 - context_window_start defaults to NULL on creation
-- compiled_at is NULL on creation
+- sys_prompt_compiled_at is NULL on creation
 
 **MemoryBlockRecord:**
 - Stores and retrieves all fields (label, description, content, char_limit, position, agent_id)
