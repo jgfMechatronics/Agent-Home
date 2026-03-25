@@ -165,6 +165,7 @@ async def test_message_record_stores_all_fields(session: AsyncSession, message_r
 
 async def test_message_input_tokens_nullable(session: AsyncSession, message_record: MessageRecord):
     """input_tokens may be NULL — only set on the final response row that closes a run."""
+    message_record.input_tokens = None
     await assert_round_trips(session, message_record, {"input_tokens": None})
 
 
