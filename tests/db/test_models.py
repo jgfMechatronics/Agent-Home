@@ -14,6 +14,25 @@ from db.models import AgentRecord, MemoryBlockRecord, MessageRecord
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
+PARTIAL_MEMORY_BLOCK_FIELDS = {
+    "description": "",
+    "char_limit": 2000,
+    "position": 0,
+}
+
+PARTIAL_MESSAGE_FIELDS = {
+    "type": "ModelRequest",
+    "content": "{}",
+    "input_tokens": None,
+}
+
+
+@pytest.fixture
+def memory_block_record(sample_agent_record: AgentRecord) -> MemoryBlockRecord:
+    """An unpersisted MemoryBlockRecord for use in tests that need an existing block."""
+    return MemoryBlockRecord(agent_id=sample_agent_record.id, label="persona", content="x", **PARTIAL_MEMORY_BLOCK_FIELDS)
+
+
 async def assert_round_trips(session: AsyncSession, record: Any, expected_fields: dict):
     """Add a record, flush, refresh from DB, and assert each expected field matches."""
     session.add(record)
@@ -39,8 +58,8 @@ async def assert_timestamps_auto_populated(session: AsyncSession, record: Any):
 
 @pytest.mark.parametrize("make_record", [
     lambda agent_id: AgentRecord(name="uuid-test", agent_config=SAMPLE_AGENT_CONFIG, system_instructions=""),
-    lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="uuid-test", description="", content="", char_limit=100, position=0),
-    lambda agent_id: MessageRecord(agent_id=agent_id, type="ModelRequest", content="{}", input_tokens=None, timestamp=datetime.now(timezone.utc)),
+    lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="uuid-test", content="", **PARTIAL_MEMORY_BLOCK_FIELDS),
+    lambda agent_id: MessageRecord(agent_id=agent_id, timestamp=datetime.now(timezone.utc), **PARTIAL_MESSAGE_FIELDS),
 ])
 async def test_id_auto_generated_as_uuid_string(session: AsyncSession, sample_agent_record: AgentRecord, make_record: Any):
     """All models auto-generate a UUID string id on insert — not required at construction."""
@@ -73,7 +92,7 @@ async def test_agent_record_stores_all_fields(session: AsyncSession):
 async def test_agent_config_structure(session: AsyncSession, sample_agent_record: AgentRecord):
     """AgentConfig JSON contains required keys with correct types. Validation responsibility lies with AgentConfig its self
     So this test is really just a sanity check that we are validating storage and retrieval of an AgentConfig like obj
-    TODO: Delete once AgentConfig implemented and usage included in sample_agent_record"""
+    TODO: consider delete once AgentConfig implemented and usage included in sample_agent_record"""
 
     config = sample_agent_record.agent_config
     assert isinstance(config["model_name"], str)
@@ -97,51 +116,30 @@ async def test_agent_record_timestamps_auto_populated(session: AsyncSession, sam
 
 # --- MemoryBlockRecord ---
 
-async def test_memory_block_stores_all_fields(session: AsyncSession, sample_agent_record: AgentRecord):
-    fields = {
-        "agent_id": sample_agent_record.id,
-        "label": "persona",
-        "description": "The agent's persona.",
-        "content": "I am a helpful assistant.",
-        "char_limit": 2000,
-        "position": 0,
-    }
-    await assert_round_trips(session, MemoryBlockRecord(**fields), fields)
+async def test_memory_block_stores_all_fields(session: AsyncSession, memory_block_record: MemoryBlockRecord):
+    fields = {**PARTIAL_MEMORY_BLOCK_FIELDS, "agent_id": memory_block_record.agent_id, "label": "persona", "content": "x"}
+    await assert_round_trips(session, memory_block_record, fields)
 
 
-async def test_memory_block_timestamps_auto_populated(session: AsyncSession, sample_agent_record: AgentRecord):
+async def test_memory_block_timestamps_auto_populated(session: AsyncSession, memory_block_record: MemoryBlockRecord):
     """created_at and updated_at are automatically set when a memory block is created."""
-    block = MemoryBlockRecord(
-        agent_id=sample_agent_record.id, label="auto-ts", description="", content="x", char_limit=2000, position=0,
-    )
-    session.add(block)
+    session.add(memory_block_record)
     await session.flush()
-    await assert_timestamps_auto_populated(session, block)
+    await assert_timestamps_auto_populated(session, memory_block_record)
 
 
-async def test_memory_block_fk_enforced(session: AsyncSession):
+async def test_memory_block_fk_enforced(session: AsyncSession, memory_block_record: MemoryBlockRecord):
     """Cannot create a MemoryBlockRecord referencing a nonexistent agent."""
-    block = MemoryBlockRecord(
-        agent_id=str(uuid.uuid4()),
-        label="persona",
-        description="",
-        content="",
-        char_limit=2000,
-        position=0,
-    )
-    session.add(block)
+    memory_block_record.agent_id = str(uuid.uuid4())
+    session.add(memory_block_record)
     with pytest.raises(IntegrityError):
         await session.flush()
 
 
-async def test_memory_block_unique_label_per_agent(session: AsyncSession, sample_agent_record: AgentRecord):
+async def test_memory_block_unique_label_per_agent(session: AsyncSession, memory_block_record: MemoryBlockRecord):
     """Two blocks with the same label under the same agent violate the unique constraint."""
-    session.add(MemoryBlockRecord(
-        agent_id=sample_agent_record.id, label="persona", description="", content="first", char_limit=2000, position=0,
-    ))
-    session.add(MemoryBlockRecord(
-        agent_id=sample_agent_record.id, label="persona", description="", content="second", char_limit=2000, position=1,
-    ))
+    session.add(memory_block_record)
+    session.add(MemoryBlockRecord(agent_id=memory_block_record.agent_id, label=memory_block_record.label, content="different content", **PARTIAL_MEMORY_BLOCK_FIELDS))
     with pytest.raises(IntegrityError):
         await session.flush()
 
@@ -161,13 +159,8 @@ async def test_message_record_stores_all_fields(session: AsyncSession, sample_ag
 
 async def test_message_fk_enforced(session: AsyncSession):
     """Cannot create a MessageRecord referencing a nonexistent agent."""
-    message = MessageRecord(
-        agent_id=str(uuid.uuid4()),
-        type="ModelRequest",
-        content="{}",
-        input_tokens=None,
-        timestamp=datetime.now(timezone.utc),
-    )
+    # TODO: NO agent in the record at all!
+    message = MessageRecord(agent_id=str(uuid.uuid4()), timestamp=datetime.now(timezone.utc), **PARTIAL_MESSAGE_FIELDS)
     session.add(message)
     with pytest.raises(IntegrityError):
         await session.flush()
@@ -177,28 +170,21 @@ async def test_message_input_tokens_nullable(session: AsyncSession, sample_agent
     """input_tokens may be NULL — only set on the final response row that closes a run."""
     await assert_round_trips(
         session,
-        MessageRecord(
-            agent_id=sample_agent_record.id,
-            type="ModelResponse",
-            content="{}",
-            input_tokens=None,
-            timestamp=datetime.now(timezone.utc),
-        ),
+        MessageRecord(agent_id=sample_agent_record.id, timestamp=datetime.now(timezone.utc), **{**PARTIAL_MESSAGE_FIELDS, "type": "ModelResponse"}),
         {"input_tokens": None},
     )
 
 
 # --- Cascade delete ---
 
-async def test_cascade_delete_removes_blocks_and_messages(session: AsyncSession, sample_agent_record: AgentRecord):
+async def test_cascade_delete_removes_blocks_and_messages(session: AsyncSession, sample_agent_record: AgentRecord, memory_block_record: MemoryBlockRecord):
     """Deleting an agent cascades to all associated blocks and messages."""
-    block = MemoryBlockRecord(agent_id=sample_agent_record.id, label="persona", description="", content="x", char_limit=2000, position=0)
-    message = MessageRecord(agent_id=sample_agent_record.id, type="ModelRequest", content="{}", input_tokens=None, timestamp=datetime.now(timezone.utc))
-    session.add(block)
+    message = MessageRecord(agent_id=sample_agent_record.id, timestamp=datetime.now(timezone.utc), **PARTIAL_MESSAGE_FIELDS)
+    session.add(memory_block_record)
     session.add(message)
     await session.flush()
 
-    block_id, message_id = block.id, message.id
+    block_id, message_id = memory_block_record.id, message.id
 
     await session.delete(sample_agent_record)
     await session.flush()
