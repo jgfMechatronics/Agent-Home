@@ -117,7 +117,14 @@ async def test_agent_record_timestamps_auto_populated(session: AsyncSession, sam
 # --- MemoryBlockRecord ---
 
 async def test_memory_block_stores_all_fields(session: AsyncSession, memory_block_record: MemoryBlockRecord):
-    fields = {**PARTIAL_MEMORY_BLOCK_FIELDS, "agent_id": memory_block_record.agent_id, "label": "persona", "content": "x"}
+    fields = {
+        "agent_id": memory_block_record.agent_id,
+        "label": memory_block_record.label,
+        "content": memory_block_record.content,
+        "description": memory_block_record.description,
+        "char_limit": memory_block_record.char_limit,
+        "position": memory_block_record.position
+    }
     await assert_round_trips(session, memory_block_record, fields)
 
 
