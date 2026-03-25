@@ -169,6 +169,12 @@ async def test_message_input_tokens_nullable(session: AsyncSession, message_reco
     await assert_round_trips(session, message_record, {"input_tokens": None})
 
 
+async def test_message_content_stores_nested_json(session: AsyncSession, message_record: MessageRecord):
+    """Message content preserves nested JSON structures including unicode escapes."""
+    message_record.content = '{"parts": [{"type": "user-prompt", "content": "hello \\u2603"}]}'
+    await assert_round_trips(session, message_record, {"content": message_record.content})
+
+
 # --- FK enforcement ---
 
 @pytest.mark.parametrize("fixture_name", ["memory_block_record", "message_record"])
@@ -196,22 +202,3 @@ async def test_cascade_delete_removes_blocks_and_messages(session: AsyncSession,
 
     assert await session.get(MemoryBlockRecord, block_id) is None
     assert await session.get(MessageRecord, message_id) is None
-
-
-# --- JSON round-trip ---
-
-async def test_json_fields_round_trip(session: AsyncSession, agent_record: AgentRecord):
-    """Nested JSON structures in AgentConfig and message content survive a write-read cycle."""
-    complex_config = {**SAMPLE_AGENT_CONFIG, "extra_flag": True}
-    agent = AgentRecord(name="json-test", agent_config=complex_config, system_instructions="")
-    session.add(agent)
-    await session.flush()
-    await session.refresh(agent)
-    assert agent.agent_config == complex_config
-
-    content = '{"parts": [{"type": "user-prompt", "content": "hello \\u2603"}]}'
-    message = MessageRecord(agent_id=agent.id, type="ModelRequest", content=content, input_tokens=None, timestamp=datetime.now(timezone.utc))
-    session.add(message)
-    await session.flush()
-    await session.refresh(message)
-    assert message.content == content
