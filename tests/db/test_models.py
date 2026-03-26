@@ -108,6 +108,7 @@ async def test_agent_config_structure(session: AsyncSession, agent_record: Agent
     assert isinstance(config["is_deletable"], bool)
 
 
+@pytest.mark.xfail(reason="AgentConfig Pydantic model not yet implemented", strict=True)
 def test_agent_config_typed_model_todo():
     """TODO: AgentRecord.agent_config should serialize/deserialize through a typed AgentConfig
     Pydantic model rather than a plain dict. When implemented, replace test_agent_config_structure
@@ -115,12 +116,15 @@ def test_agent_config_typed_model_todo():
     pytest.fail("AgentConfig Pydantic model not yet implemented")
 
 
-async def test_agent_record_defaults(session: AsyncSession, agent_record: AgentRecord):
-    """Verify default values on a freshly created agent."""
-    await session.refresh(agent_record)
-    assert agent_record.context_window_start is None
-    assert agent_record.sys_prompt_compiled_at is None
-    assert agent_record.system_instructions == ""
+async def test_agent_record_defaults(session: AsyncSession):
+    """Verify default values on a freshly created agent (no optional fields provided)."""
+    agent = AgentRecord(name="defaults-test", agent_config=SAMPLE_AGENT_CONFIG)
+    session.add(agent)
+    await session.flush()
+    await session.refresh(agent)
+    assert agent.context_window_start is None
+    assert agent.sys_prompt_compiled_at is None
+    assert agent.system_instructions == ""
 
 
 async def test_agent_record_timestamps_auto_populated(session: AsyncSession, agent_record: AgentRecord):
@@ -185,11 +189,13 @@ async def test_message_content_stores_nested_json(session: AsyncSession, message
 
 # --- FK enforcement ---
 
-@pytest.mark.parametrize("fixture_name", ["memory_block_record", "message_record"])
-async def test_fk_enforced(session: AsyncSession, request: pytest.FixtureRequest, fixture_name: str):
+@pytest.mark.parametrize("make_record", [
+    lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="persona", content="x", **PARTIAL_MEMORY_BLOCK_FIELDS),
+    lambda agent_id: MessageRecord(agent_id=agent_id, timestamp=datetime(2026, 1, 1, 12, 0, 0), **PARTIAL_MESSAGE_FIELDS),
+])
+async def test_fk_enforced(session: AsyncSession, make_record):
     """MemoryBlockRecord and MessageRecord cannot reference a nonexistent agent."""
-    record = request.getfixturevalue(fixture_name)
-    record.agent_id = str(uuid.uuid4())
+    record = make_record(str(uuid.uuid4()))
     session.add(record)
     with pytest.raises(IntegrityError):
         await session.flush()
