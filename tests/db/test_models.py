@@ -108,11 +108,19 @@ async def test_agent_config_structure(session: AsyncSession, agent_record: Agent
     assert isinstance(config["is_deletable"], bool)
 
 
-async def test_agent_record_null_defaults(session: AsyncSession, agent_record: AgentRecord):
-    """context_window_start and sys_prompt_compiled_at are both NULL on a freshly created agent."""
+def test_agent_config_typed_model_todo():
+    """TODO: AgentRecord.agent_config should serialize/deserialize through a typed AgentConfig
+    Pydantic model rather than a plain dict. When implemented, replace test_agent_config_structure
+    with a round-trip test against an actual AgentConfig instance."""
+    pytest.fail("AgentConfig Pydantic model not yet implemented")
+
+
+async def test_agent_record_defaults(session: AsyncSession, agent_record: AgentRecord):
+    """Verify default values on a freshly created agent."""
     await session.refresh(agent_record)
     assert agent_record.context_window_start is None
-    assert agent_record.compiled_at is None
+    assert agent_record.sys_prompt_compiled_at is None
+    assert agent_record.system_instructions == ""
 
 
 async def test_agent_record_timestamps_auto_populated(session: AsyncSession, agent_record: AgentRecord):
