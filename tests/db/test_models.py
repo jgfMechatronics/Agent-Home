@@ -189,13 +189,16 @@ async def test_message_content_stores_nested_json(session: AsyncSession, message
 
 # --- FK enforcement ---
 
-@pytest.mark.parametrize("make_record", [
-    lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="persona", content="x", **PARTIAL_MEMORY_BLOCK_FIELDS),
-    lambda agent_id: MessageRecord(agent_id=agent_id, timestamp=datetime(2026, 1, 1, 12, 0, 0), **PARTIAL_MESSAGE_FIELDS),
-])
-async def test_fk_enforced(session: AsyncSession, make_record):
+@pytest.mark.parametrize("fixture_name", ["memory_block_record", "message_record"])
+async def test_fk_enforced(
+    session: AsyncSession,
+    agent_record: AgentRecord,  # pre-resolved so getfixturevalue can resolve sync fixtures that depend on it without needing to spin up a new Runner inside the running event loop
+    request: pytest.FixtureRequest,
+    fixture_name: str,
+):
     """MemoryBlockRecord and MessageRecord cannot reference a nonexistent agent."""
-    record = make_record(str(uuid.uuid4()))
+    record = request.getfixturevalue(fixture_name)
+    record.agent_id = str(uuid.uuid4())
     session.add(record)
     with pytest.raises(IntegrityError):
         await session.flush()
