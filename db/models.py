@@ -57,9 +57,10 @@ class MessageRecord(Base):
     __table_args__ = (
         # Primary access pattern: load history by agent in timestamp order
         Index("ix_message_agent_timestamp", "agent_id", "timestamp"),
-        # Type queries (e.g. find last ModelResponse with input_tokens) — timestamp DESC intent,
-        # SQLite optimises both directions from a single index
-        Index("ix_message_agent_type_timestamp", "agent_id", "type", "timestamp"),
+        # # Type queries (e.g. find last ModelResponse with input_tokens) — timestamp DESC intent,
+        # # SQLite optimises both directions from a single index
+        # Comment this back in if the use pattern emerges
+        # Index("ix_message_agent_type_timestamp", "agent_id", "type", "timestamp"),
     )
 
     id: Mapped[str] = mapped_column(primary_key=True, default=lambda: str(uuid.uuid4()))

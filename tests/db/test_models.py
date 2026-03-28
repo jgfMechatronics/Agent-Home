@@ -204,7 +204,35 @@ async def test_fk_enforced(
         await session.flush()
 
 
-# --- Cascade delete ---
+# --- Cascade delete / isolation ---
+
+@pytest.mark.parametrize("delete_fixture, survive_fixture", [
+    ("memory_block_record", "message_record"),
+    ("message_record", "memory_block_record"),
+])
+async def test_child_delete_is_isolated(
+    session: AsyncSession,
+    agent_record: AgentRecord,  # pre-resolved so getfixturevalue can resolve sync fixtures that depend on it without needing to spin up a new Runner inside the running event loop
+    memory_block_record: MemoryBlockRecord,
+    message_record: MessageRecord,
+    request: pytest.FixtureRequest,
+    delete_fixture: str,
+    survive_fixture: str,
+):
+    """Deleting a child record removes only that record — agent and sibling survive."""
+    session.add(memory_block_record)
+    session.add(message_record)
+    await session.flush()
+
+    to_delete = request.getfixturevalue(delete_fixture)
+    survivor = request.getfixturevalue(survive_fixture)
+
+    await session.delete(to_delete)
+    await session.flush()
+
+    assert await session.get(AgentRecord, agent_record.id) is not None
+    assert await session.get(type(survivor), survivor.id) is not None
+
 
 async def test_cascade_delete_removes_blocks_and_messages(session: AsyncSession, agent_record: AgentRecord, memory_block_record: MemoryBlockRecord, message_record: MessageRecord):
     """Deleting an agent cascades to all associated blocks and messages."""
