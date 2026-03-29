@@ -91,6 +91,14 @@ async def test_get_session_bound_to_provided_engine(tmp_path):
         await engine_b.dispose()
 
 
+async def test_get_session_closes_on_context_exit(initialized_engine : AsyncEngine):
+    checkedOutCounter = initialized_engine.sync_engine.pool.checkedout
+
+    async with get_session(initialized_engine) as session:
+        assert checkedOutCounter() == 1
+    assert checkedOutCounter() == 0
+
+
 # --- concurrent sessions ---
 
 async def test_concurrent_sessions_function_independently(initialized_engine):
