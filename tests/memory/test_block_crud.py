@@ -67,6 +67,19 @@ async def multi_tenant_agents_with_core_memory(session: AsyncSession):
     }
 
 
+# --- Shared read operation tests ---
+
+@pytest.mark.parametrize("fn,args,expected", [
+    pytest.param(get_blocks, (), [], id="get_blocks_returns_empty_list"),
+    pytest.param(get_block, ("any_label",), None, id="get_block_returns_none"),
+])
+async def test_read_ops_handle_nonexistent_agent_gracefully(session: AsyncSession, fn, args, expected):
+    """Both read functions should return empty/None for nonexistent agent_id, not raise."""
+    nonexistent_agent_id = "agent-does-not-exist"
+    result = await fn(session, nonexistent_agent_id, *args)
+    assert result == expected
+
+
 # --- get_blocks tests ---
 
 async def test_get_blocks_in_order_from_correct_agent(session: AsyncSession, multi_tenant_agents_with_core_memory: dict):
@@ -75,13 +88,41 @@ async def test_get_blocks_in_order_from_correct_agent(session: AsyncSession, mul
     got_blocks = await get_blocks(session, agent_id)
     assert got_blocks == expected_blocks
 
-# TODO: Returns empty list for agent with no blocks
+
+async def test_get_blocks_returns_empty_list_for_agent_with_no_blocks(session: AsyncSession, multi_tenant_agents_with_core_memory: dict):
+    # Create a third agent with no blocks
+    agent_c = AgentRecord(name="agent-c", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Agent C instructions")
+    session.add(agent_c)
+    await session.flush()
+    
+    got_blocks = await get_blocks(session, agent_c.id)
+    assert got_blocks == []
 
 
 # --- get_block tests ---
 
-# TODO: Returns correct block for correct agent by label
-# TODO: Returns None (or raises) for nonexistent label
+async def test_get_block_returns_correct_block_by_label(session: AsyncSession, multi_tenant_agents_with_core_memory: dict):
+    agent_a = multi_tenant_agents_with_core_memory["agent_a"]
+    expected_block = multi_tenant_agents_with_core_memory["blocks_a"][1]  # human block at position 1
+    
+    got_block = await get_block(session, agent_a.id, expected_block.label)
+    assert got_block == expected_block
+
+
+async def test_get_block_returns_none_for_nonexistent_label(session: AsyncSession, multi_tenant_agents_with_core_memory: dict):
+    agent_a = multi_tenant_agents_with_core_memory["agent_a"]
+    
+    got_block = await get_block(session, agent_a.id, "nonexistent")
+    assert got_block is None
+
+
+async def test_get_block_isolates_by_agent(session: AsyncSession, multi_tenant_agents_with_core_memory: dict):
+    """Agent A's 'persona' block should not be returned when querying Agent B."""
+    agent_b = multi_tenant_agents_with_core_memory["agent_b"]
+    
+    # Both agents have 'persona', but Agent B's 'system' doesn't exist
+    got_block = await get_block(session, agent_b.id, "system")
+    assert got_block is None
 
 
 # --- update_block tests ---

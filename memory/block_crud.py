@@ -4,6 +4,9 @@ Block CRUD operations — Section 2.1
 Read operations take (session, agent_id) — no lock required, allows concurrent reads.
 Write operations take (deps: AgentDeps) — requires deps, proving caller holds per-agent lock.
 """
+from collections.abc import Sequence
+
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.runner import AgentDeps
@@ -12,14 +15,26 @@ from db.models import MemoryBlockRecord
 
 # --- Read operations (no lock) ---
 
-async def get_blocks(session: AsyncSession, agent_id: str) -> list[MemoryBlockRecord]:
+async def get_blocks(session: AsyncSession, agent_id: str) -> Sequence[MemoryBlockRecord]:
     """Load all blocks for agent, ordered by position ascending."""
-    pass
+    stmt = (
+        select(MemoryBlockRecord)
+        .where(MemoryBlockRecord.agent_id == agent_id)
+        .order_by(MemoryBlockRecord.position)
+    )
+    result = await session.execute(stmt)
+    return result.scalars().all()
 
 
 async def get_block(session: AsyncSession, agent_id: str, label: str) -> MemoryBlockRecord | None:
     """Load single block by label. Returns None if not found."""
-    pass
+    stmt = (
+        select(MemoryBlockRecord)
+        .where(MemoryBlockRecord.agent_id == agent_id)
+        .where(MemoryBlockRecord.label == label)
+    )
+    result = await session.execute(stmt)
+    return result.scalars().one_or_none()
 
 
 # --- Write operations (require deps → lock held) ---
