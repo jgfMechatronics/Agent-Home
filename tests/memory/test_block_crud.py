@@ -255,7 +255,7 @@ async def test_delete_block_raises_on_nonexistent_block(multi_tenant_with_deps: 
     deps = multi_tenant_with_deps["deps_a"]
 
     with pytest.raises(ValueError, match="block to delete not found"):
-        delete_block(deps, "nonexistent block")
+        await delete_block(deps, "nonexistent block")
 
 # --- Shared: operations on nonexistent blocks ---
 
