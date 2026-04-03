@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.runner import AgentDeps
+from agent.types import AgentDeps
 from db.models import MemoryBlockRecord
 
 

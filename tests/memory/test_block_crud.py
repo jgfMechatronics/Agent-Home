@@ -18,7 +18,7 @@ from memory.block_crud import (
     delete_block,
     reorder_blocks,
 )
-from agent.runner import AgentDeps
+from agent.types import AgentDeps
 
 
 # --- Fixtures ---

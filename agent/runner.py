@@ -1,21 +1,10 @@
 """
-Agent runner — Section 3.1
+Agent runner
 
-Provides AgentDeps (the capability token for write operations) and
-agent construction utilities.
+Provides agent construction utilities and the get_deps context manager.
 """
-from dataclasses import dataclass
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
-
-@dataclass
-class AgentDeps:
-    """
-    Dependency bundle for agent operations. Proves caller holds the per-agent lock.
-    
-    Write operations take this instead of raw session to enforce lock discipline.
-    """
-    session: AsyncSession
-    agent_id: str
-    # TODO: Add config when AgentConfig is implemented
+# TODO: get_agent_lock(agent_id) — per-agent lock management
+# TODO: get_deps(session, agent_id) — async context manager
+# TODO: build_agent_and_deps(session, agent_id) — yields (Agent, AgentDeps)
+# TODO: get_model(model_name) — maps to Pydantic AI model instance
