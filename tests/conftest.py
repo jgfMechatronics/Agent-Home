@@ -40,7 +40,11 @@ async def session():
 
 @pytest_asyncio.fixture
 async def agent_record(session: AsyncSession) -> AgentRecord:
-    """A persisted AgentRecord for use in tests that require an existing agent."""
+    """
+    A persisted AgentRecord for use in tests that require an existing agent.
+    The underlying session can be used by dependents by seperately requesting that fixture. Pytest will
+    cache it resulting in session pointing to the temp DB which contains the persisted agent
+    """
     agent = AgentRecord(
         name="test-agent",
         agent_config=SAMPLE_AGENT_CONFIG,
