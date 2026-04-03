@@ -172,7 +172,7 @@ async def test_create_block_inserts_with_defaults(multi_tenant_with_deps: dict):
     assert result.label == "notes"
     assert result.content == "Some notes"
     assert result.description == ""  # default
-    assert result.char_limit == 2000  # default
+    assert result.char_limit == 20000  # default
     assert result.agent_id == deps.agent_id
     
     # Verify it's actually in the database
@@ -251,6 +251,11 @@ async def test_delete_block_removes_block(multi_tenant_with_deps: dict):
     after = await get_block(deps.session, deps.agent_id, "persona")
     assert after is None
 
+async def test_delete_block_raises_on_nonexistent_block(multi_tenant_with_deps: dict):
+    deps = multi_tenant_with_deps["deps_a"]
+
+    with pytest.raises(ValueError, match="block to delete not found"):
+        delete_block(deps, "nonexistent block")
 
 # --- Shared: operations on nonexistent blocks ---
 
