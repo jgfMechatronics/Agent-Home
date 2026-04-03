@@ -153,10 +153,14 @@ async def test_memory_block_timestamps_auto_populated(session: AsyncSession, mem
     await assert_timestamps_auto_populated(session, memory_block_record)
 
 
-async def test_memory_block_unique_label_per_agent(session: AsyncSession, memory_block_record: MemoryBlockRecord):
-    """Two blocks with the same label under the same agent violate the unique constraint."""
+@pytest.mark.parametrize("overrides", [
+    pytest.param({"label": "persona", "position": 1}, id="duplicate_label"),
+    pytest.param({"label": "other",   "position": 0}, id="duplicate_position"),
+])
+async def test_memory_block_unique_constraints_per_agent(session: AsyncSession, memory_block_record: MemoryBlockRecord, overrides: dict):
+    """Duplicate (agent_id, label) or (agent_id, position) under the same agent violates unique constraints."""
     session.add(memory_block_record)
-    session.add(MemoryBlockRecord(agent_id=memory_block_record.agent_id, label=memory_block_record.label, content="different content", **PARTIAL_MEMORY_BLOCK_FIELDS))
+    session.add(MemoryBlockRecord(agent_id=memory_block_record.agent_id, content="x", description="", char_limit=2000, **overrides))
     with pytest.raises(IntegrityError):
         await session.flush()
 

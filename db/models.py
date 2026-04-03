@@ -34,6 +34,7 @@ class MemoryBlockRecord(Base):
     __tablename__ = "memory_block"
     __table_args__ = (
         UniqueConstraint("agent_id", "label"),
+        UniqueConstraint("agent_id", "position"),
         Index("ix_memory_block_agent_position", "agent_id", "position"),
         Index("ix_memory_block_agent_label", "agent_id", "label"),
     )
