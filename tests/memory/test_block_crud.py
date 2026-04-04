@@ -4,6 +4,8 @@ Tests for block CRUD (memory/block_crud.py)
 Read operations take (session, agent_id) — no lock required.
 Write operations take (deps) — proves caller holds per-agent lock.
 """
+import asyncio
+
 import pytest, pytest_asyncio
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -142,12 +144,16 @@ async def test_update_block_modifies_content_and_updated_at(multi_tenant_with_de
     deps = multi_tenant_with_deps["deps_a"]
     persona = multi_tenant_with_deps["blocks_a"][0]
     original_updated_at = persona.updated_at
+
+    # SQLite has second-level timestamp resolution
+    await asyncio.sleep(1.1)
     
     new_content = "Updated persona content."
     result = await update_block(deps, "persona", new_content)
     
     assert result.content == new_content
     assert result.updated_at > original_updated_at
+    assert (await get_block(deps.session, deps.agent_id, persona.label)) == result # sanity check
 
 
 async def test_update_block_enforces_char_limit(multi_tenant_with_deps: dict):
