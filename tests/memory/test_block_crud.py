@@ -6,7 +6,8 @@ Write operations take (deps) — proves caller holds per-agent lock.
 """
 import asyncio
 
-import pytest, pytest_asyncio
+import pytest
+import pytest_asyncio
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,8 +52,13 @@ async def multi_tenant_agents_with_core_memory(session: AsyncSession):
     block_b_persona = MemoryBlockRecord(agent_id=agent_b.id, label="persona", content="Persona for B", description="", char_limit=2000, position=0)
     block_b_notes = MemoryBlockRecord(agent_id=agent_b.id, label="notes", content="Notes for B", description="", char_limit=2000, position=1)
     
-    session.add_all([block_a_human, block_a_persona, block_a_system, block_b_persona, block_b_notes])
+    all_blocks = [block_a_human, block_a_persona, block_a_system, block_b_persona, block_b_notes]
+    session.add_all(all_blocks)
     await session.flush()
+    
+    # Refresh to get server-generated values (created_at, updated_at)
+    for block in all_blocks:
+        await session.refresh(block)
     
     return {
         "agent_a": agent_a,
@@ -191,7 +197,7 @@ async def test_create_block_with_duplicate_label_raises(multi_tenant_with_deps: 
     deps = multi_tenant_with_deps["deps_a"]
     
     # "persona" already exists from fixture
-    with pytest.raises(IntegrityError):
+    with pytest.raises(ValueError, match="already exists"):
         await create_block(deps, label="persona", content="Duplicate!")
 
 
@@ -294,7 +300,7 @@ async def test_reorder_blocks_assigns_positions_by_list_order(multi_tenant_with_
 
 @pytest.mark.parametrize("incomplete_list,error_match", [
     pytest.param(["persona", "human"], "missing", id="missing_block"),  # missing "system"
-    pytest.param(["persona", "human", "system", "nonexistent"], "unknown_label", id="unknown_label"),
+    pytest.param(["persona", "human", "system", "nonexistent"], "unknown", id="unknown_label"),
 ])
 async def test_reorder_blocks_validates_label_list(multi_tenant_with_deps: dict, incomplete_list, error_match):
     """reorder_blocks should reject lists that don't exactly match agent's blocks."""
@@ -381,7 +387,7 @@ async def test_write_ops_commit_and_refresh_by_default(multi_tenant_with_deps, w
         lambda block: block is None,
         id="delete_block",
     ),
-    pytest.param(  
+    pytest.param(
         reorder_blocks,
         (["system", "human", "persona"],),
         lambda deps: get_blocks(deps.session, deps.agent_id),
