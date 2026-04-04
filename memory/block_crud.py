@@ -59,7 +59,7 @@ async def update_block(deps: AgentDeps, label: str, content: str, commit: bool =
         await deps.session.refresh(block)
     else:
         await deps.session.flush()
-        
+
     return block
 
 
