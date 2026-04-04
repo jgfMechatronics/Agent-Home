@@ -1,3 +1,4 @@
+import asyncio
 import re
 import uuid
 from typing import Any
@@ -58,6 +59,29 @@ async def assert_timestamps_auto_populated(session: AsyncSession, record: Any):
     assert record.updated_at is not None, "updated_at should be auto-populated on creation"
     assert abs(now - record.created_at) < five_minutes, f"created_at {record.created_at!r} is not within 5 minutes of now"
     assert abs(now - record.updated_at) < five_minutes, f"updated_at {record.updated_at!r} is not within 5 minutes of now"
+
+
+async def assert_updated_at_bumps_on_modify(session: AsyncSession, record: Any, modify_fn):
+    """Verify updated_at bumps when record is modified (tests onupdate=func.now() behavior).
+    
+    modify_fn: Callable that mutates the record (e.g., lambda r: setattr(r, "name", "new")).
+    """
+    session.add(record)  # no-op if already in session
+    await session.flush()
+    await session.refresh(record)
+
+    original_updated_at = record.updated_at
+
+    # Sleep to ensure timestamp difference (SQLite has second-level resolution)
+    await asyncio.sleep(1.1)
+
+    modify_fn(record)
+    await session.commit()
+    await session.refresh(record)
+
+    assert record.updated_at > original_updated_at, (
+        f"updated_at should bump on modify: was {original_updated_at}, still {record.updated_at}"
+    )
 
 
 # --- UUID auto-generation ---
@@ -132,6 +156,11 @@ async def test_agent_record_timestamps_auto_populated(session: AsyncSession, age
     await assert_timestamps_auto_populated(session, agent_record)
 
 
+async def test_agent_record_updated_at_bumps_on_modify(session: AsyncSession, agent_record: AgentRecord):
+    """AgentRecord.updated_at should bump when modified (onupdate=func.now())."""
+    await assert_updated_at_bumps_on_modify(session, agent_record, lambda r: setattr(r, "name", "modified"))
+
+
 # --- MemoryBlockRecord ---
 
 async def test_memory_block_stores_all_fields(session: AsyncSession, memory_block_record: MemoryBlockRecord):
@@ -151,6 +180,11 @@ async def test_memory_block_timestamps_auto_populated(session: AsyncSession, mem
     session.add(memory_block_record)
     await session.flush()
     await assert_timestamps_auto_populated(session, memory_block_record)
+
+
+async def test_memory_block_updated_at_bumps_on_modify(session: AsyncSession, memory_block_record: MemoryBlockRecord):
+    """MemoryBlockRecord.updated_at should bump when modified (onupdate=func.now())."""
+    await assert_updated_at_bumps_on_modify(session, memory_block_record, lambda r: setattr(r, "content", "modified"))
 
 
 @pytest.mark.parametrize("overrides", [
