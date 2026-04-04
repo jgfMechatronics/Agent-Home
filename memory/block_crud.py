@@ -6,7 +6,7 @@ Write operations take (deps: AgentDeps) — requires deps, proving caller holds 
 """
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentDeps
@@ -39,9 +39,28 @@ async def get_block(session: AsyncSession, agent_id: str, label: str) -> MemoryB
 
 # --- Write operations (require deps → lock held) ---
 
-async def update_block(deps: AgentDeps, label: str, content: str) -> MemoryBlockRecord:
-    """Update block content. Raises if block doesn't exist or content exceeds char_limit."""
-    pass
+async def update_block(deps: AgentDeps, label: str, content: str, commit: bool = True) -> MemoryBlockRecord:
+    """
+    Update block content. Raises if block doesn't exist or content exceeds char_limit.
+    commit flag (default True) controls if change committed vs flushed. Can be set false to chain ops together atomically
+    """
+
+    # calling get block here ensures we don't proceed if there is not one and only one matching block    
+    block = await get_block(deps.session, deps.agent_id, label)
+    if block is None:
+        raise ValueError("block not found")
+
+    if len(content) > block.char_limit:
+        raise ValueError("new content exceeds char limit")
+
+    block.content = content
+    if commit:
+        await deps.session.commit()
+        await deps.session.refresh(block)
+    else:
+        await deps.session.flush()
+        
+    return block
 
 
 async def create_block(
@@ -49,7 +68,7 @@ async def create_block(
     label: str,
     content: str = "",
     description: str = "",
-    char_limit: int = 2000,
+    char_limit: int = 20000,
     position: int | None = None,
 ) -> MemoryBlockRecord:
     """

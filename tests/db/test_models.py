@@ -54,8 +54,8 @@ async def assert_timestamps_auto_populated(session: AsyncSession, record: Any):
     await session.refresh(record)
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     five_minutes = timedelta(minutes=5)
-    assert record.created_at is not None, "created_at should be auto-populated on insert"
-    assert record.updated_at is not None, "updated_at should be auto-populated on update"
+    assert record.created_at is not None, "created_at should be auto-populated on creation"
+    assert record.updated_at is not None, "updated_at should be auto-populated on creation"
     assert abs(now - record.created_at) < five_minutes, f"created_at {record.created_at!r} is not within 5 minutes of now"
     assert abs(now - record.updated_at) < five_minutes, f"updated_at {record.updated_at!r} is not within 5 minutes of now"
 

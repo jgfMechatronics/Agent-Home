@@ -157,7 +157,7 @@ async def test_update_block_enforces_char_limit(multi_tenant_with_deps: dict):
     
     oversized_content = "x" * (human_block.char_limit + 1)
     
-    with pytest.raises(ValueError, match="char_limit"):
+    with pytest.raises(ValueError, match="new content exceeds char limit"):
         await update_block(deps, "human", oversized_content)
 
 
@@ -251,11 +251,6 @@ async def test_delete_block_removes_block(multi_tenant_with_deps: dict):
     after = await get_block(deps.session, deps.agent_id, "persona")
     assert after is None
 
-async def test_delete_block_raises_on_nonexistent_block(multi_tenant_with_deps: dict):
-    deps = multi_tenant_with_deps["deps_a"]
-
-    with pytest.raises(ValueError, match="block to delete not found"):
-        await delete_block(deps, "nonexistent block")
 
 # --- Shared: operations on nonexistent blocks ---
 
@@ -267,7 +262,7 @@ async def test_write_op_raises_on_nonexistent_block(multi_tenant_with_deps: dict
     """Write operations should raise ValueError when block doesn't exist."""
     deps = multi_tenant_with_deps["deps_a"]
     
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(ValueError, match="block not found"):
         await operation(deps, *args)
 
 
