@@ -70,6 +70,7 @@ async def create_block(
     description: str = "",
     char_limit: int = 20000,
     position: int | None = None,
+    commit: bool = True,
 ) -> MemoryBlockRecord:
     """
     Create new block. 
@@ -80,12 +81,12 @@ async def create_block(
     pass
 
 
-async def delete_block(deps: AgentDeps, label: str) -> None:
+async def delete_block(deps: AgentDeps, label: str, commit: bool = True) -> None:
     """Remove block. Raises if block doesn't exist (fail loudly)."""
     pass
 
 
-async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str]) -> None:
+async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str], commit: bool = True) -> None:
     """
     Assign positions 0, 1, 2... based on list order.
     
