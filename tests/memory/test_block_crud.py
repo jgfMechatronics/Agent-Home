@@ -301,6 +301,7 @@ async def test_reorder_blocks_assigns_positions_by_list_order(multi_tenant_with_
 @pytest.mark.parametrize("incomplete_list,error_match", [
     pytest.param(["persona", "human"], "missing", id="missing_block"),  # missing "system"
     pytest.param(["persona", "human", "system", "nonexistent"], "unknown", id="unknown_label"),
+    pytest.param(["persona", "nonexistent"], "missing.*unknown", id="missing_and_unknown"),
 ])
 async def test_reorder_blocks_validates_label_list(multi_tenant_with_deps: dict, incomplete_list, error_match):
     """reorder_blocks should reject lists that don't exactly match agent's blocks."""

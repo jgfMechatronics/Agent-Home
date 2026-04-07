@@ -4,6 +4,7 @@ import uuid
 from sqlalchemy import ForeignKey, Index, JSON, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+# TODO: Consider upgrading to UUID7 as a sortable UUID fallback if timestamps fail, but if timestamps fail we may be in trouble regardless
 
 class Base(DeclarativeBase):
     pass
