@@ -3,7 +3,13 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from db.models import AgentRecord, Base
+from agent.types import AgentConfig, AgentDeps
+from db.models import AgentRecord, Base, MemoryBlockRecord
+
+def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
+    """Construct AgentDeps from a session and agent record with default config."""
+    return AgentDeps(session=session, agent_id=agent.id, config=AgentConfig())
+
 
 SAMPLE_AGENT_CONFIG = {
     "model_name": "claude-sonnet-4-20250514",
@@ -53,3 +59,54 @@ async def agent_record(session: AsyncSession) -> AgentRecord:
     session.add(agent)
     await session.flush()
     return agent
+
+
+@pytest_asyncio.fixture
+async def agent_with_blocks(session: AsyncSession):
+    """
+    Agent with system_instructions and three memory blocks in known positions.
+    
+    Blocks have descriptions (for XML formatting tests) and varied char_limits
+    (for limit enforcement tests). Created out of position order to verify sorting.
+    
+    Returns dict with agent and blocks for test access.
+    """
+    agent = AgentRecord(
+        name="agent-with-blocks",
+        agent_config=SAMPLE_AGENT_CONFIG,
+        system_instructions="You are a helpful assistant.",
+    )
+    session.add(agent)
+    await session.flush()
+    
+    block_persona = MemoryBlockRecord(
+        agent_id=agent.id,
+        label="persona",
+        description="The agent's identity",
+        content="I am a test agent.",
+        char_limit=1000,
+        position=0,
+    )
+    block_human = MemoryBlockRecord(
+        agent_id=agent.id,
+        label="human",
+        description="Information about the user",
+        content="The user's name is Alice.",
+        char_limit=500,
+        position=1,
+    )
+    block_notes = MemoryBlockRecord(
+        agent_id=agent.id,
+        label="notes",
+        description="Scratch space",
+        content="Remember to be helpful.",
+        char_limit=2000,
+        position=2,
+    )
+    
+    # Insert out of position order to verify queries sort by position, not insertion order
+    session.add_all([block_human, block_notes, block_persona])
+    blocks = [block_persona, block_human, block_notes]  # position order for test assertions
+    await session.flush()
+    
+    return {"agent": agent, "blocks": blocks}
