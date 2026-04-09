@@ -87,8 +87,26 @@ async def test_compile_includes_system_instructions_first(agent_with_blocks_and_
     assert instructions_pos < first_block_pos, "system_instructions should appear before blocks"
 
 
-async def test_compile_formats_blocks_with_xml_wrappers(agent_with_blocks_and_deps: dict):
-    """Each block should be wrapped in XML with label, description, and content."""
+def _extract_tag(text: str, tag: str) -> str | None:
+    """Extract content between <tag> and </tag>. Returns None if not found."""
+    start_tag = f"<{tag}>"
+    end_tag = f"</{tag}>"
+    start = text.find(start_tag)
+    end = text.find(end_tag)
+    if start == -1 or end == -1:
+        return None
+    return text[start + len(start_tag):end]
+
+
+async def test_compile_formats_blocks_with_xml_structure(agent_with_blocks_and_deps: dict):
+    """
+    Each block should follow the prescribed XML format:
+    <label>
+    <description>...</description>
+    <metadata>...</metadata>
+    <content>...</content>
+    </label>
+    """
     deps = agent_with_blocks_and_deps["deps"]
     agent = agent_with_blocks_and_deps["agent"]
     
@@ -96,18 +114,58 @@ async def test_compile_formats_blocks_with_xml_wrappers(agent_with_blocks_and_de
     
     compiled = agent.compiled_system_prompt
     
-    # Verify XML structure for each block
     for block in agent_with_blocks_and_deps["blocks"]:
-        # Block should have opening and closing tags with its label
-        assert f"<{block.label}>" in compiled, f"Missing opening tag for {block.label}"
-        assert f"</{block.label}>" in compiled, f"Missing closing tag for {block.label}"
+        block_section = _extract_tag(compiled, block.label)
+        assert block_section is not None, f"Missing block tags for {block.label}"
         
-        # Content should be present
-        assert block.content in compiled, f"Missing content for {block.label}"
+        # Verify all subsections exist
+        desc_content = _extract_tag(block_section, "description")
+        meta_content = _extract_tag(block_section, "metadata")
+        content_content = _extract_tag(block_section, "content")
         
-        # Description should be present (if non-empty)
+        assert desc_content is not None, f"Missing <description> for {block.label}"
+        assert meta_content is not None, f"Missing <metadata> for {block.label}"
+        assert content_content is not None, f"Missing <content> for {block.label}"
+        
+        # Verify content is in the right places
         if block.description:
-            assert block.description in compiled, f"Missing description for {block.label}"
+            assert block.description in desc_content, f"Description not in <description> for {block.label}"
+        assert block.content in content_content, f"Content not in <content> for {block.label}"
+        
+        # Verify section order: description → metadata → content
+        desc_pos = block_section.find("<description>")
+        meta_pos = block_section.find("<metadata>")
+        content_pos = block_section.find("<content>")
+        
+        assert desc_pos < meta_pos < content_pos, (
+            f"Sections out of order for {block.label}: "
+            f"description@{desc_pos}, metadata@{meta_pos}, content@{content_pos}"
+        )
+
+
+async def test_compile_metadata_section_accuracy(agent_with_blocks_and_deps: dict):
+    """Metadata section should contain accurate chars_current and chars_limit values."""
+    deps = agent_with_blocks_and_deps["deps"]
+    agent = agent_with_blocks_and_deps["agent"]
+    
+    await compile_system_prompt(deps)
+    
+    compiled = agent.compiled_system_prompt
+    
+    for block in agent_with_blocks_and_deps["blocks"]:
+        block_section = _extract_tag(compiled, block.label)
+        meta_section = _extract_tag(block_section, "metadata")
+        
+        # Check chars_current matches actual content length
+        expected_chars = len(block.content)
+        assert f"chars_current={expected_chars}" in meta_section, (
+            f"chars_current mismatch for {block.label}: expected {expected_chars}"
+        )
+        
+        # Check chars_limit matches block's char_limit
+        assert f"chars_limit={block.char_limit}" in meta_section, (
+            f"chars_limit mismatch for {block.label}: expected {block.char_limit}"
+        )
 
 
 async def test_compile_handles_agent_with_no_blocks(agent_no_blocks_with_deps: dict):
