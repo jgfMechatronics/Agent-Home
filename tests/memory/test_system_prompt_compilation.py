@@ -8,6 +8,7 @@ from datetime import datetime, UTC
 from unittest.mock import Mock
 import asyncio
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -240,47 +241,50 @@ def _mock_run_context(deps: AgentDeps):
     return ctx
 
 
-async def test_get_returns_cached_compiled_prompt(agent_with_precompiled_prompt: dict):
-    """get_system_prompt should return the cached compiled_system_prompt."""
-    agent = agent_with_precompiled_prompt["agent"]
-    deps = agent_with_precompiled_prompt["deps"]
-    ctx = _mock_run_context(deps)
+class TestGetSystemPrompt:
+    """
+    Tests for get_system_prompt() using an agent with pre-compiled prompt.
+    """
 
-    result = await get_system_prompt(ctx)
+    @pytest_asyncio.fixture(autouse=True)
+    async def _autouse_setup(self, agent_with_precompiled_prompt: dict):
+        self.agent = agent_with_precompiled_prompt["agent"]
+        self.deps = agent_with_precompiled_prompt["deps"]
+        self.ctx = _mock_run_context(self.deps)
 
-    assert result == agent.compiled_system_prompt
+    async def test_returns_cached_compiled_prompt(self):
+        """get_system_prompt should return the cached compiled_system_prompt."""
+        result = await get_system_prompt(self.ctx)
+        assert result == self.agent.compiled_system_prompt
+
+    async def test_does_not_mutate_stored_prompt(self):
+        """get_system_prompt should not modify the stored prompt."""
+        original_prompt = self.agent.compiled_system_prompt
+        original_timestamp = self.agent.sys_prompt_compiled_at
+
+        await get_system_prompt(self.ctx)
+        await get_system_prompt(self.ctx)  # for good measure
+
+        assert self.agent.compiled_system_prompt == original_prompt
+        assert self.agent.sys_prompt_compiled_at == original_timestamp
 
 
-async def test_get_returns_empty_string_when_null(session: AsyncSession):
-    """get_system_prompt should return empty string when compiled_system_prompt is NULL."""
+# --- get_system_prompt standalone tests (different fixtures) ---
+
+async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession):
+    """get_system_prompt should return system_instructions (or empty) when compiled_system_prompt is NULL."""
     agent = AgentRecord(
         name="null-prompt-agent",
         agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Base instructions.",
-        # compiled_system_prompt defaults to '' but let's be explicit
     )
     session.add(agent)
     await session.flush()
+    assert agent.compiled_system_prompt is None
 
     ctx = _mock_run_context(make_deps(session, agent))
     result = await get_system_prompt(ctx)
     assert result == ""
-
-
-async def test_get_does_not_mutate_stored_prompt(agent_with_precompiled_prompt: dict):
-    """get_system_prompt should not modify the stored prompt."""
-    deps = agent_with_precompiled_prompt["deps"]
-    agent = agent_with_precompiled_prompt["agent"]
-    ctx = _mock_run_context(deps)
-
-    original_prompt = agent.compiled_system_prompt
-    original_timestamp = agent.sys_prompt_compiled_at
-
-    await get_system_prompt(ctx)
-    await get_system_prompt(ctx)  # Call multiple times
-
-    assert agent.compiled_system_prompt == original_prompt
-    assert agent.sys_prompt_compiled_at == original_timestamp
 
 
 async def test_get_returns_stale_prompt_after_block_edit(agent_with_blocks_and_deps: dict):
