@@ -6,17 +6,18 @@ from sqlalchemy.pool import StaticPool
 from agent.types import AgentConfig, AgentDeps
 from db.models import AgentRecord, Base, MemoryBlockRecord
 
-def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
-    """Construct AgentDeps from a session and agent record with default config."""
-    return AgentDeps(session=session, agent_id=agent.id, config=AgentConfig())
 
 
 SAMPLE_AGENT_CONFIG = {
     "model_name": "claude-sonnet-4-20250514",
     "tool_names": ["memory_replace", "memory_insert"],
     "soft_compaction_limit": 10000,
-    "is_deletable": True,
 }
+
+def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
+    """Construct AgentDeps from a session and agent record with default config."""
+    return AgentDeps(session=session, agent_id=agent.id, config=AgentConfig(**SAMPLE_AGENT_CONFIG))
+
 
 
 @pytest_asyncio.fixture

@@ -6,7 +6,7 @@ not the reverse.
 """
 from dataclasses import dataclass
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -14,10 +14,34 @@ class AgentConfig(BaseModel):
     """
     Agent configuration stored as JSON in AgentRecord.agent_config.
     
-    Stub for now — will be fleshed out as we implement agent runner.
+    Required fields:
+    - model_name: The LLM model to use (e.g., "claude-sonnet-4-20250514")
+    - tool_names: List of tool names the agent can use
+    - soft_compaction_limit: Token threshold for triggering compaction
+    
+    Optional fields:
+    - is_deletable: Whether agent can be deleted (default False)
     """
-    model_name: str = "claude-sonnet-4-20250514"
-    # TODO: Add tool settings, context limits, etc.
+    model_config = ConfigDict(extra="forbid")
+    
+    model_name: str
+    tool_names: list[str]
+    soft_compaction_limit: int
+    is_deletable: bool = False
+    
+    @field_validator("model_name")
+    @classmethod
+    def validate_model_name(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("model_name cannot be empty")
+        return v
+    
+    @field_validator("soft_compaction_limit")
+    @classmethod
+    def validate_soft_compaction_limit(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("soft_compaction_limit must be positive")
+        return v
 
 
 @dataclass
