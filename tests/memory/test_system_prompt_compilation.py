@@ -53,8 +53,8 @@ async def agent_with_precompiled_prompt(session: AsyncSession):
 
 def _extract_tag(text: str, tag: str) -> str | None:
     """Extract content between <tag> and </tag>. Returns None if not found."""
-    start_tag = f"<{tag}>"
-    end_tag = f"</{tag}>"
+    start_tag = f"<{tag}>\n"
+    end_tag = f"\n</{tag}>"
     start = text.find(start_tag)
     end = text.find(end_tag)
     if start == -1 or end == -1:
@@ -176,7 +176,7 @@ async def test_compile_handles_agent_with_no_blocks(agent_no_blocks_with_deps: d
     await compile_system_prompt(deps)
     compiled = agent.compiled_system_prompt
 
-    assert ("<system_instructions>" + agent.system_instructions + "</system_instructions>") == compiled
+    assert f"<system_instructions>\n{agent.system_instructions}\n</system_instructions>" == compiled
 
 
 async def test_compile_updates_sys_prompt_compiled_at(agent_with_blocks_and_deps: dict):
