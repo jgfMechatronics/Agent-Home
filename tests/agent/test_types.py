@@ -69,6 +69,15 @@ def test_agentconfig_validates_types(valid_config_data: dict, field: str, invali
         AgentConfig(**valid_config_data)
 
 
+@pytest.mark.xfail(reason="Need validate model name with get_model() once implemented.")
+def test_todo_validate_model_name_w_get_model():
+    """
+    TODO, once get_model implemented validate that str corresponds to a valid AnthropicModel.
+    Or, consider just storing model_name as an AnthropicModel and dealing with the DB integration.
+    """
+    pass
+
+
 # --- AgentConfig defaults ---
 
 def test_agentconfig_is_deletable_defaults_to_false(valid_config_data: dict):

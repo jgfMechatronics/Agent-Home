@@ -32,6 +32,8 @@ class AgentConfig(BaseModel):
     @field_validator("model_name")
     @classmethod
     def validate_model_name(cls, v: str) -> str:
+        # TODO, once get_model implemented validate that str corresponds to a valid AnthropicModel.
+        # Or, consider just storing model_name as an AnthropicModel and dealing with the DB integration.
         if not v.strip():
             raise ValueError("model_name cannot be empty")
         return v
@@ -50,6 +52,7 @@ class AgentDeps:
     Dependency bundle for agent operations. Outside tests, should only be constructed by get_deps.
     This enforces the connection between AgentDeps and the lock that get_deps holds, 
     making it so deps proves caller holds the per-agent lock.
+    TODO: consider having AgentDeps validate it came from get_deps, or associate the lock with AgentDeps
     """
     session: AsyncSession
     agent_id: str
