@@ -82,9 +82,9 @@ class TestCompileSystemPrompt:
 
     async def test_assembles_blocks_in_position_order(self):
         """Blocks should appear in the compiled prompt ordered by position, not insertion order."""
-        pos_0 = self.compiled.find(self.blocks[0].label)
-        pos_1 = self.compiled.find(self.blocks[1].label)
-        pos_2 = self.compiled.find(self.blocks[2].label)
+        pos_0 = self.compiled.find(f"<{self.blocks[0].label}>")
+        pos_1 = self.compiled.find(f"<{self.blocks[1].label}>")
+        pos_2 = self.compiled.find(f"<{self.blocks[2].label}>")
 
         assert pos_0 < pos_1 < pos_2, (
             f"Blocks not in position order: "
@@ -187,9 +187,9 @@ async def test_compile_updates_sys_prompt_compiled_at(agent_with_blocks_and_deps
     assert agent.sys_prompt_compiled_at is None
 
     before = datetime.now(UTC)
-    asyncio.sleep(1.1) # SQLite second resolution
+    await asyncio.sleep(1.1)  # SQLite has second resolution
     await compile_system_prompt(deps)
-    asyncio.sleep(1.1)
+    await asyncio.sleep(1.1)
     after = datetime.now(UTC)
 
     assert agent.sys_prompt_compiled_at is not None
@@ -272,7 +272,7 @@ class TestGetSystemPrompt:
 # --- get_system_prompt standalone tests (different fixtures) ---
 
 async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession):
-    """get_system_prompt should return system_instructions (or empty) when compiled_system_prompt is NULL."""
+    """get_system_prompt should return empty string when compiled_system_prompt is empty/unset."""
     agent = AgentRecord(
         name="null-prompt-agent",
         agent_config=SAMPLE_AGENT_CONFIG,
@@ -280,7 +280,7 @@ async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession
     )
     session.add(agent)
     await session.flush()
-    assert agent.compiled_system_prompt is None
+    assert agent.compiled_system_prompt == ""  # model defaults to ''
 
     ctx = _mock_run_context(make_deps(session, agent))
     result = await get_system_prompt(ctx)
