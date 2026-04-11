@@ -11,14 +11,12 @@ from conftest import SAMPLE_AGENT_CONFIG
 from pydantic import ValidationError
 
 from agent.types import AgentConfig, AgentDeps
-
-
 # --- Fixtures ---
 
 @pytest.fixture
 def valid_config_data() -> dict:
-    """Complete valid config for use as baseline in tests."""
-    return SAMPLE_AGENT_CONFIG
+    """Complete valid config for use as baseline in tests (copy to avoid mutation)."""
+    return SAMPLE_AGENT_CONFIG.copy()
 
 
 # --- AgentConfig valid construction ---

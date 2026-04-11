@@ -129,7 +129,9 @@ async def test_agent_config_structure(session: AsyncSession, agent_record: Agent
     assert isinstance(config["tool_names"], list)
     assert all(isinstance(t, str) for t in config["tool_names"])
     assert isinstance(config["soft_compaction_limit"], int)
-    assert isinstance(config["is_deletable"], bool)
+    # is_deletable is optional (has default in AgentConfig), so may not be in raw dict
+    if "is_deletable" in config:
+        assert isinstance(config["is_deletable"], bool)
 
 
 @pytest.mark.xfail(reason="AgentConfig Pydantic model not yet implemented", strict=True)
