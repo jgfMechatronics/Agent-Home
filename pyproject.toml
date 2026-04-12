@@ -25,5 +25,8 @@ test = [
 asyncio_mode = "auto"
 pythonpath = [".", "tests"]
 
+[tool.pyright]
+extraPaths = ["."]
+
 [tool.hatch.build.targets.wheel]
 packages = ["api", "agent", "memory", "messages", "db"]
