@@ -1,11 +1,12 @@
 """
-Tests for agent/factory.py — Section 3.1
+Tests for agent/factory.py
 
 Agent factory and dependency management:
-- get_agent_lock: Per-agent lock registry management
-- get_model: Map model name strings to Pydantic AI model instances
-- get_deps: Async context manager yielding AgentDeps with lock acquisition
-- build_agent_and_deps: Async context manager yielding (Agent, AgentDeps)
+- AgentFactory: Per-request factory with session + lock_reg bound
+  - _get_lock: Per-agent lock registry management
+  - get_deps: Async context manager yielding AgentDeps with lock acquisition
+  - build_agent_and_deps: Async context manager yielding (Agent, AgentDeps)
+- get_model: Module-level function mapping model name strings to Pydantic AI model instances
 """
 import asyncio
 from unittest.mock import MagicMock, patch
@@ -15,18 +16,15 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.factory import (
-    build_agent_and_deps,
-    get_agent_lock,
-    get_deps,
-    get_model,
-)
+from agent.factory import AgentFactory, get_model
 from agent.types import AgentConfig, AgentDeps
 from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord
 
 
 # --- Fixtures ---
+
+NONEXISTENT_AGENT_ID = "nonexistent-agent-id-12345"
 
 
 @pytest.fixture
@@ -35,30 +33,13 @@ def lock_reg() -> dict[str, asyncio.Lock]:
     return {}
 
 
-# --- get_agent_lock tests ---
+@pytest.fixture
+def agent_factory(lock_reg: dict, session: AsyncSession) -> AgentFactory:
+    """Per-request AgentFactory with lock_reg and session bound."""
+    return AgentFactory(lock_reg, session)
 
 
-def test_get_agent_lock_returns_same_lock_for_same_id(lock_reg: dict):
-    """get_agent_lock should return the same Lock instance for the same agent_id."""
-    lock1 = get_agent_lock("agent-123", lock_reg)
-    lock2 = get_agent_lock("agent-123", lock_reg)
-    
-    assert lock1 is lock2
-    assert isinstance(lock1, asyncio.Lock)
-
-
-def test_get_agent_lock_returns_different_locks_for_different_ids(lock_reg: dict):
-    """get_agent_lock should return different Lock instances for different agent_ids."""
-    lock_a = get_agent_lock("agent-aaa", lock_reg)
-    lock_b = get_agent_lock("agent-bbb", lock_reg)
-    
-    assert lock_a is not lock_b
-    assert isinstance(lock_a, asyncio.Lock)
-    assert isinstance(lock_b, asyncio.Lock)
-
-
-# --- get_model tests ---
-
+# --- get_model tests (module-level function) ---
 
 def test_get_model_returns_model_for_valid_name():
     """get_model should return an AnthropicModel instance for a valid model name."""
@@ -79,32 +60,51 @@ def test_get_model_raises_for_invalid_name(invalid_name: str):
         get_model(invalid_name)
 
 
-# --- get_deps tests ---
+# --- AgentFactory._get_lock tests ---
 
+def test_get_lock_returns_same_lock_for_same_id(agent_factory: AgentFactory):
+    """_get_lock should return the same Lock instance for the same agent_id."""
+    lock1 = agent_factory._get_lock("agent-123")
+    lock2 = agent_factory._get_lock("agent-123")
+    
+    assert lock1 is lock2
+    assert isinstance(lock1, asyncio.Lock)
+
+
+def test_get_lock_returns_different_locks_for_different_ids(agent_factory: AgentFactory):
+    """_get_lock should return different Lock instances for different agent_ids."""
+    lock_a = agent_factory._get_lock("agent-aaa")
+    lock_b = agent_factory._get_lock("agent-bbb")
+    
+    assert lock_a is not lock_b
+    assert isinstance(lock_a, asyncio.Lock)
+    assert isinstance(lock_b, asyncio.Lock)
+
+
+# --- AgentFactory.get_deps tests ---
 
 @pytest.mark.asyncio
 async def test_get_deps_yields_deps_with_expected_fields(
-    session: AsyncSession, 
-    agent_record: AgentRecord, 
-    lock_reg: dict,
+    agent_factory: AgentFactory,
+    agent_record: AgentRecord,
 ):
     """get_deps should yield AgentDeps with agent_id, session, and config populated."""
-    async with get_deps(session, agent_record.id, lock_reg) as deps:
+    async with agent_factory.get_deps(agent_record.id) as deps:
         assert isinstance(deps, AgentDeps)
         assert deps.agent_id == agent_record.id
-        assert deps.session is session
+        assert deps.session is agent_factory._session
         assert isinstance(deps.config, AgentConfig)
         assert deps.config.model_name == agent_record.agent_config.model_name
 
 
 @pytest.mark.asyncio
 async def test_get_deps_acquires_and_releases_lock(
-    session: AsyncSession,
+    agent_factory: AgentFactory,
     agent_record: AgentRecord,
     lock_reg: dict,
 ):
     """get_deps should acquire lock before yielding and release after exit."""
-    async with get_deps(session, agent_record.id, lock_reg) as deps:
+    async with agent_factory.get_deps(agent_record.id) as deps:
         # Inside the context, the lock should be held
         lock = lock_reg[agent_record.id]
         assert lock.locked()
@@ -115,13 +115,13 @@ async def test_get_deps_acquires_and_releases_lock(
 
 @pytest.mark.asyncio
 async def test_get_deps_releases_lock_on_exception(
-    session: AsyncSession,
+    agent_factory: AgentFactory,
     agent_record: AgentRecord,
     lock_reg: dict,
 ):
     """get_deps should release the lock even if an exception is raised inside the context."""
     with pytest.raises(RuntimeError):
-        async with get_deps(session, agent_record.id, lock_reg) as deps:
+        async with agent_factory.get_deps(agent_record.id) as deps:
             raise RuntimeError("Intentional test error")
     
     # Lock should still be released
@@ -130,66 +130,45 @@ async def test_get_deps_releases_lock_on_exception(
 
 
 @pytest.mark.asyncio
-async def test_get_deps_raises_for_unknown_agent_id(
-    session: AsyncSession,
+async def test_get_deps_raises_and_releases_lock_on_fetch_failure(
+    agent_factory: AgentFactory,
     lock_reg: dict,
 ):
-    """get_deps should raise NotFound (or equivalent) for an unknown agent_id."""
-    # Using a UUID that doesn't exist in the database
-    fake_agent_id = "nonexistent-agent-id-12345"
-    
-    with pytest.raises(Exception) as exc_info:  # TODO: Narrow to specific NotFound exception
-        async with get_deps(session, fake_agent_id, lock_reg) as deps:
-            pass
-    
-    # Verify it's some kind of not-found error (exact type TBD)
-    assert exc_info.value is not None
-
-
-@pytest.mark.asyncio
-async def test_get_deps_releases_lock_on_fetch_failure(
-    session: AsyncSession,
-    lock_reg: dict,
-):
-    """get_deps should release lock even if agent fetch fails (pre-yield exception).
+    """get_deps should raise for unknown agent_id AND release lock on failure.
     
     Design decision: lock-then-fetch. The lock must be acquired BEFORE the DB fetch
     to prevent concurrent runs from seeing stale state. This means if the fetch fails,
     the lock was already acquired and must be released via try/finally.
     """
-    fake_agent_id = "nonexistent-agent-id-12345"
-    
+    # TODO: Narrow to specific NotFound exception once we define it
     with pytest.raises(Exception):
-        async with get_deps(session, fake_agent_id, lock_reg) as deps:
+        async with agent_factory.get_deps(NONEXISTENT_AGENT_ID) as deps:
             pass
     
     # Lock-then-fetch: lock was created before DB call, must be released after failure
-    assert fake_agent_id in lock_reg, "Lock should have been created before fetch"
-    assert not lock_reg[fake_agent_id].locked(), "Lock should be released after fetch failure"
+    assert NONEXISTENT_AGENT_ID in lock_reg, "Lock should have been created before fetch"
+    assert not lock_reg[NONEXISTENT_AGENT_ID].locked(), "Lock should be released after fetch failure"
 
 
 # --- get_deps concurrency tests ---
-# These test concurrent lock behavior. Skip if too complex per James's instruction.
-
 
 @pytest.mark.asyncio
 async def test_get_deps_concurrent_same_agent_blocks(
-    session: AsyncSession,
+    agent_factory: AgentFactory,
     agent_record: AgentRecord,
-    lock_reg: dict,
 ):
     """Second concurrent call on same agent_id should block until first exits."""
     execution_order = []
     
     async def first_caller():
-        async with get_deps(session, agent_record.id, lock_reg):
+        async with agent_factory.get_deps(agent_record.id):
             execution_order.append("first_entered")
             await asyncio.sleep(0.05)  # Hold lock briefly
             execution_order.append("first_exiting")
     
     async def second_caller():
         await asyncio.sleep(0.01)  # Ensure first_caller enters first
-        async with get_deps(session, agent_record.id, lock_reg):
+        async with agent_factory.get_deps(agent_record.id):
             execution_order.append("second_entered")
     
     await asyncio.gather(first_caller(), second_caller())
@@ -200,8 +179,8 @@ async def test_get_deps_concurrent_same_agent_blocks(
 
 @pytest.mark.asyncio
 async def test_get_deps_concurrent_different_agents_no_block(
+    agent_factory: AgentFactory,
     session: AsyncSession,
-    lock_reg: dict,
 ):
     """Concurrent calls on different agent_ids should not block each other."""
     # Create two agents for this test
@@ -221,14 +200,14 @@ async def test_get_deps_concurrent_different_agents_no_block(
     execution_order = []
     
     async def caller_a():
-        async with get_deps(session, agent_a.id, lock_reg):
+        async with agent_factory.get_deps(agent_a.id):
             execution_order.append("a_entered")
             await asyncio.sleep(0.05)
             execution_order.append("a_exiting")
     
     async def caller_b():
         await asyncio.sleep(0.01)  # Small delay so A enters first
-        async with get_deps(session, agent_b.id, lock_reg):
+        async with agent_factory.get_deps(agent_b.id):
             execution_order.append("b_entered")
             await asyncio.sleep(0.01)
             execution_order.append("b_exiting")
@@ -240,29 +219,27 @@ async def test_get_deps_concurrent_different_agents_no_block(
     assert execution_order.index("b_entered") < execution_order.index("a_exiting")
 
 
-# --- build_agent_and_deps tests ---
-
+# --- AgentFactory.build_agent_and_deps tests ---
 
 @pytest.mark.asyncio
 async def test_build_agent_and_deps_yields_tuple(
-    session: AsyncSession,
+    agent_factory: AgentFactory,
     agent_record: AgentRecord,
-    lock_reg: dict,
 ):
     """build_agent_and_deps should yield a valid (agent, deps) tuple."""
-    async with build_agent_and_deps(session, agent_record.id, lock_reg) as (agent, deps):
+    async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
         assert isinstance(agent, Agent)
         assert isinstance(deps, AgentDeps)
 
 
 @pytest.mark.asyncio
 async def test_build_agent_and_deps_holds_lock(
-    session: AsyncSession,
+    agent_factory: AgentFactory,
     agent_record: AgentRecord,
     lock_reg: dict,
 ):
     """build_agent_and_deps should hold the lock for the duration of the context."""
-    async with build_agent_and_deps(session, agent_record.id, lock_reg) as (agent, deps):
+    async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
         lock = lock_reg[agent_record.id]
         assert lock.locked()
     
@@ -272,12 +249,11 @@ async def test_build_agent_and_deps_holds_lock(
 
 @pytest.mark.asyncio
 async def test_build_agent_and_deps_uses_correct_model(
-    session: AsyncSession,
+    agent_factory: AgentFactory,
     agent_record: AgentRecord,
-    lock_reg: dict,
 ):
     """Constructed agent should use the model from agent_config.model_name."""
-    async with build_agent_and_deps(session, agent_record.id, lock_reg) as (agent, deps):
+    async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
         # Agent.model is the model instance used for this agent
         assert isinstance(agent.model, AnthropicModel)
         # TODO: Check AnthropicModel API for model_name attribute instead of fragile str() check
@@ -287,9 +263,8 @@ async def test_build_agent_and_deps_uses_correct_model(
 @pytest.mark.xfail(reason="Cache settings are run-time (model_settings), not construction-time. Test belongs in run/integration tests.")
 @pytest.mark.asyncio 
 async def test_build_agent_and_deps_has_cache_settings(
-    session: AsyncSession,
+    agent_factory: AgentFactory,
     agent_record: AgentRecord,
-    lock_reg: dict,
 ):
     """Constructed agent should have Anthropic cache settings enabled.
     
@@ -302,9 +277,8 @@ async def test_build_agent_and_deps_has_cache_settings(
 
 @pytest.mark.asyncio
 async def test_build_agent_and_deps_has_correct_tools(
-    session: AsyncSession,
+    agent_factory: AgentFactory,
     agent_record: AgentRecord,
-    lock_reg: dict,
 ):
     """Constructed agent should have tools matching agent_config.tool_names.
     
@@ -315,6 +289,6 @@ async def test_build_agent_and_deps_has_correct_tools(
     mock_tools = [MagicMock(name="memory_replace"), MagicMock(name="memory_insert")]
     
     with patch("agent.factory.get_tools_for_agent", return_value=mock_tools) as mock_get_tools:
-        async with build_agent_and_deps(session, agent_record.id, lock_reg) as (agent, deps):
+        async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
             # Verify get_tools_for_agent was called with the agent's tool_names
             mock_get_tools.assert_called_once_with(agent_record.agent_config.tool_names)
