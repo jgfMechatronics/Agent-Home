@@ -6,7 +6,7 @@ from typing import Any
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig
@@ -129,6 +129,13 @@ async def test_agent_config_roundtrip_via_type_decorator(session: AsyncSession):
     await session.refresh(agent)
     assert isinstance(agent.agent_config, AgentConfig)
     assert agent.agent_config == config
+
+
+async def test_agent_config_type_decorator_rejects_wrong_type(session: AsyncSession):
+    agent = AgentRecord(name="wrong_type_agent_config", agent_config="not a config")
+    with pytest.raises(StatementError):
+        session.add(agent)
+        await session.flush()
 
 
 async def test_agent_record_defaults(session: AsyncSession):
