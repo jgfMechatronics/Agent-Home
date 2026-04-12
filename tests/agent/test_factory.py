@@ -153,8 +153,9 @@ async def test_get_deps_releases_lock_on_fetch_failure(
 ):
     """get_deps should release lock even if agent fetch fails (pre-yield exception).
     
-    If implementation is lock-then-fetch, a DB failure after acquiring the lock
-    must still release it. This tests that the lock is cleaned up properly.
+    Design decision: lock-then-fetch. The lock must be acquired BEFORE the DB fetch
+    to prevent concurrent runs from seeing stale state. This means if the fetch fails,
+    the lock was already acquired and must be released via try/finally.
     """
     fake_agent_id = "nonexistent-agent-id-12345"
     
@@ -162,9 +163,9 @@ async def test_get_deps_releases_lock_on_fetch_failure(
         async with get_deps(session, fake_agent_id, lock_reg) as deps:
             pass
     
-    # If a lock was created for this agent_id, it should be released
-    if fake_agent_id in lock_reg:
-        assert not lock_reg[fake_agent_id].locked()
+    # Lock-then-fetch: lock was created before DB call, must be released after failure
+    assert fake_agent_id in lock_reg, "Lock should have been created before fetch"
+    assert not lock_reg[fake_agent_id].locked(), "Lock should be released after fetch failure"
 
 
 # --- get_deps concurrency tests ---
