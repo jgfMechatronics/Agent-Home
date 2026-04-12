@@ -149,9 +149,6 @@ async def test_update_block_modifies_content_and_updated_at(multi_tenant_with_de
     deps = multi_tenant_with_deps["deps_a"]
     persona = multi_tenant_with_deps["blocks_a"][0]
     original_updated_at = persona.updated_at
-
-    # SQLite has second-level timestamp resolution
-    await asyncio.sleep(1.1)
     
     new_content = "Updated persona content."
     result = await update_block(deps, "persona", new_content)

@@ -187,9 +187,7 @@ async def test_compile_updates_sys_prompt_compiled_at(agent_with_blocks_and_deps
     assert agent.sys_prompt_compiled_at is None
 
     before = datetime.now(UTC)
-    await asyncio.sleep(1.1)  # SQLite has second resolution
     await compile_system_prompt(deps)
-    await asyncio.sleep(1.1)
     after = datetime.now(UTC)
 
     assert agent.sys_prompt_compiled_at is not None

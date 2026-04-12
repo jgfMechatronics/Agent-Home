@@ -1,14 +1,18 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
-from sqlalchemy import ForeignKey, Index, JSON, UniqueConstraint, func
+from sqlalchemy import ForeignKey, Index, JSON, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
 
 from agent.types import AgentConfig
 
-# TODO: Consider upgrading to UUID7 as a sortable UUID fallback if timestamps fail, but if timestamps fail we may be in trouble regardless
 
+def _utcnow() -> datetime:
+    """Return current UTC time as a naive datetime (SQLite stores naive datetimes)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+# TODO: Consider upgrading to UUID7 as a sortable UUID fallback if timestamps fail, but if timestamps fail we may be in trouble regardless
 
 class AgentConfigType(TypeDecorator):
     """Stores AgentConfig as JSON in DB, exposes as AgentConfig instance in Python."""
@@ -47,8 +51,8 @@ class AgentRecord(Base):
     sys_prompt_compiled_at: Mapped[datetime | None]
     context_window_start: Mapped[datetime | None]
     # SQLite uses utc internally by default, matches our intent
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
 
     memory_blocks: Mapped[list["MemoryBlockRecord"]] = relationship(cascade="all, delete-orphan")
     messages: Mapped[list["MessageRecord"]] = relationship(cascade="all, delete-orphan")
@@ -73,8 +77,8 @@ class MemoryBlockRecord(Base):
     content: Mapped[str]
     char_limit: Mapped[int]
     position: Mapped[int]
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=_utcnow, onupdate=_utcnow)
 
     def __repr__(self) -> str:
         return f"MemoryBlockRecord(id={self.id!r}, agent_id={self.agent_id!r}, label={self.label!r})"

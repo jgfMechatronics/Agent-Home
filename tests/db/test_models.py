@@ -1,4 +1,3 @@
-import asyncio
 import re
 import uuid
 from typing import Any
@@ -63,8 +62,9 @@ async def assert_timestamps_auto_populated(session: AsyncSession, record: Any):
 
 
 async def assert_updated_at_bumps_on_modify(session: AsyncSession, record: Any, modify_fn):
-    """Verify updated_at bumps when record is modified (tests onupdate=func.now() behavior).
-    
+    """Verify updated_at bumps when record is modified (tests onupdate=datetime.now behavior).
+
+    onupdate is evaluated Python-side with microsecond precision, so no sleep needed.
     modify_fn: Callable that mutates the record (e.g., lambda r: setattr(r, "name", "new")).
     """
     session.add(record)  # no-op if already in session
@@ -72,9 +72,6 @@ async def assert_updated_at_bumps_on_modify(session: AsyncSession, record: Any, 
     await session.refresh(record)
 
     original_updated_at = record.updated_at
-
-    # Sleep to ensure timestamp difference (SQLite has second-level resolution)
-    await asyncio.sleep(1.1)
 
     modify_fn(record)
     await session.commit()
