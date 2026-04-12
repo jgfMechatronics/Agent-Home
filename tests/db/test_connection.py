@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.pool import NullPool
 
+from conftest import SAMPLE_AGENT_CONFIG
 from db.connection import create_sqlite_engine, get_session, init_db
 from db.models import AgentRecord, MessageRecord, MemoryBlockRecord
 
@@ -80,7 +81,7 @@ async def test_get_session_bound_to_provided_engine(tmp_path):
         await init_db(engine_b)
 
         async with get_session(engine_a) as session:
-            session.add(AgentRecord(name="agent-a", agent_config={}))
+            session.add(AgentRecord(name="agent-a", agent_config=SAMPLE_AGENT_CONFIG))
             await session.commit()
 
         async with get_session(engine_b) as session:
@@ -105,7 +106,7 @@ async def test_concurrent_sessions_function_independently(initialized_engine):
     Catches misconfigured pool settings (e.g. StaticPool)."""
     async def write_agent(name: str):
         async with get_session(initialized_engine) as session:
-            session.add(AgentRecord(name=name, agent_config={}))
+            session.add(AgentRecord(name=name, agent_config=SAMPLE_AGENT_CONFIG))
             await session.commit()
 
     await asyncio.gather(write_agent("agent-1"), write_agent("agent-2"))

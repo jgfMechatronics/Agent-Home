@@ -7,7 +7,7 @@ AgentDeps: Dataclass holding request-scoped agent state
 import json
 
 import pytest
-from conftest import SAMPLE_AGENT_CONFIG
+from conftest import SAMPLE_AGENT_CONFIG_DATA
 from pydantic import ValidationError
 
 from agent.types import AgentConfig, AgentDeps
@@ -16,7 +16,7 @@ from agent.types import AgentConfig, AgentDeps
 @pytest.fixture
 def valid_config_data() -> dict:
     """Complete valid config for use as baseline in tests (copy to avoid mutation)."""
-    return SAMPLE_AGENT_CONFIG.copy()
+    return SAMPLE_AGENT_CONFIG_DATA.copy()
 
 
 # --- AgentConfig valid construction ---
@@ -75,8 +75,7 @@ def test_todo_validate_model_name_w_get_model():
     TODO, once get_model implemented validate that str corresponds to a valid AnthropicModel.
     Or, consider just storing model_name as an AnthropicModel and dealing with the DB integration.
     """
-    pass
-
+    pytest.fail()
 
 # --- AgentConfig defaults ---
 

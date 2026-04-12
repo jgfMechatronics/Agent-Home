@@ -7,17 +7,16 @@ from agent.types import AgentConfig, AgentDeps
 from db.models import AgentRecord, Base, MemoryBlockRecord
 
 
-
-SAMPLE_AGENT_CONFIG = {
-    "model_name": "claude-sonnet-4-20250514",
+SAMPLE_AGENT_CONFIG_DATA = { "model_name": "claude-sonnet-4-20250514",
     "tool_names": ["memory_replace", "memory_insert"],
     "soft_compaction_limit": 10000,
 }
 
-def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
-    """Construct AgentDeps from a session and agent record with default config."""
-    return AgentDeps(session=session, agent_id=agent.id, config=AgentConfig(**SAMPLE_AGENT_CONFIG))
+SAMPLE_AGENT_CONFIG = AgentConfig(**SAMPLE_AGENT_CONFIG_DATA)
 
+def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
+    """Construct AgentDeps from a session and agent record."""
+    return AgentDeps(session=session, agent_id=agent.id, config=agent.agent_config)
 
 
 @pytest_asyncio.fixture

@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.types import AgentConfig
 from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, MessageRecord
 
@@ -119,27 +120,15 @@ async def test_agent_record_stores_all_fields(session: AsyncSession):
     await assert_round_trips(session, AgentRecord(**fields), fields)
 
 
-async def test_agent_config_structure(session: AsyncSession, agent_record: AgentRecord):
-    """AgentConfig JSON contains required keys with correct types. Validation responsibility lies with AgentConfig its self
-    So this test is really just a sanity check that we are validating storage and retrieval of an AgentConfig like obj
-    TODO: consider delete once AgentConfig implemented and usage included in agent_record"""
-
-    config = agent_record.agent_config
-    assert isinstance(config["model_name"], str)
-    assert isinstance(config["tool_names"], list)
-    assert all(isinstance(t, str) for t in config["tool_names"])
-    assert isinstance(config["soft_compaction_limit"], int)
-    # is_deletable is optional (has default in AgentConfig), so may not be in raw dict
-    if "is_deletable" in config:
-        assert isinstance(config["is_deletable"], bool)
-
-
-@pytest.mark.xfail(reason="AgentConfig Pydantic model not yet implemented", strict=True)
-def test_agent_config_typed_model_todo():
-    """TODO: AgentRecord.agent_config should serialize/deserialize through a typed AgentConfig
-    Pydantic model rather than a plain dict. When implemented, replace test_agent_config_structure
-    with a round-trip test against an actual AgentConfig instance."""
-    pytest.fail("AgentConfig Pydantic model not yet implemented")
+async def test_agent_config_roundtrip_via_type_decorator(session: AsyncSession):
+    """AgentConfig round-trips through the DB: stored as JSON, loaded back as an AgentConfig instance."""
+    config = SAMPLE_AGENT_CONFIG
+    agent = AgentRecord(name="roundtrip-test", agent_config=config.model_copy())
+    session.add(agent)
+    await session.flush()
+    await session.refresh(agent)
+    assert isinstance(agent.agent_config, AgentConfig)
+    assert agent.agent_config == config
 
 
 async def test_agent_record_defaults(session: AsyncSession):

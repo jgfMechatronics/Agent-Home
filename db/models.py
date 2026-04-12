@@ -3,8 +3,34 @@ import uuid
 
 from sqlalchemy import ForeignKey, Index, JSON, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
+
+from agent.types import AgentConfig
 
 # TODO: Consider upgrading to UUID7 as a sortable UUID fallback if timestamps fail, but if timestamps fail we may be in trouble regardless
+
+
+class AgentConfigType(TypeDecorator):
+    """Stores AgentConfig as JSON in DB, exposes as AgentConfig instance in Python."""
+
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(self, value, _dialect):
+        """Python → Database (when writing/updating)."""
+        if value is None:
+            return None
+        if not isinstance(value, AgentConfig):
+            raise TypeError(f"Expected AgentConfig, got {type(value).__name__}")
+        return value.model_dump()
+
+    def process_result_value(self, value, _dialect):
+        """Database → Python (when reading/loading)."""
+        if value is None:
+            return None
+        # Migration logic can be added here: value.setdefault("new_field", default)
+        return AgentConfig.model_validate(value)
+
 
 class Base(DeclarativeBase):
     pass
@@ -15,7 +41,7 @@ class AgentRecord(Base):
 
     id: Mapped[str] = mapped_column(primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str]
-    agent_config: Mapped[dict] = mapped_column(JSON)
+    agent_config: Mapped[AgentConfig] = mapped_column(AgentConfigType())
     system_instructions: Mapped[str] = mapped_column(default='')
     compiled_system_prompt: Mapped[str] = mapped_column(default='')
     sys_prompt_compiled_at: Mapped[datetime | None]
