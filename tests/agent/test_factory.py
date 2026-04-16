@@ -12,6 +12,7 @@ import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pytest_mock import MockerFixture
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,10 +23,29 @@ from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord
 
 
-# --- Fixtures ---
+# --- Constants ---
 
 NONEXISTENT_AGENT_ID = "nonexistent-agent-id-12345"
 
+
+# --- Helpers ---
+
+def create_spied_lock(agent_id: str, lock_reg: dict, mocker: MockerFixture) -> asyncio.Lock:
+    """Create a lock, register it, and spy on acquire/release."""
+    lock = asyncio.Lock()
+    lock_reg[agent_id] = lock
+    mocker.spy(lock, "acquire")
+    mocker.spy(lock, "release")
+    return lock
+
+
+def assert_lock_acquired_and_released(lock: asyncio.Lock) -> None:
+    """Assert acquire and release were each called exactly once."""
+    assert lock.acquire.call_count == 1
+    assert lock.release.call_count == 1
+
+
+# --- Fixtures ---
 
 @pytest.fixture
 def lock_reg() -> dict[str, asyncio.Lock]:
@@ -43,9 +63,11 @@ def agent_factory(lock_reg: dict, session: AsyncSession) -> AgentFactory:
 
 def test_get_model_returns_model_for_valid_name():
     """get_model should return an AnthropicModel instance for a valid model name."""
-    model = get_model("claude-sonnet-4-20250514")
+    model_str = "claude-sonnet-4-20250514"
+    model = get_model(model_str)
     
     assert isinstance(model, AnthropicModel)
+    assert model.model_name == model_str
 
 
 @pytest.mark.parametrize("invalid_name", [
@@ -56,7 +78,8 @@ def test_get_model_returns_model_for_valid_name():
 ])
 def test_get_model_raises_for_invalid_name(invalid_name: str):
     """get_model should raise for unknown/unsupported model names."""
-    with pytest.raises((ValueError, KeyError)):
+    # TODO: Match exception in implementation when set
+    with pytest.raises((ValueError)):
         get_model(invalid_name)
 
 
@@ -93,19 +116,22 @@ async def test_get_deps_yields_deps_with_expected_fields(
         assert isinstance(deps, AgentDeps)
         assert deps.agent_id == agent_record.id
         assert deps.session is agent_factory._session
-        assert isinstance(deps.config, AgentConfig)
-        assert deps.config.model_name == agent_record.agent_config.model_name
+        assert deps.config == agent_record.agent_config
 
 
 @pytest.mark.asyncio
-async def test_get_deps_acquires_and_releases_lock(
+async def test_get_deps_creates_acquires_and_releases_lock(
     agent_factory: AgentFactory,
     agent_record: AgentRecord,
     lock_reg: dict,
 ):
-    """get_deps should acquire lock before yielding and release after exit."""
+    """get_deps should create lock if needed, acquire before yield, release after exit."""
+    # Verify lock doesn't exist yet
+    assert agent_record.id not in lock_reg
+    
     async with agent_factory.get_deps(agent_record.id) as deps:
-        # Inside the context, the lock should be held
+        # Lock should have been created and held
+        assert agent_record.id in lock_reg
         lock = lock_reg[agent_record.id]
         assert lock.locked()
     
@@ -114,40 +140,58 @@ async def test_get_deps_acquires_and_releases_lock(
 
 
 @pytest.mark.asyncio
+async def test_get_deps_acquires_and_releases_existing_lock(
+    agent_factory: AgentFactory,
+    agent_record: AgentRecord,
+    lock_reg: dict,
+    mocker: MockerFixture,
+):
+    """get_deps should acquire and release an existing lock (verified via spy)."""
+    lock = create_spied_lock(agent_record.id, lock_reg, mocker)
+
+    async with agent_factory.get_deps(agent_record.id) as deps:
+        assert lock.locked()
+
+    assert_lock_acquired_and_released(lock)
+
+
+@pytest.mark.asyncio
 async def test_get_deps_releases_lock_on_exception(
     agent_factory: AgentFactory,
     agent_record: AgentRecord,
     lock_reg: dict,
+    mocker: MockerFixture,
 ):
     """get_deps should release the lock even if an exception is raised inside the context."""
+    lock = create_spied_lock(agent_record.id, lock_reg, mocker)
+
     with pytest.raises(RuntimeError):
         async with agent_factory.get_deps(agent_record.id) as deps:
             raise RuntimeError("Intentional test error")
-    
-    # Lock should still be released
-    lock = lock_reg[agent_record.id]
-    assert not lock.locked()
+
+    assert_lock_acquired_and_released(lock)
 
 
 @pytest.mark.asyncio
 async def test_get_deps_raises_and_releases_lock_on_fetch_failure(
     agent_factory: AgentFactory,
     lock_reg: dict,
+    mocker: MockerFixture,
 ):
     """get_deps should raise for unknown agent_id AND release lock on failure.
-    
+
     Design decision: lock-then-fetch. The lock must be acquired BEFORE the DB fetch
     to prevent concurrent runs from seeing stale state. This means if the fetch fails,
     the lock was already acquired and must be released via try/finally.
     """
-    # TODO: Narrow to specific NotFound exception once we define it
+    lock = create_spied_lock(NONEXISTENT_AGENT_ID, lock_reg, mocker)
+
+    # TODO: Narrow to specific NotFound or whatever exception once we define it
     with pytest.raises(Exception):
         async with agent_factory.get_deps(NONEXISTENT_AGENT_ID) as deps:
             pass
-    
-    # Lock-then-fetch: lock was created before DB call, must be released after failure
-    assert NONEXISTENT_AGENT_ID in lock_reg, "Lock should have been created before fetch"
-    assert not lock_reg[NONEXISTENT_AGENT_ID].locked(), "Lock should be released after fetch failure"
+
+    assert_lock_acquired_and_released(lock)
 
 
 # --- get_deps concurrency tests ---
@@ -182,7 +226,11 @@ async def test_get_deps_concurrent_different_agents_no_block(
     agent_factory: AgentFactory,
     session: AsyncSession,
 ):
-    """Concurrent calls on different agent_ids should not block each other."""
+    """
+    Concurrent calls on different agent_ids should not block each other.
+    Note: technically the behavior in usage will be distinct agent factories per request so
+    we will have seperate agent factories handling concurrent diff agents, but this test is close enough
+    """
     # Create two agents for this test
     agent_a = AgentRecord(
         name="agent-a", 
@@ -253,42 +301,59 @@ async def test_build_agent_and_deps_uses_correct_model(
     agent_record: AgentRecord,
 ):
     """Constructed agent should use the model from agent_config.model_name."""
+    agent_record.agent_config.model_name = "claude-sonnet-4-20250514"
     async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
         # Agent.model is the model instance used for this agent
         assert isinstance(agent.model, AnthropicModel)
-        # TODO: Check AnthropicModel API for model_name attribute instead of fragile str() check
-        # For now, verify it's the right type; exact model name check deferred to implementation
+        assert agent.model.model_name == agent_record.agent_config.model_name
 
 
-@pytest.mark.xfail(reason="Cache settings are run-time (model_settings), not construction-time. Test belongs in run/integration tests.")
-@pytest.mark.asyncio 
+@pytest.mark.asyncio
 async def test_build_agent_and_deps_has_cache_settings(
     agent_factory: AgentFactory,
     agent_record: AgentRecord,
 ):
-    """Constructed agent should have Anthropic cache settings enabled.
-    
-    Note: anthropic_cache_* settings are passed via model_settings at run time,
-    not at Agent construction. This test should verify that when we run the agent,
-    we pass the correct settings. Moving to integration tests.
+    """Constructed agent should have Anthropic prompt caching enabled in model_settings.
+
+    model_settings is passed at Agent construction and is directly inspectable via
+    agent.model_settings. All three cache flags should be set to enable caching on
+    system instructions, tool definitions, and the last user message.
     """
-    pytest.fail("Cache settings verified at run time, not construction")
+    async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
+        settings = agent.model_settings
+        assert settings.get("anthropic_cache_instructions") == True, "System prompt caching should be enabled with default TTL (5m)"
+        assert settings.get("anthropic_cache_tool_definitions") == True, "Tool definition caching should be enabled with default TTL (5m)"
+        assert settings.get("anthropic_cache_messages") == True, "Message caching should be enabled with default TTL (5m)"
 
 
 @pytest.mark.asyncio
-async def test_build_agent_and_deps_has_correct_tools(
+async def test_build_agent_and_deps_agent_has_correct_tools(
     agent_factory: AgentFactory,
     agent_record: AgentRecord,
 ):
     """Constructed agent should have tools matching agent_config.tool_names.
-    
-    Note: This test verifies get_tools_for_agent is called correctly. Verifying
-    the Agent actually received the tools requires checking Agent API during impl.
+
+    get_tools_for_agent (Section 3.2) is mocked with real dummy callables so
+    Pydantic AI can register them. We verify both that get_tools_for_agent was
+    called with the correct tool_names, and that the returned tools are actually
+    present on the constructed agent.
+
+    Note: inspects agent._function_toolset.tools (private API) — stable enough
+    for tests, but worth revisiting if Pydantic AI changes internals.
     """
-    # Mock get_tools_for_agent since it's Section 3.2
-    mock_tools = [MagicMock(name="memory_replace"), MagicMock(name="memory_insert")]
-    
-    with patch("agent.factory.get_tools_for_agent", return_value=mock_tools) as mock_get_tools:
+    def memory_replace(x: str) -> str:
+        """Stub for memory_replace."""
+        return x
+
+    def memory_insert(x: str) -> str:
+        """Stub for memory_insert."""
+        return x
+
+    stub_tools = [memory_replace, memory_insert]
+    expected_tool_names = {"memory_replace", "memory_insert"}
+
+    with patch("agent.factory.get_tools_for_agent", return_value=stub_tools) as mock_get_tools:
         async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
-            # Verify get_tools_for_agent was called with the agent's tool_names
             mock_get_tools.assert_called_once_with(agent_record.agent_config.tool_names)
+            actual_tool_names = set(agent._function_toolset.tools.keys())
+            assert actual_tool_names == expected_tool_names
