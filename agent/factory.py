@@ -12,7 +12,8 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentDeps
-
+from db.models import AgentRecord
+from memory.system_prompt_compilation import get_system_prompt
 
 class AgentFactory:
     """Per-request factory for building agents with locking.
@@ -28,7 +29,7 @@ class AgentFactory:
     def __init__(self, lock_reg: dict[str, asyncio.Lock], session: AsyncSession):
         """Initialize factory with shared lock registry and per-request session."""
         self._lock_reg = lock_reg
-        self._session = session
+        self._session = session # TODO: session also lives and is passed around in deps. ref spaghetti?
     
     def _get_lock(self, agent_id: str) -> asyncio.Lock:
         """Get or create a lock for the given agent_id from the registry."""
@@ -41,17 +42,35 @@ class AgentFactory:
         Lock-then-fetch: acquires lock BEFORE fetching from DB to prevent stale state.
         Releases lock on exit (normal or exception) via try/finally.
         """
-        pass
-        yield  # type: ignore
-    
+        lock = self._get_lock(agent_id)
+        await lock.acquire()
+
+        try:
+            agent_record = await self._session.get(AgentRecord, agent_id)
+            if agent_record is None:
+                raise ValueError
+                        
+            config = agent_record.agent_config
+            deps = AgentDeps(self._session, agent_id, config)    
+            yield deps
+        finally:
+            lock.release()
+            
+
     @asynccontextmanager
     async def build_agent_and_deps(self, agent_id: str) -> AsyncIterator[tuple[Agent, AgentDeps]]:
         """Async context manager that yields a configured (Agent, AgentDeps) tuple.
         
         Wraps get_deps and constructs the Pydantic AI Agent with correct model and tools.
         """
-        pass
-        yield  # type: ignore
+        agent_record = await self._session.get(AgentRecord, agent_id)
+
+        async with self.get_deps(agent_id) as deps:
+            model = get_model(deps.config.model_name)
+            agent = Agent(model,
+                          instructions=get_system_prompt
+                          #TODO Left off here
+                          )
 
 
 def get_model(model_name: str) -> AnthropicModel:

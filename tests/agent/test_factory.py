@@ -187,7 +187,7 @@ async def test_get_deps_raises_and_releases_lock_on_fetch_failure(
     lock = create_spied_lock(NONEXISTENT_AGENT_ID, lock_reg, mocker)
 
     # TODO: Narrow to specific NotFound or whatever exception once we define it
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         async with agent_factory.get_deps(NONEXISTENT_AGENT_ID) as deps:
             pass
 
@@ -357,3 +357,12 @@ async def test_build_agent_and_deps_agent_has_correct_tools(
             mock_get_tools.assert_called_once_with(agent_record.agent_config.tool_names)
             actual_tool_names = set(agent._function_toolset.tools.keys())
             assert actual_tool_names == expected_tool_names
+
+
+"""
+TODO: Test agent has expected:
+- instructions getting function
+
+"""
+def test_more_agent_properties():
+    pytest.fail()
