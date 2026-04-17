@@ -1,5 +1,10 @@
+import os
+
 import pytest_asyncio
 from sqlalchemy import event
+
+# Prevent AnthropicModel construction from failing in tests that don't make real API calls
+os.environ.setdefault("ANTHROPIC_API_KEY", "test")
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
