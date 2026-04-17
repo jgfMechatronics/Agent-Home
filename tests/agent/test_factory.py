@@ -117,6 +117,7 @@ async def test_get_deps_yields_deps_with_expected_fields(
         assert deps.agent_id == agent_record.id
         assert deps.session is agent_factory._session
         assert deps.config == agent_record.agent_config
+        assert deps.name == agent_record.name
 
 
 @pytest.mark.asyncio

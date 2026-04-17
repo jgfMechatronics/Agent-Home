@@ -135,7 +135,7 @@ def test_agentconfig_rejects_extra_fields(valid_config_data: dict):
 
 # --- AgentDeps ---
 
-@pytest.mark.parametrize("missing_field", ["session", "agent_id", "config"])
+@pytest.mark.parametrize("missing_field", ["session", "agent_id", "config", "name"])
 def test_agentdeps_requires_field(valid_config_data: dict, missing_field: str):
     """AgentDeps should raise TypeError when required field is missing."""
     config = AgentConfig(**valid_config_data)
@@ -145,6 +145,7 @@ def test_agentdeps_requires_field(valid_config_data: dict, missing_field: str):
         "session": mock_session,
         "agent_id": "test-agent-id",
         "config": config,
+        "name": "test-agent",
     }
     del all_fields[missing_field]
     
@@ -166,9 +167,11 @@ def test_agentdeps_holds_expected_fields(valid_config_data: dict):
         session=mock_session,
         agent_id="test-agent-id",
         config=config,
+        name="test-agent",
     )
     
     assert deps.agent_id == "test-agent-id"
     assert deps.session is mock_session
     assert deps.config is config
     assert deps.config.model_name == valid_config_data["model_name"]
+    assert deps.name == "test-agent"

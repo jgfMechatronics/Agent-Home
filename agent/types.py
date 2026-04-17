@@ -57,3 +57,4 @@ class AgentDeps:
     session: AsyncSession
     agent_id: str
     config: AgentConfig
+    name: str

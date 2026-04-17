@@ -5,16 +5,16 @@ Provides per-request AgentFactory for acquiring agent locks, loading deps, and b
 """
 import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, get_args
 
 from pydantic_ai import Agent, DeferredToolRequests
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentDeps
 from db.models import AgentRecord
 from memory.system_prompt_compilation import get_system_prompt
-from tools import get_tools_for_agent
+from agent.tools import get_tools_for_agent
 
 class AgentFactory:
     """Per-request factory for building agents with locking.
@@ -34,7 +34,10 @@ class AgentFactory:
     
     def _get_lock(self, agent_id: str) -> asyncio.Lock:
         """Get or create a lock for the given agent_id from the registry."""
-        pass
+        # TODO: JF Review
+        if agent_id not in self._lock_reg:
+            self._lock_reg[agent_id] = asyncio.Lock()
+        return self._lock_reg[agent_id]
     
     @asynccontextmanager
     async def get_deps(self, agent_id: str) -> AsyncIterator[AgentDeps]:
@@ -52,7 +55,7 @@ class AgentFactory:
                 raise ValueError
                         
             config = agent_record.agent_config
-            deps = AgentDeps(self._session, agent_id, config)
+            deps = AgentDeps(self._session, agent_id, config, agent_record.name)
             yield deps
         finally:
             lock.release()
@@ -69,7 +72,7 @@ class AgentFactory:
             agent = Agent(model,
                           instructions=get_system_prompt,
                           deps_type=AgentDeps,
-                          name=agent_record.name,
+                          name=deps.name,
                           tools=get_tools_for_agent(deps.config.tool_names),
                           output_type=[str, DeferredToolRequests],
                           model_settings=AnthropicModelSettings(
@@ -77,8 +80,21 @@ class AgentFactory:
                               anthropic_cache_tool_definitions=True,
                               anthropic_cache_messages=True,
                           ))
+            
+            yield (agent, deps)
+
+
+_VALID_MODEL_NAMES: frozenset[str] = frozenset(
+    name for arg in get_args(AnthropicModelName) for name in get_args(arg) if isinstance(name, str)
+)
 
 
 def get_model(model_name: str) -> AnthropicModel:
-    """Map a model name string to a Pydantic AI model instance."""
-    pass
+    """Map a model name string to a Pydantic AI model instance.
+    
+    Raises ValueError for unknown or unsupported model names.
+    """
+    #TODO: JF Review
+    if model_name not in _VALID_MODEL_NAMES:
+        raise ValueError(f"Unsupported model name: {model_name!r}. Must be one of: {sorted(_VALID_MODEL_NAMES)}")
+    return AnthropicModel(model_name)
