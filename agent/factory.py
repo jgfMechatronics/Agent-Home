@@ -5,7 +5,7 @@ Provides per-request AgentFactory for acquiring agent locks, loading deps, and b
 """
 import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, get_args
+from typing import AsyncIterator, Literal, get_args, get_origin
 
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
@@ -34,7 +34,7 @@ class AgentFactory:
     
     def _get_lock(self, agent_id: str) -> asyncio.Lock:
         """Get or create a lock for the given agent_id from the registry."""
-        # TODO: JF Review
+        # TODO: Memory leak on garbage agent_IDs or if there are a TON of registered agents being invoked
         if agent_id not in self._lock_reg:
             self._lock_reg[agent_id] = asyncio.Lock()
         return self._lock_reg[agent_id]
@@ -62,10 +62,11 @@ class AgentFactory:
             
 
     @asynccontextmanager
-    async def build_agent_and_deps(self, agent_id: str) -> AsyncIterator[tuple[Agent, AgentDeps]]:
+    async def build_agent_and_deps(self, agent_id: str) -> AsyncIterator[tuple[Agent[AgentDeps, DeferredToolRequests | str], AgentDeps]]:
         """Async context manager that yields a configured (Agent, AgentDeps) tuple.
         
         Wraps get_deps and constructs the Pydantic AI Agent with correct model and tools.
+        TODO: Sanity check the DeferredToolRequests thing, JF doesn't really understand whats going on there anymore
         """
         async with self.get_deps(agent_id) as deps:
             model = get_model(deps.config.model_name)
@@ -84,9 +85,10 @@ class AgentFactory:
             yield (agent, deps)
 
 
-_VALID_MODEL_NAMES: frozenset[str] = frozenset(
-    name for arg in get_args(AnthropicModelName) for name in get_args(arg) if isinstance(name, str)
-)
+# AnthropicModelName is defined as str | Literal['claude-...', ...]. The str union arm is an
+# escape hatch for forward compatibility — we want only the known Literal values for validation.
+_literal_type = next(arg for arg in get_args(AnthropicModelName) if get_origin(arg) is Literal)
+_VALID_MODEL_NAMES: frozenset[str] = frozenset(get_args(_literal_type))
 
 
 def get_model(model_name: str) -> AnthropicModel:
