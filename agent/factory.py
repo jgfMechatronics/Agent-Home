@@ -7,13 +7,14 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentDeps
 from db.models import AgentRecord
 from memory.system_prompt_compilation import get_system_prompt
+from tools import get_tools_for_agent
 
 class AgentFactory:
     """Per-request factory for building agents with locking.
@@ -51,7 +52,7 @@ class AgentFactory:
                 raise ValueError
                         
             config = agent_record.agent_config
-            deps = AgentDeps(self._session, agent_id, config)    
+            deps = AgentDeps(self._session, agent_id, config)
             yield deps
         finally:
             lock.release()
@@ -63,14 +64,19 @@ class AgentFactory:
         
         Wraps get_deps and constructs the Pydantic AI Agent with correct model and tools.
         """
-        agent_record = await self._session.get(AgentRecord, agent_id)
-
         async with self.get_deps(agent_id) as deps:
             model = get_model(deps.config.model_name)
             agent = Agent(model,
-                          instructions=get_system_prompt
-                          #TODO Left off here
-                          )
+                          instructions=get_system_prompt,
+                          deps_type=AgentDeps,
+                          name=agent_record.name,
+                          tools=get_tools_for_agent(deps.config.tool_names),
+                          output_type=[str, DeferredToolRequests],
+                          model_settings=AnthropicModelSettings(
+                              anthropic_cache_instructions=True,
+                              anthropic_cache_tool_definitions=True,
+                              anthropic_cache_messages=True,
+                          ))
 
 
 def get_model(model_name: str) -> AnthropicModel:
