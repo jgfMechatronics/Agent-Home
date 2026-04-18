@@ -12,6 +12,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
+import pytest_asyncio
 from pytest_mock import MockerFixture
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -271,96 +272,70 @@ async def test_get_deps_concurrent_different_agents_no_block(
 
 # --- AgentFactory.build_agent_and_deps tests ---
 
-@pytest.fixture
-def mock_tools():
-    """Patch get_tools_for_agent to return an empty list.
-    
-    Used by build_agent_and_deps tests that don't exercise tool behavior directly,
-    since get_tools_for_agent is not yet implemented (Section 3.2).
+class TestBuildAgentAndDeps:
+    """Tests for AgentFactory.build_agent_and_deps.
+
+    All tests patch get_tools_for_agent → [] to isolate agent construction from
+    tool behavior. Tool injection is tested separately below.
     """
-    with patch("agent.factory.get_tools_for_agent", return_value=[]):
-        yield
 
-@pytest.mark.asyncio
-async def test_build_agent_and_deps_yields_tuple(
-    agent_factory: AgentFactory,
-    agent_record: AgentRecord,
-    mock_tools,
-):
-    """build_agent_and_deps should yield a valid (agent, deps) tuple."""
-    async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
-        assert isinstance(agent, Agent)
-        assert isinstance(deps, AgentDeps)
+    @pytest_asyncio.fixture(autouse=True)
+    async def _setup(
+        self,
+        agent_factory: AgentFactory,
+        agent_record: AgentRecord,
+        lock_reg: dict,
+    ):
+        self.factory = agent_factory
+        self.agent_record = agent_record
+        self.lock_reg = lock_reg
+        with patch("agent.factory.get_tools_for_agent", return_value=[]):
+            yield
 
+    async def test_yields_tuple(self):
+        """build_agent_and_deps should yield a valid (agent, deps) tuple."""
+        async with self.factory.build_agent_and_deps(self.agent_record.id) as (agent, deps):
+            assert isinstance(agent, Agent)
+            assert isinstance(deps, AgentDeps)
 
-@pytest.mark.asyncio
-async def test_build_agent_and_deps_holds_lock(
-    agent_factory: AgentFactory,
-    agent_record: AgentRecord,
-    lock_reg: dict,
-    mock_tools,
-):
-    """build_agent_and_deps should hold the lock for the duration of the context."""
-    async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
-        lock = lock_reg[agent_record.id]
-        assert lock.locked()
-    
-    # Released after exit
-    assert not lock_reg[agent_record.id].locked()
+    async def test_holds_lock(self):
+        """build_agent_and_deps should hold the lock for the duration of the context."""
+        async with self.factory.build_agent_and_deps(self.agent_record.id) as (agent, deps):
+            assert self.lock_reg[self.agent_record.id].locked()
 
+        assert not self.lock_reg[self.agent_record.id].locked()
 
-@pytest.mark.asyncio
-async def test_build_agent_and_deps_uses_correct_model(
-    agent_factory: AgentFactory,
-    agent_record: AgentRecord,
-    mock_tools,
-):
-    """Constructed agent should use the model from agent_config.model_name."""
-    agent_record.agent_config.model_name = "claude-sonnet-4-20250514"
-    async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
-        # Agent.model is the model instance used for this agent
-        assert isinstance(agent.model, AnthropicModel)
-        assert agent.model.model_name == agent_record.agent_config.model_name
+    async def test_uses_correct_model(self):
+        """Constructed agent should use the model from agent_config.model_name."""
+        self.agent_record.agent_config.model_name = "claude-sonnet-4-20250514"
+        async with self.factory.build_agent_and_deps(self.agent_record.id) as (agent, deps):
+            assert isinstance(agent.model, AnthropicModel)
+            assert agent.model.model_name == self.agent_record.agent_config.model_name
 
+    async def test_has_cache_settings(self):
+        """Constructed agent should have Anthropic prompt caching enabled in model_settings.
 
-@pytest.mark.asyncio
-async def test_build_agent_and_deps_has_cache_settings(
-    agent_factory: AgentFactory,
-    agent_record: AgentRecord,
-    mock_tools,
-):
-    """Constructed agent should have Anthropic prompt caching enabled in model_settings.
+        model_settings is passed at Agent construction and is directly inspectable via
+        agent.model_settings. All three cache flags should be set to enable caching on
+        system instructions, tool definitions, and the last user message.
+        """
+        async with self.factory.build_agent_and_deps(self.agent_record.id) as (agent, deps):
+            settings = agent.model_settings
+            assert settings.get("anthropic_cache_instructions") == True, "System prompt caching should be enabled with default TTL (5m)"
+            assert settings.get("anthropic_cache_tool_definitions") == True, "Tool definition caching should be enabled with default TTL (5m)"
+            assert settings.get("anthropic_cache_messages") == True, "Message caching should be enabled with default TTL (5m)"
 
-    model_settings is passed at Agent construction and is directly inspectable via
-    agent.model_settings. All three cache flags should be set to enable caching on
-    system instructions, tool definitions, and the last user message.
-    """
-    async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
-        settings = agent.model_settings
-        assert settings.get("anthropic_cache_instructions") == True, "System prompt caching should be enabled with default TTL (5m)"
-        assert settings.get("anthropic_cache_tool_definitions") == True, "Tool definition caching should be enabled with default TTL (5m)"
-        assert settings.get("anthropic_cache_messages") == True, "Message caching should be enabled with default TTL (5m)"
+    async def test_misc_agent_settings(self):
+        """Constructed agent should have name, deps_type, instructions, and output_type correctly set.
 
-
-@pytest.mark.asyncio
-async def test_build_agent_and_deps_misc_agent_settings(
-    agent_factory: AgentFactory,
-    agent_record: AgentRecord,
-):
-    """Constructed agent should have name, deps_type, instructions, and output_type correctly set.
-
-    These settings are not derived from per-agent config (except name) but are critical
-    for correct agent behavior. Uses private pydantic_ai internals (_deps_type,
-    _instructions, _output_schema) — consistent with the tools test.
-    """
-    with patch("agent.factory.get_tools_for_agent", return_value=[]):
-        async with agent_factory.build_agent_and_deps(agent_record.id) as (agent, deps):
-            assert agent.name == agent_record.name, "Agent name should come from the agent record"
-
+        These settings are not derived from per-agent config (except name) but are critical
+        for correct agent behavior. Uses private pydantic_ai internals (_deps_type,
+        _instructions, _output_schema) — consistent with the tools test.
+        """
+        async with self.factory.build_agent_and_deps(self.agent_record.id) as (agent, deps):
+            assert agent.name == self.agent_record.name, "Agent name should come from the agent record"
             assert agent._deps_type is AgentDeps, "deps_type must be AgentDeps for tool functions to receive correct deps"
-
             assert get_system_prompt in agent._instructions, "get_system_prompt must be registered as the instructions function"
-
             assert agent._output_schema.allows_deferred_tools, "output_type must include DeferredToolRequests for the tool approval flow"
 
 
