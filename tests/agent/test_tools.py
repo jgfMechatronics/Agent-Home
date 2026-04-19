@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
+from pydantic_ai.exceptions import ModelRetry
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.tools import (
@@ -200,13 +201,13 @@ class TestMemoryToolsShared:
         pytest.param(memory_replace, MEMORY_REPLACE_ARGS, id="memory_replace"),
         pytest.param(memory_insert, MEMORY_INSERT_ARGS, id="memory_insert"),
     ])
-    async def test_returns_error_if_label_not_found(
+    async def test_raises_if_label_not_found(
         self, agent_with_editable_block, tool_fn, valid_args
     ):
-        """Tool returns error string when label doesn't exist for this agent."""
+        """Tool raises ModelRetry when label doesn't exist for this agent."""
         ctx = agent_with_editable_block["ctx"]
-        result = await tool_fn(ctx, label="nonexistent", **valid_args)
-        assert "not found" in result.lower()
+        with pytest.raises(ModelRetry, match="not found"):
+            await tool_fn(ctx, label="nonexistent", **valid_args)
 
     @pytest.mark.parametrize("tool_fn,valid_args,expected_content", [
         pytest.param(
@@ -247,13 +248,13 @@ class TestMemoryToolsShared:
             id="memory_insert",
         ),
     ])
-    async def test_returns_error_if_exceeds_char_limit(
+    async def test_raises_if_exceeds_char_limit(
         self, agent_with_editable_block, tool_fn, overflow_args
     ):
-        """Tool returns error string when result would exceed char_limit."""
+        """Tool raises ModelRetry when result would exceed char_limit."""
         ctx = agent_with_editable_block["ctx"]
-        result = await tool_fn(ctx, label="notes", **overflow_args)
-        assert "limit" in result.lower() or "exceed" in result.lower()
+        with pytest.raises(ModelRetry, match="char_limit"):
+            await tool_fn(ctx, label="notes", **overflow_args)
 
     @pytest.mark.parametrize("tool_fn,valid_args", [
         pytest.param(memory_replace, MEMORY_REPLACE_ARGS, id="memory_replace"),
@@ -305,13 +306,13 @@ class TestMemoryToolsShared:
             id="memory_insert",
         ),
     ])
-    async def test_returns_error_if_multiple_matches_without_occurrence(
+    async def test_raises_if_multiple_matches_without_occurrence(
         self, agent_with_repeated_content, tool_fn, ambiguous_args
     ):
-        """Tool returns error when target appears multiple times and occurrence not specified."""
+        """Tool raises ModelRetry when target appears multiple times and occurrence not specified."""
         ctx = agent_with_repeated_content["ctx"]
-        result = await tool_fn(ctx, label="notes", **ambiguous_args)
-        assert "multiple" in result.lower() or "ambiguous" in result.lower() or "occurrence" in result.lower()
+        with pytest.raises(ModelRetry, match="appears.*times"):
+            await tool_fn(ctx, label="notes", **ambiguous_args)
 
     @pytest.mark.parametrize("tool_fn,not_found_args", [
         pytest.param(
@@ -325,13 +326,13 @@ class TestMemoryToolsShared:
             id="memory_insert",
         ),
     ])
-    async def test_returns_error_if_target_not_found(
+    async def test_raises_if_target_not_found(
         self, agent_with_editable_block, tool_fn, not_found_args
     ):
-        """Tool returns error when old_string/after not found in block."""
+        """Tool raises ModelRetry when old_string/after not found in block."""
         ctx = agent_with_editable_block["ctx"]
-        result = await tool_fn(ctx, label="notes", **not_found_args)
-        assert "not found" in result.lower()
+        with pytest.raises(ModelRetry, match="not found"):
+            await tool_fn(ctx, label="notes", **not_found_args)
 
     @pytest.mark.parametrize("tool_fn,occurrence_args", [
         pytest.param(
@@ -345,14 +346,14 @@ class TestMemoryToolsShared:
             id="memory_insert",
         ),
     ])
-    async def test_returns_error_if_occurrence_exceeds_count(
+    async def test_raises_if_occurrence_exceeds_count(
         self, agent_with_repeated_content, tool_fn, occurrence_args
     ):
-        """Tool returns error when occurrence=N but fewer than N occurrences exist."""
+        """Tool raises ModelRetry when occurrence=N but fewer than N occurrences exist."""
         ctx = agent_with_repeated_content["ctx"]
         # "foo" appears 3 times, requesting 5th
-        result = await tool_fn(ctx, label="notes", **occurrence_args)
-        assert "occurrence" in result.lower() or "not found" in result.lower()
+        with pytest.raises(ModelRetry, match="occurrence.*not found"):
+            await tool_fn(ctx, label="notes", **occurrence_args)
 
     @pytest.mark.parametrize("tool_fn,empty_args", [
         pytest.param(
@@ -366,13 +367,13 @@ class TestMemoryToolsShared:
             id="memory_insert_empty_after",
         ),
     ])
-    async def test_returns_error_if_target_empty(
+    async def test_raises_if_target_empty(
         self, agent_with_editable_block, tool_fn, empty_args
     ):
-        """Tool returns error when old_string/after is empty."""
+        """Tool raises ModelRetry when old_string/after is empty."""
         ctx = agent_with_editable_block["ctx"]
-        result = await tool_fn(ctx, label="notes", **empty_args)
-        assert "empty" in result.lower() or "required" in result.lower()
+        with pytest.raises(ModelRetry, match="empty"):
+            await tool_fn(ctx, label="notes", **empty_args)
 
 
 # =============================================================================
@@ -395,13 +396,13 @@ class TestMemoryReplace:
         # Snippet should contain the new text
         assert "REPLACED." in result
 
-    async def test_occurrence_zero_returns_error(self, agent_with_repeated_content):
-        """occurrence=0 returns clear error about 1-indexing."""
+    async def test_occurrence_zero_raises(self, agent_with_repeated_content):
+        """occurrence=0 raises ModelRetry about 1-indexing."""
         ctx = agent_with_repeated_content["ctx"]
-        result = await memory_replace(
-            ctx, label="notes", old_string="foo", new_string="X", occurrence=0
-        )
-        assert "must be >= 1" in result or "1-indexed" in result
+        with pytest.raises(ModelRetry, match="must be >= 1"):
+            await memory_replace(
+                ctx, label="notes", old_string="foo", new_string="X", occurrence=0
+            )
 
     async def test_occurrence_targets_nth_match(self, agent_with_repeated_content):
         """occurrence=N replaces the Nth occurrence (1-indexed)."""
@@ -453,21 +454,21 @@ class TestMemoryInsert:
         # Snippet should contain the inserted text
         assert "PREPENDED" in result
 
-    async def test_occurrence_with_start_returns_error(self, agent_with_editable_block):
+    async def test_occurrence_with_start_raises(self, agent_with_editable_block):
         """occurrence cannot be used with '<start>'."""
         ctx = agent_with_editable_block["ctx"]
-        result = await memory_insert(
-            ctx, label="notes", content="X", after="<start>", occurrence=1
-        )
-        assert "cannot be used" in result.lower()
+        with pytest.raises(ModelRetry, match="cannot be used"):
+            await memory_insert(
+                ctx, label="notes", content="X", after="<start>", occurrence=1
+            )
 
-    async def test_occurrence_with_end_returns_error(self, agent_with_editable_block):
+    async def test_occurrence_with_end_raises(self, agent_with_editable_block):
         """occurrence cannot be used with '<end>'."""
         ctx = agent_with_editable_block["ctx"]
-        result = await memory_insert(
-            ctx, label="notes", content="X", after="<end>", occurrence=1
-        )
-        assert "cannot be used" in result.lower()
+        with pytest.raises(ModelRetry, match="cannot be used"):
+            await memory_insert(
+                ctx, label="notes", content="X", after="<end>", occurrence=1
+            )
 
     async def test_after_end_inserts_at_end(self, agent_with_editable_block):
         """after='<end>' inserts content at the end of the block."""
