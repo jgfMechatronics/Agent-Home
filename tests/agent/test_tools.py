@@ -2,8 +2,6 @@
 
 Tests the tool registry, lookup, and memory editing tools (memory_replace, memory_insert).
 """
-from unittest.mock import Mock
-
 import pytest
 import pytest_asyncio
 from pydantic_ai.exceptions import ModelRetry
@@ -16,35 +14,28 @@ from agent.tools import (
     memory_insert,
     memory_replace,
 )
-from agent.types import AgentDeps
-from conftest import SAMPLE_AGENT_CONFIG, make_deps
+from conftest import SAMPLE_AGENT_CONFIG, make_deps, mock_run_context
 from db.models import AgentRecord, MemoryBlockRecord
 
 
-# =============================================================================
-# Fixtures
-# =============================================================================
+# --- Fixtures ---
 
 # Simple 10-line fixture: letters A through J (one per line)
 ALPHABET_CONTENT = "\n".join("ABCDEFGHIJ")
 
 
-def _mock_run_context(deps: AgentDeps):
-    """Create a mock RunContext with the given deps for tool testing."""
-    ctx = Mock()
-    ctx.deps = deps
-    return ctx
-
-
-@pytest_asyncio.fixture
-async def agent_with_editable_block(session: AsyncSession):
-    """Agent with a single block suitable for editing tests.
+async def _make_agent_with_block(
+    session: AsyncSession,
+    content: str,
+    char_limit: int = 100,
+    agent_name: str = "test-agent",
+) -> dict:
+    """Factory for creating an agent with a single editable block.
     
-    Block has enough content to test replacements/insertions and
-    a reasonable char_limit for overflow tests.
+    Returns dict with agent, block, deps, ctx for test access.
     """
     agent = AgentRecord(
-        name="edit-test-agent",
+        name=agent_name,
         agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Test agent",
     )
@@ -55,50 +46,40 @@ async def agent_with_editable_block(session: AsyncSession):
         agent_id=agent.id,
         label="notes",
         description="Scratch space",
-        content="Line one.\nLine two.\nLine three.",
-        char_limit=100,
+        content=content,
+        char_limit=char_limit,
         position=0,
     )
     session.add(block)
     await session.flush()
     
     deps = make_deps(session, agent)
-    ctx = _mock_run_context(deps)
+    ctx = mock_run_context(deps)
     
     return {"agent": agent, "block": block, "deps": deps, "ctx": ctx}
+
+
+@pytest_asyncio.fixture
+async def agent_with_editable_block(session: AsyncSession):
+    """Agent with a single block suitable for editing tests."""
+    return await _make_agent_with_block(
+        session,
+        content="Line one.\nLine two.\nLine three.",
+        char_limit=100,
+    )
 
 
 @pytest_asyncio.fixture
 async def agent_with_repeated_content(session: AsyncSession):
     """Agent with a block containing repeated strings for occurrence tests."""
-    agent = AgentRecord(
-        name="repeat-test-agent",
-        agent_config=SAMPLE_AGENT_CONFIG,
-        system_instructions="Test agent",
-    )
-    session.add(agent)
-    await session.flush()
-    
-    block = MemoryBlockRecord(
-        agent_id=agent.id,
-        label="notes",
-        description="Scratch space",
+    return await _make_agent_with_block(
+        session,
         content="foo bar foo baz foo",  # "foo" appears 3 times
         char_limit=200,
-        position=0,
     )
-    session.add(block)
-    await session.flush()
-    
-    deps = make_deps(session, agent)
-    ctx = _mock_run_context(deps)
-    
-    return {"agent": agent, "block": block, "deps": deps, "ctx": ctx}
 
 
-# =============================================================================
-# TestComputeSnippet
-# =============================================================================
+# --- TestComputeSnippet ---
 
 
 class TestComputeSnippet:
@@ -108,7 +89,7 @@ class TestComputeSnippet:
     to the model (token optimization vs returning full block content).
     """
 
-    def test_edit_in_middle_returns_context_window(self):
+    def test_edit_in_middle_returns_surrounding_window(self):
         """Edit at line 5 (F) with 3 context lines returns C-I (lines 2-8)."""
         snippet = _compute_snippet(
             ALPHABET_CONTENT, edit_start_line=5, edit_line_count=1, context_lines=3
@@ -157,9 +138,7 @@ class TestComputeSnippet:
         assert default == explicit
 
 
-# =============================================================================
-# TestToolRegistry
-# =============================================================================
+# --- TestToolRegistry ---
 
 
 class TestToolRegistry:
@@ -185,9 +164,7 @@ class TestToolRegistry:
             get_tools_for_agent(["memory_replace", "nonexistent_tool"])
 
 
-# =============================================================================
-# Shared Memory Tool Behaviors (parametrized)
-# =============================================================================
+# --- Shared Memory Tool Behaviors (parametrized) ---
 
 # Valid args for each tool (excluding label, which tests vary)
 MEMORY_REPLACE_ARGS = {"old_string": "Line one.", "new_string": "New line."}
@@ -375,10 +352,52 @@ class TestMemoryToolsShared:
         with pytest.raises(ModelRetry, match="empty"):
             await tool_fn(ctx, label="notes", **empty_args)
 
+    @pytest.mark.parametrize("tool_fn,zero_occurrence_args", [
+        pytest.param(
+            memory_replace,
+            {"old_string": "foo", "new_string": "X", "occurrence": 0},
+            id="memory_replace",
+        ),
+        pytest.param(
+            memory_insert,
+            {"content": "X", "after": "foo", "occurrence": 0},
+            id="memory_insert",
+        ),
+    ])
+    async def test_raises_if_occurrence_zero(
+        self, agent_with_repeated_content, tool_fn, zero_occurrence_args
+    ):
+        """Tool raises ModelRetry when occurrence=0 (must be 1-indexed)."""
+        ctx = agent_with_repeated_content["ctx"]
+        with pytest.raises(ModelRetry, match="must be >= 1"):
+            await tool_fn(ctx, label="notes", **zero_occurrence_args)
 
-# =============================================================================
-# TestMemoryReplace — tool-specific behaviors
-# =============================================================================
+    async def test_cannot_edit_other_agents_block(self, session: AsyncSession):
+        """Tool edits are scoped to the calling agent — can't affect other agents' blocks."""
+        # Create two agents, both with a block labeled "notes"
+        agent_a = await _make_agent_with_block(
+            session, content="Agent A: Line one.", agent_name="agent-a"
+        )
+        agent_b = await _make_agent_with_block(
+            session, content="Agent B: Line one.", agent_name="agent-b"
+        )
+        
+        # Agent A edits their "notes" block
+        ctx_a = agent_a["ctx"]
+        await memory_replace(
+            ctx_a, label="notes", old_string="Agent A: Line one.", new_string="MODIFIED"
+        )
+        
+        # Agent A's block should be modified
+        await session.refresh(agent_a["block"])
+        assert agent_a["block"].content == "MODIFIED"
+        
+        # Agent B's block should be untouched
+        await session.refresh(agent_b["block"])
+        assert agent_b["block"].content == "Agent B: Line one."
+
+
+# --- TestMemoryReplace (tool-specific) ---
 
 
 class TestMemoryReplace:
@@ -395,14 +414,6 @@ class TestMemoryReplace:
         assert block.content == "Line one.\nREPLACED.\nLine three."
         # Snippet should contain the new text
         assert "REPLACED." in result
-
-    async def test_occurrence_zero_raises(self, agent_with_repeated_content):
-        """occurrence=0 raises ModelRetry about 1-indexing."""
-        ctx = agent_with_repeated_content["ctx"]
-        with pytest.raises(ModelRetry, match="must be >= 1"):
-            await memory_replace(
-                ctx, label="notes", old_string="foo", new_string="X", occurrence=0
-            )
 
     async def test_occurrence_targets_nth_match(self, agent_with_repeated_content):
         """occurrence=N replaces the Nth occurrence (1-indexed)."""
@@ -430,66 +441,69 @@ class TestMemoryReplace:
         await ctx.deps.session.refresh(block)
         # Only first "foo" replaced
         assert block.content == "X bar foo baz foo"
-        assert block.content.count("foo") == 2  # Other two remain
+
+    async def test_empty_new_string_deletes_target(self, agent_with_editable_block):
+        """new_string='' effectively deletes the old_string."""
+        ctx = agent_with_editable_block["ctx"]
+        block = agent_with_editable_block["block"]
+        # Content: "Line one.\nLine two.\nLine three."
+        
+        await memory_replace(ctx, label="notes", old_string="Line two.\n", new_string="")
+        
+        await ctx.deps.session.refresh(block)
+        assert block.content == "Line one.\nLine three."
 
 
-# =============================================================================
-# TestMemoryInsert — tool-specific behaviors
-# =============================================================================
+# --- TestMemoryInsert (tool-specific) ---
 
 
 class TestMemoryInsert:
     """Tests specific to memory_insert behavior."""
 
-    async def test_after_start_inserts_at_beginning(self, agent_with_editable_block):
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, agent_with_editable_block):
+        """Most tests use agent_with_editable_block; pull ctx/block into self."""
+        self.ctx = agent_with_editable_block["ctx"]
+        self.block = agent_with_editable_block["block"]
+
+    async def test_after_start_inserts_at_beginning(self):
         """after='<start>' inserts content at the start of the block."""
-        ctx = agent_with_editable_block["ctx"]
-        block = agent_with_editable_block["block"]
+        result = await memory_insert(self.ctx, label="notes", content="PREPENDED\n", after="<start>")
         
-        result = await memory_insert(ctx, label="notes", content="PREPENDED\n", after="<start>")
-        
-        await ctx.deps.session.refresh(block)
-        assert block.content.startswith("PREPENDED\n")
-        assert block.content == "PREPENDED\nLine one.\nLine two.\nLine three."
+        await self.ctx.deps.session.refresh(self.block)
+        assert self.block.content.startswith("PREPENDED\n")
+        assert self.block.content == "PREPENDED\nLine one.\nLine two.\nLine three."
         # Snippet should contain the inserted text
         assert "PREPENDED" in result
 
-    async def test_occurrence_with_start_raises(self, agent_with_editable_block):
+    async def test_occurrence_with_start_raises(self):
         """occurrence cannot be used with '<start>'."""
-        ctx = agent_with_editable_block["ctx"]
         with pytest.raises(ModelRetry, match="cannot be used"):
             await memory_insert(
-                ctx, label="notes", content="X", after="<start>", occurrence=1
+                self.ctx, label="notes", content="X", after="<start>", occurrence=1
             )
 
-    async def test_occurrence_with_end_raises(self, agent_with_editable_block):
+    async def test_occurrence_with_end_raises(self):
         """occurrence cannot be used with '<end>'."""
-        ctx = agent_with_editable_block["ctx"]
         with pytest.raises(ModelRetry, match="cannot be used"):
             await memory_insert(
-                ctx, label="notes", content="X", after="<end>", occurrence=1
+                self.ctx, label="notes", content="X", after="<end>", occurrence=1
             )
 
-    async def test_after_end_inserts_at_end(self, agent_with_editable_block):
+    async def test_after_end_inserts_at_end(self):
         """after='<end>' inserts content at the end of the block."""
-        ctx = agent_with_editable_block["ctx"]
-        block = agent_with_editable_block["block"]
+        await memory_insert(self.ctx, label="notes", content="\nAPPENDED", after="<end>")
         
-        await memory_insert(ctx, label="notes", content="\nAPPENDED", after="<end>")
-        
-        await ctx.deps.session.refresh(block)
-        assert block.content.endswith("\nAPPENDED")
-        assert block.content == "Line one.\nLine two.\nLine three.\nAPPENDED"
+        await self.ctx.deps.session.refresh(self.block)
+        assert self.block.content.endswith("\nAPPENDED")
+        assert self.block.content == "Line one.\nLine two.\nLine three.\nAPPENDED"
 
-    async def test_after_anchor_inserts_after_match(self, agent_with_editable_block):
+    async def test_after_anchor_inserts_after_match(self):
         """after='anchor' inserts content immediately after the anchor string."""
-        ctx = agent_with_editable_block["ctx"]
-        block = agent_with_editable_block["block"]
+        await memory_insert(self.ctx, label="notes", content=" [INSERTED]", after="Line two.")
         
-        await memory_insert(ctx, label="notes", content=" [INSERTED]", after="Line two.")
-        
-        await ctx.deps.session.refresh(block)
-        assert block.content == "Line one.\nLine two. [INSERTED]\nLine three."
+        await self.ctx.deps.session.refresh(self.block)
+        assert self.block.content == "Line one.\nLine two. [INSERTED]\nLine three."
 
     async def test_occurrence_targets_nth_anchor(self, agent_with_repeated_content):
         """occurrence=N inserts after the Nth occurrence of anchor (1-indexed)."""
@@ -504,18 +518,14 @@ class TestMemoryInsert:
         await ctx.deps.session.refresh(block)
         assert block.content == "foo bar foo[2] baz foo"
 
-    async def test_insert_does_not_overwrite(self, agent_with_editable_block):
+    async def test_insert_does_not_overwrite(self):
         """Insert adds content without removing existing content."""
-        ctx = agent_with_editable_block["ctx"]
-        block = agent_with_editable_block["block"]
-        original_content = block.content
+        await memory_insert(self.ctx, label="notes", content="NEW", after="<end>")
         
-        await memory_insert(ctx, label="notes", content="NEW", after="<end>")
-        
-        await ctx.deps.session.refresh(block)
+        await self.ctx.deps.session.refresh(self.block)
         # Original content should still be present
-        assert "Line one." in block.content
-        assert "Line two." in block.content
-        assert "Line three." in block.content
+        assert "Line one." in self.block.content
+        assert "Line two." in self.block.content
+        assert "Line three." in self.block.content
         # And new content added
-        assert "NEW" in block.content
+        assert "NEW" in self.block.content
