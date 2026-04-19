@@ -1,4 +1,5 @@
 import os
+from unittest.mock import Mock
 
 import pytest_asyncio
 from sqlalchemy import event
@@ -10,6 +11,13 @@ from sqlalchemy.pool import StaticPool
 
 from agent.types import AgentConfig, AgentDeps
 from db.models import AgentRecord, Base, MemoryBlockRecord
+
+
+def mock_run_context(deps: AgentDeps):
+    """Create a mock RunContext with deps attached, for testing tools."""
+    ctx = Mock()
+    ctx.deps = deps
+    return ctx
 
 
 SAMPLE_AGENT_CONFIG_DATA = { "model_name": "claude-sonnet-4-20250514",

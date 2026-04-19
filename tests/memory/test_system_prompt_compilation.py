@@ -5,16 +5,13 @@ compile_system_prompt(deps) — assembles blocks into prompt, stores result
 get_system_prompt(ctx) — returns cached prompt for Pydantic AI instructions param
 """
 from datetime import datetime, UTC
-from unittest.mock import Mock
-import asyncio
 
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from conftest import make_deps, SAMPLE_AGENT_CONFIG
+from conftest import make_deps, mock_run_context, SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord
-from agent.types import AgentDeps
+
 
 from memory.system_prompt_compilation import compile_system_prompt, get_system_prompt
 
@@ -232,12 +229,6 @@ async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession
 
 # --- get_system_prompt tests ---
 
-def _mock_run_context(deps: AgentDeps):
-    """Create a mock RunContext with deps attached."""
-    ctx = Mock()
-    ctx.deps = deps
-    return ctx
-
 
 class TestGetSystemPrompt:
     """
@@ -248,7 +239,7 @@ class TestGetSystemPrompt:
     async def _autouse_setup(self, agent_with_precompiled_prompt: dict):
         self.agent = agent_with_precompiled_prompt["agent"]
         self.deps = agent_with_precompiled_prompt["deps"]
-        self.ctx = _mock_run_context(self.deps)
+        self.ctx = mock_run_context(self.deps)
 
     async def test_returns_cached_compiled_prompt(self):
         """get_system_prompt should return the cached compiled_system_prompt."""
@@ -280,7 +271,7 @@ async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession
     await session.flush()
     assert agent.compiled_system_prompt == ""  # model defaults to ''
 
-    ctx = _mock_run_context(make_deps(session, agent))
+    ctx = mock_run_context(make_deps(session, agent))
     result = await get_system_prompt(ctx)
     assert result == ""
 
@@ -292,7 +283,7 @@ async def test_get_returns_stale_prompt_after_block_edit(agent_with_blocks_and_d
     """
     deps = agent_with_blocks_and_deps["deps"]
     agent = agent_with_blocks_and_deps["agent"]
-    ctx = _mock_run_context(deps)
+    ctx = mock_run_context(deps)
 
     # Compile initial prompt
     await compile_system_prompt(deps)
