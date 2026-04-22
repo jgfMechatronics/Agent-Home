@@ -146,6 +146,8 @@ async def memory_replace(
         raise ModelRetry(f"result would exceed char_limit ({len(new_content)} > {block.char_limit})")
     
     # Update block
+    # TODO: consider adding a persist_block(session, block, commit=False) helper to
+    # block_crud and delegating persistence there, rather than flushing directly here.
     block.content = new_content
     await deps.session.flush()
     
@@ -208,6 +210,7 @@ async def memory_insert(
         raise ModelRetry(f"result would exceed char_limit ({len(new_content)} > {block.char_limit})")
     
     # Update block
+    # TODO: same as memory_replace — consider delegating to block_crud.persist_block
     block.content = new_content
     await deps.session.flush()
     

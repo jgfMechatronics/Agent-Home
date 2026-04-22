@@ -23,11 +23,13 @@ from db.models import AgentRecord, MemoryBlockRecord
 # Simple 10-line fixture: letters A through J (one per line)
 ALPHABET_CONTENT = "\n".join("ABCDEFGHIJ")
 
+DEFAULT_BLOCK_CHAR_LIM = 100
+REPEATED_CONTENT_CHAR_LIM = 200
 
 async def _make_agent_with_block(
     session: AsyncSession,
     content: str,
-    char_limit: int = 100,
+    char_limit: int = DEFAULT_BLOCK_CHAR_LIM,
     agent_name: str = "test-agent",
 ) -> dict:
     """Factory for creating an agent with a single editable block.
@@ -69,7 +71,7 @@ async def agent_with_editable_block(session: AsyncSession):
     return await _make_agent_with_block(
         session,
         content="Line one.\nLine two.\nLine three.",
-        char_limit=100,
+        char_limit=DEFAULT_BLOCK_CHAR_LIM,
     )
 
 
@@ -83,7 +85,7 @@ async def agent_with_repeated_content(session: AsyncSession):
     return await _make_agent_with_block(
         session,
         content="foo bar foo baz foo",  # "foo" appears 3 times
-        char_limit=200,
+        char_limit=REPEATED_CONTENT_CHAR_LIM,
     )
 
 
@@ -184,7 +186,9 @@ class TestToolRegistry:
 
 # --- Shared Memory Tool Behaviors (parametrized) ---
 
-# Valid args for each tool (excluding label, which tests vary)
+# Valid args for each tool (excluding label, which tests vary).
+# WARNING: MEMORY_REPLACE_ARGS targets "Line one." which must exist in agent_with_editable_block.
+# If you change the fixture content, update these args to match.
 MEMORY_REPLACE_ARGS = {"old_string": "Line one.", "new_string": "New line."}
 MEMORY_INSERT_ARGS = {"content": "Inserted.", "after": "<end>"}
 
@@ -222,60 +226,44 @@ class TestMemoryToolsShared:
     async def test_updates_correct_block(
         self, agent_with_editable_block, tool_fn, valid_args, expected_content
     ):
-        """Tool updates the block content correctly."""
+        """Tool updates the block content correctly and doesn't affect other blocks."""
         ctx = agent_with_editable_block["ctx"]
+        agent = agent_with_editable_block["agent"]
         block = agent_with_editable_block["block"]
+        session = ctx.deps.session
+        
+        # Add a second block to verify it's unaffected
+        other_block = MemoryBlockRecord(
+            agent_id=agent.id,
+            label="other",
+            description="Should be untouched",
+            content="Original content.",
+            char_limit=DEFAULT_BLOCK_CHAR_LIM,
+            position=1,
+        )
+        session.add(other_block)
+        await session.flush()
         
         await tool_fn(ctx, label=block.label, **valid_args)
         
-        # Refresh to see persisted changes
-        await ctx.deps.session.refresh(block)
+        # Target block should be updated
+        await session.refresh(block)
         assert block.content == expected_content
-
-
-    async def test_edit_does_not_affect_other_blocks(self, session: AsyncSession):
-        """Editing one block doesn't affect other blocks on the same agent."""
-        agent_data = await _make_agent_with_block(
-            session, content="Block one content.", agent_name="multi-block-agent"
-        )
-        ctx = agent_data["ctx"]
-        block_one = agent_data["block"]
         
-        # Add a second block to the same agent
-        block_two = MemoryBlockRecord(
-            agent_id=agent_data["agent"].id,
-            label="other",
-            description="Another block",
-            content="Block two content.",
-            char_limit=100,
-            position=1,
-        )
-        session.add(block_two)
-        await session.flush()
-        
-        # Edit block one
-        await memory_replace(
-            ctx, label="notes", old_string="Block one content.", new_string="MODIFIED"
-        )
-        
-        # Block one should be modified
-        await session.refresh(block_one)
-        assert block_one.content == "MODIFIED"
-        
-        # Block two should be untouched
-        await session.refresh(block_two)
-        assert block_two.content == "Block two content."
+        # Other block should be untouched
+        await session.refresh(other_block)
+        assert other_block.content == "Original content."
 
 
     @pytest.mark.parametrize("tool_fn,overflow_args", [
         pytest.param(
             memory_replace,
-            {"old_string": "Line one.", "new_string": "X" * 200},
+            {"old_string": "Line one.", "new_string": "X" * (DEFAULT_BLOCK_CHAR_LIM + 1)},
             id="memory_replace",
         ),
         pytest.param(
             memory_insert,
-            {"content": "X" * 200, "after": "<end>"},
+            {"content": "X" * (DEFAULT_BLOCK_CHAR_LIM + 1), "after": "<end>"},
             id="memory_insert",
         ),
     ])
@@ -311,23 +299,40 @@ class TestMemoryToolsShared:
         assert block.content != original_content
 
 
-    @pytest.mark.parametrize("tool_fn,valid_args", [
-        pytest.param(memory_replace, MEMORY_REPLACE_ARGS, id="memory_replace"),
-        pytest.param(memory_insert, MEMORY_INSERT_ARGS, id="memory_insert"),
+    @pytest.mark.parametrize("tool_fn,tool_args,expected_new_content,edit_line", [
+        pytest.param(
+            memory_replace,
+            {"old_string": "E", "new_string": "EDITED"},
+            "A\nB\nC\nD\nEDITED\nF\nG\nH\nI\nJ",
+            4,  # Line where "E" was (0-indexed)
+            id="memory_replace",
+        ),
+        pytest.param(
+            memory_insert,
+            {"content": "[INS]", "after": "E"},
+            "A\nB\nC\nD\nE[INS]\nF\nG\nH\nI\nJ",
+            4,  # Line where insert happened
+            id="memory_insert",
+        ),
     ])
     async def test_returns_snippet_on_success(
-        self, agent_with_editable_block, tool_fn, valid_args
+        self, session: AsyncSession, tool_fn, tool_args, expected_new_content, edit_line
     ):
-        """Tool returns snippet of updated content, not full block."""
-        ctx = agent_with_editable_block["ctx"]
-        block = agent_with_editable_block["block"]
-        result = await tool_fn(ctx, label=block.label, **valid_args)
+        """Tool returns snippet matching _compute_snippet output."""
+        # Use 10-line content so snippeting actually happens
+        agent_data = await _make_agent_with_block(
+            session, content=ALPHABET_CONTENT, char_limit=500
+        )
+        ctx = agent_data["ctx"]
+        block = agent_data["block"]
         
-        # Result should be a non-empty string (the snippet)
-        assert isinstance(result, str)
-        assert len(result) > 0
-        # Should contain part of the edited content
-        # (exact snippet content tested in tool-specific tests)
+        result = await tool_fn(ctx, label=block.label, **tool_args)
+        
+        # Result should match what _compute_snippet produces
+        expected_snippet = _compute_snippet(
+            expected_new_content, edit_start_line=edit_line, edit_line_count=1
+        )
+        assert result == expected_snippet
 
 
     @pytest.mark.parametrize("tool_fn,ambiguous_args", [
