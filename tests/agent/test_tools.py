@@ -24,7 +24,6 @@ from db.models import AgentRecord, MemoryBlockRecord
 ALPHABET_CONTENT = "\n".join("ABCDEFGHIJ")
 
 DEFAULT_BLOCK_CHAR_LIM = 100
-REPEATED_CONTENT_CHAR_LIM = 200
 
 async def _make_agent_with_block(
     session: AsyncSession,
@@ -63,29 +62,20 @@ async def _make_agent_with_block(
 
 @pytest_asyncio.fixture
 async def agent_with_editable_block(session: AsyncSession):
-    """Agent with a single block suitable for editing tests.
-    
-    WARNING: TestMemoryToolsShared params reference these exact strings.
-    If you change the content, update the test params to match.
+    """Agent with a single block used for all tool editing tests.
+
+    Content is designed to satisfy multiple test requirements simultaneously:
+    - 3 lines (supports line-based editing tests like insert-at-anchor)
+    - "foo" repeated 3x at the start of each line (supports occurrence parameter tests)
+    - Unique anchors "one.", "two.", "three." (supports unambiguous single-target operations)
+
+    WARNING: Test params reference these exact strings
+    If you change the content, update all test params to match.
     """
     return await _make_agent_with_block(
         session,
-        content="Line one.\nLine two.\nLine three.",
+        content="foo one.\nfoo two.\nfoo three.",
         char_limit=DEFAULT_BLOCK_CHAR_LIM,
-    )
-
-
-@pytest_asyncio.fixture
-async def agent_with_repeated_content(session: AsyncSession):
-    """Agent with a block containing repeated strings for occurrence tests.
-    
-    WARNING: TestMemoryToolsShared params reference "foo" as the repeated target.
-    If you change the content, update the test params to match.
-    """
-    return await _make_agent_with_block(
-        session,
-        content="foo bar foo baz foo",  # "foo" appears 3 times
-        char_limit=REPEATED_CONTENT_CHAR_LIM,
     )
 
 
@@ -93,12 +83,12 @@ async def agent_with_repeated_content(session: AsyncSession):
 
 
 class TestComputeSnippet:
-    """Tests for the _compute_snippet helper function.
-    
+    """
+    Tests for the _compute_snippet helper function.
+
     This helper extracts a window of lines around an edit for returning
     to the model (token optimization vs returning full block content).
     """
-
 
     def test_edit_in_middle_returns_surrounding_window(self):
         """Edit at line 5 (F) with 3 context lines returns C-I (lines 2-8)."""
@@ -187,9 +177,9 @@ class TestToolRegistry:
 # --- Shared Memory Tool Behaviors (parametrized) ---
 
 # Valid args for each tool (excluding label, which tests vary).
-# WARNING: MEMORY_REPLACE_ARGS targets "Line one." which must exist in agent_with_editable_block.
+# WARNING: MEMORY_REPLACE_ARGS targets "foo one." which must exist in agent_with_editable_block.
 # If you change the fixture content, update these args to match.
-MEMORY_REPLACE_ARGS = {"old_string": "Line one.", "new_string": "New line."}
+MEMORY_REPLACE_ARGS = {"old_string": "foo one.", "new_string": "NEW one."}
 MEMORY_INSERT_ARGS = {"content": "Inserted.", "after": "<end>"}
 
 
@@ -200,45 +190,45 @@ class TestMemoryToolsShared:
     a function signature required for pydantic AI compatibility
     """
 
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, agent_with_editable_block):
+        """Pull ctx/block/agent into self for all tests in this class."""
+        self.ctx = agent_with_editable_block["ctx"]
+        self.block = agent_with_editable_block["block"]
+        self.agent = agent_with_editable_block["agent"]
+
+
     @pytest.mark.parametrize("tool_fn,valid_args", [
         pytest.param(memory_replace, MEMORY_REPLACE_ARGS, id="memory_replace"),
         pytest.param(memory_insert, MEMORY_INSERT_ARGS, id="memory_insert"),
     ])
-    async def test_raises_if_label_not_found(
-        self, agent_with_editable_block, tool_fn, valid_args
-    ):
+    async def test_raises_if_label_not_found(self, tool_fn, valid_args):
         """Tool raises ModelRetry when label doesn't exist for this agent."""
-        ctx = agent_with_editable_block["ctx"]
         with pytest.raises(ModelRetry, match="not found"):
-            await tool_fn(ctx, label="nonexistent", **valid_args)
+            await tool_fn(self.ctx, label="nonexistent", **valid_args)
 
 
     @pytest.mark.parametrize("tool_fn,valid_args,expected_content", [
         pytest.param(
             memory_replace,
-            {"old_string": "Line one.", "new_string": "REPLACED."},
-            "REPLACED.\nLine two.\nLine three.",
+            {"old_string": "foo one.", "new_string": "REPLACED."},
+            "REPLACED.\nfoo two.\nfoo three.",
             id="memory_replace",
         ),
         pytest.param(
             memory_insert,
-            {"content": " INSERTED", "after": "Line three."},
-            "Line one.\nLine two.\nLine three. INSERTED",
+            {"content": " INSERTED", "after": "foo three."},
+            "foo one.\nfoo two.\nfoo three. INSERTED",
             id="memory_insert",
         ),
     ])
-    async def test_updates_correct_block(
-        self, agent_with_editable_block, tool_fn, valid_args, expected_content
-    ):
+    async def test_updates_correct_block(self, tool_fn, valid_args, expected_content):
         """Tool updates the block content correctly and doesn't affect other blocks."""
-        ctx = agent_with_editable_block["ctx"]
-        agent = agent_with_editable_block["agent"]
-        block = agent_with_editable_block["block"]
-        session = ctx.deps.session
-        
+        session = self.ctx.deps.session
+
         # Add a second block to verify it's unaffected
         other_block = MemoryBlockRecord(
-            agent_id=agent.id,
+            agent_id=self.agent.id,
             label="other",
             description="Should be untouched",
             content="Original content.",
@@ -247,13 +237,13 @@ class TestMemoryToolsShared:
         )
         session.add(other_block)
         await session.flush()
-        
-        await tool_fn(ctx, label=block.label, **valid_args)
-        
+
+        await tool_fn(self.ctx, label=self.block.label, **valid_args)
+
         # Target block should be updated
-        await session.refresh(block)
-        assert block.content == expected_content
-        
+        await session.refresh(self.block)
+        assert self.block.content == expected_content
+
         # Other block should be untouched
         await session.refresh(other_block)
         assert other_block.content == "Original content."
@@ -262,7 +252,7 @@ class TestMemoryToolsShared:
     @pytest.mark.parametrize("tool_fn,overflow_args", [
         pytest.param(
             memory_replace,
-            {"old_string": "Line one.", "new_string": "X" * (DEFAULT_BLOCK_CHAR_LIM + 1)},
+            {"old_string": "foo one.", "new_string": "X" * (DEFAULT_BLOCK_CHAR_LIM + 1)},
             id="memory_replace",
         ),
         pytest.param(
@@ -271,36 +261,28 @@ class TestMemoryToolsShared:
             id="memory_insert",
         ),
     ])
-    async def test_raises_if_exceeds_char_limit(
-        self, agent_with_editable_block, tool_fn, overflow_args
-    ):
+    async def test_raises_if_exceeds_char_limit(self, tool_fn, overflow_args):
         """Tool raises ModelRetry when result would exceed char_limit."""
-        ctx = agent_with_editable_block["ctx"]
-        block = agent_with_editable_block["block"]
         with pytest.raises(ModelRetry, match="char_limit"):
-            await tool_fn(ctx, label=block.label, **overflow_args)
+            await tool_fn(self.ctx, label=self.block.label, **overflow_args)
 
 
     @pytest.mark.parametrize("tool_fn,valid_args", [
         pytest.param(memory_replace, MEMORY_REPLACE_ARGS, id="memory_replace"),
         pytest.param(memory_insert, MEMORY_INSERT_ARGS, id="memory_insert"),
     ])
-    async def test_persists_change_immediately(
-        self, agent_with_editable_block, tool_fn, valid_args
-    ):
+    async def test_persists_change_immediately(self, tool_fn, valid_args):
         """Tool persists change to DB immediately (flush), not deferred."""
-        ctx = agent_with_editable_block["ctx"]
-        block = agent_with_editable_block["block"]
-        original_content = block.content
-        
-        await tool_fn(ctx, label=block.label, **valid_args)
-        
+        original_content = self.block.content
+
+        await tool_fn(self.ctx, label=self.block.label, **valid_args)
+
         # Block should be flushed (not in session.new or session.dirty)
-        assert block not in ctx.deps.session.new
-        assert block not in ctx.deps.session.dirty
+        assert self.block not in self.ctx.deps.session.new
+        assert self.block not in self.ctx.deps.session.dirty
         # And content should have changed
-        await ctx.deps.session.refresh(block)
-        assert block.content != original_content
+        await self.ctx.deps.session.refresh(self.block)
+        assert self.block.content != original_content
 
 
     @pytest.mark.parametrize("tool_fn,tool_args,expected_new_content,edit_line", [
@@ -329,9 +311,9 @@ class TestMemoryToolsShared:
         )
         ctx = agent_data["ctx"]
         block = agent_data["block"]
-        
+
         result = await tool_fn(ctx, label=block.label, **tool_args)
-        
+
         # Result should match what _compute_snippet produces
         expected_snippet = _compute_snippet(
             expected_new_content, edit_start_line=edit_line, edit_line_count=1
@@ -352,13 +334,11 @@ class TestMemoryToolsShared:
         ),
     ])
     async def test_raises_if_multiple_matches_without_specify_occurrence(
-        self, agent_with_repeated_content, tool_fn, ambiguous_args
+        self, tool_fn, ambiguous_args
     ):
         """Tool raises ModelRetry when target appears multiple times and occurrence not specified."""
-        ctx = agent_with_repeated_content["ctx"]
-        block = agent_with_repeated_content["block"]
         with pytest.raises(ModelRetry, match="appears.*times"):
-            await tool_fn(ctx, label=block.label, **ambiguous_args)
+            await tool_fn(self.ctx, label=self.block.label, **ambiguous_args)
 
 
     @pytest.mark.parametrize("tool_fn,not_found_args", [
@@ -373,14 +353,10 @@ class TestMemoryToolsShared:
             id="memory_insert",
         ),
     ])
-    async def test_raises_if_target_not_found(
-        self, agent_with_editable_block, tool_fn, not_found_args
-    ):
+    async def test_raises_if_target_not_found(self, tool_fn, not_found_args):
         """Tool raises ModelRetry when old_string/after not found in block."""
-        ctx = agent_with_editable_block["ctx"]
-        block = agent_with_editable_block["block"]
         with pytest.raises(ModelRetry, match="not found"):
-            await tool_fn(ctx, label=block.label, **not_found_args)
+            await tool_fn(self.ctx, label=self.block.label, **not_found_args)
 
 
     @pytest.mark.parametrize("tool_fn,occurrence_args", [
@@ -395,15 +371,11 @@ class TestMemoryToolsShared:
             id="memory_insert",
         ),
     ])
-    async def test_raises_if_occurrence_exceeds_count(
-        self, agent_with_repeated_content, tool_fn, occurrence_args
-    ):
+    async def test_raises_if_occurrence_exceeds_count(self, tool_fn, occurrence_args):
         """Tool raises ModelRetry when occurrence=N but fewer than N occurrences exist."""
-        ctx = agent_with_repeated_content["ctx"]
-        block = agent_with_repeated_content["block"]
         # "foo" appears 3 times, requesting 5th
         with pytest.raises(ModelRetry, match="occurrence.*not found"):
-            await tool_fn(ctx, label=block.label, **occurrence_args)
+            await tool_fn(self.ctx, label=self.block.label, **occurrence_args)
 
 
     @pytest.mark.parametrize("tool_fn,empty_args", [
@@ -418,14 +390,10 @@ class TestMemoryToolsShared:
             id="memory_insert_empty_after",
         ),
     ])
-    async def test_raises_if_target_empty(
-        self, agent_with_editable_block, tool_fn, empty_args
-    ):
+    async def test_raises_if_target_empty(self, tool_fn, empty_args):
         """Tool raises ModelRetry when old_string/after is empty."""
-        ctx = agent_with_editable_block["ctx"]
-        block = agent_with_editable_block["block"]
         with pytest.raises(ModelRetry, match="empty"):
-            await tool_fn(ctx, label=block.label, **empty_args)
+            await tool_fn(self.ctx, label=self.block.label, **empty_args)
 
 
     @pytest.mark.parametrize("tool_fn,zero_occurrence_args", [
@@ -440,14 +408,10 @@ class TestMemoryToolsShared:
             id="memory_insert",
         ),
     ])
-    async def test_raises_if_occurrence_zero(
-        self, agent_with_repeated_content, tool_fn, zero_occurrence_args
-    ):
+    async def test_raises_if_occurrence_zero(self, tool_fn, zero_occurrence_args):
         """Tool raises ModelRetry when occurrence=0 (must be 1-indexed)."""
-        ctx = agent_with_repeated_content["ctx"]
-        block = agent_with_repeated_content["block"]
         with pytest.raises(ModelRetry, match="must be >= 1"):
-            await tool_fn(ctx, label=block.label, **zero_occurrence_args)
+            await tool_fn(self.ctx, label=self.block.label, **zero_occurrence_args)
 
 
     async def test_cannot_edit_other_agents_block(self, session: AsyncSession):
@@ -459,23 +423,23 @@ class TestMemoryToolsShared:
         agent_b = await _make_agent_with_block(
             session, content="Agent B: Line one.", agent_name="agent-b"
         )
-        
+
         # Agent A edits their "notes" block
         ctx_a = agent_a["ctx"]
         await memory_replace(
             ctx_a, label=agent_a["block"].label, old_string="Agent A: Line one.", new_string="MODIFIED"
         )
-        
+
         # Agent A's block should be modified
         await session.refresh(agent_a["block"])
         assert agent_a["block"].content == "MODIFIED"
-        
+
         # Agent B's block should be untouched
         await session.refresh(agent_b["block"])
         assert agent_b["block"].content == "Agent B: Line one."
 
 
-    def test_tools_module_cannot_trigger_recompilation(self):
+    async def test_tools_module_cannot_trigger_recompilation(self):
         """Tools module has no access to compile_system_prompt — deferred by architecture."""
         import agent.tools as tools_module
         assert not hasattr(tools_module, "compile_system_prompt")
@@ -486,58 +450,53 @@ class TestMemoryToolsShared:
 class TestMemoryReplace:
     """Tests specific to memory_replace behavior."""
 
-    async def test_replaces_target_and_returns_snippet_with_edit(self, agent_with_editable_block):
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, agent_with_editable_block):
+        """Pull ctx/block into self for all tests in this class."""
+        self.ctx = agent_with_editable_block["ctx"]
+        self.block = agent_with_editable_block["block"]
+
+
+    async def test_replaces_target_and_returns_snippet_with_edit(self):
         """memory_replace returns snippet containing the replaced text."""
-        ctx = agent_with_editable_block["ctx"]
-        block = agent_with_editable_block["block"]
-        
-        result = await memory_replace(ctx, label=block.label, old_string="Line two.", new_string="REPLACED.")
-        
-        await ctx.deps.session.refresh(block)
-        assert block.content == "Line one.\nREPLACED.\nLine three."
+        result = await memory_replace(self.ctx, label=self.block.label, old_string="foo two.", new_string="REPLACED.")
+
+        await self.ctx.deps.session.refresh(self.block)
+        assert self.block.content == "foo one.\nREPLACED.\nfoo three."
         # Snippet should contain the new text
         assert "REPLACED." in result
 
 
-    async def test_occurrence_targets_nth_match(self, agent_with_repeated_content):
+    async def test_occurrence_targets_nth_match(self):
         """occurrence=N replaces the Nth occurrence (1-indexed)."""
-        ctx = agent_with_repeated_content["ctx"]
-        block = agent_with_repeated_content["block"]
-        # Content: "foo bar foo baz foo"
-        
+        # Content: "foo one.\nfoo two.\nfoo three."
         await memory_replace(
-            ctx, label=block.label, old_string="foo", new_string="SECOND", occurrence=2
+            self.ctx, label=self.block.label, old_string="foo", new_string="SECOND", occurrence=2
         )
-        
-        await ctx.deps.session.refresh(block)
-        assert block.content == "foo bar SECOND baz foo"
+
+        await self.ctx.deps.session.refresh(self.block)
+        assert self.block.content == "foo one.\nSECOND two.\nfoo three."
 
 
-    async def test_only_replaces_target_occurrence(self, agent_with_repeated_content):
+    async def test_only_replaces_target_occurrence(self):
         """Only the target occurrence is replaced, others unchanged."""
-        ctx = agent_with_repeated_content["ctx"]
-        block = agent_with_repeated_content["block"]
-        # Content: "foo bar foo baz foo"
-        
+        # Content: "foo one.\nfoo two.\nfoo three."
         await memory_replace(
-            ctx, label=block.label, old_string="foo", new_string="X", occurrence=1
+            self.ctx, label=self.block.label, old_string="foo", new_string="X", occurrence=1
         )
-        
-        await ctx.deps.session.refresh(block)
+
+        await self.ctx.deps.session.refresh(self.block)
         # Only first "foo" replaced
-        assert block.content == "X bar foo baz foo"
+        assert self.block.content == "X one.\nfoo two.\nfoo three."
 
 
-    async def test_empty_new_string_deletes_target(self, agent_with_editable_block):
+    async def test_empty_new_string_deletes_target(self):
         """new_string='' effectively deletes the old_string."""
-        ctx = agent_with_editable_block["ctx"]
-        block = agent_with_editable_block["block"]
-        # Content: "Line one.\nLine two.\nLine three."
-        
-        await memory_replace(ctx, label=block.label, old_string="Line two.\n", new_string="")
-        
-        await ctx.deps.session.refresh(block)
-        assert block.content == "Line one.\nLine three."
+        # Content: "foo one.\nfoo two.\nfoo three."
+        await memory_replace(self.ctx, label=self.block.label, old_string="foo two.\n", new_string="")
+
+        await self.ctx.deps.session.refresh(self.block)
+        assert self.block.content == "foo one.\nfoo three."
 
 
 # --- TestMemoryInsert (tool-specific) ---
@@ -555,10 +514,10 @@ class TestMemoryInsert:
     async def test_after_start_inserts_at_beginning(self):
         """after='<start>' inserts content at the start of the block."""
         result = await memory_insert(self.ctx, label=self.block.label, content="PREPENDED\n", after="<start>")
-        
+
         await self.ctx.deps.session.refresh(self.block)
         assert self.block.content.startswith("PREPENDED\n")
-        assert self.block.content == "PREPENDED\nLine one.\nLine two.\nLine three."
+        assert self.block.content == "PREPENDED\nfoo one.\nfoo two.\nfoo three."
         # Snippet should contain the inserted text
         assert "PREPENDED" in result
 
@@ -582,42 +541,40 @@ class TestMemoryInsert:
     async def test_after_end_inserts_at_end(self):
         """after='<end>' inserts content at the end of the block."""
         await memory_insert(self.ctx, label=self.block.label, content="\nAPPENDED", after="<end>")
-        
+
         await self.ctx.deps.session.refresh(self.block)
         assert self.block.content.endswith("\nAPPENDED")
-        assert self.block.content == "Line one.\nLine two.\nLine three.\nAPPENDED"
+        assert self.block.content == "foo one.\nfoo two.\nfoo three.\nAPPENDED"
 
 
     async def test_after_anchor_inserts_after_match(self):
         """after='anchor' inserts content immediately after the anchor string."""
-        await memory_insert(self.ctx, label=self.block.label, content=" [INSERTED]", after="Line two.")
-        
+        await memory_insert(self.ctx, label=self.block.label, content=" [INSERTED]", after="foo two.")
+
         await self.ctx.deps.session.refresh(self.block)
-        assert self.block.content == "Line one.\nLine two. [INSERTED]\nLine three."
+        assert self.block.content == "foo one.\nfoo two. [INSERTED]\nfoo three."
 
 
-    async def test_occurrence_targets_nth_anchor(self, agent_with_repeated_content):
+    async def test_occurrence_targets_nth_anchor(self):
         """occurrence=N inserts after the Nth occurrence of anchor (1-indexed)."""
-        ctx = agent_with_repeated_content["ctx"]
-        block = agent_with_repeated_content["block"]
-        # Content: "foo bar foo baz foo"
-        
+        # Content: "foo one.\nfoo two.\nfoo three."
+
         await memory_insert(
-            ctx, label=block.label, content="[2]", after="foo", occurrence=2
+            self.ctx, label=self.block.label, content="[2]", after="foo", occurrence=2
         )
-        
-        await ctx.deps.session.refresh(block)
-        assert block.content == "foo bar foo[2] baz foo"
+
+        await self.ctx.deps.session.refresh(self.block)
+        assert self.block.content == "foo one.\nfoo[2] two.\nfoo three."
 
 
     async def test_insert_does_not_overwrite(self):
         """Insert adds content without removing existing content."""
         await memory_insert(self.ctx, label=self.block.label, content="NEW", after="<end>")
-        
+
         await self.ctx.deps.session.refresh(self.block)
         # Original content should still be present
-        assert "Line one." in self.block.content
-        assert "Line two." in self.block.content
-        assert "Line three." in self.block.content
+        assert "foo one." in self.block.content
+        assert "foo two." in self.block.content
+        assert "foo three." in self.block.content
         # And new content added
         assert "NEW" in self.block.content
