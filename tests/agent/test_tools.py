@@ -194,7 +194,11 @@ MEMORY_INSERT_ARGS = {"content": "Inserted.", "after": "<end>"}
 
 
 class TestMemoryToolsShared:
-    """Shared behaviors for memory_replace and memory_insert, parametrized."""
+    """
+    Shared behaviors for memory_replace and memory_insert, parametrized.
+    The use of mock_run_context in the particular position it is used in the fcn call enforces
+    a function signature required for pydantic AI compatibility
+    """
 
     @pytest.mark.parametrize("tool_fn,valid_args", [
         pytest.param(memory_replace, MEMORY_REPLACE_ARGS, id="memory_replace"),
@@ -347,7 +351,7 @@ class TestMemoryToolsShared:
             id="memory_insert",
         ),
     ])
-    async def test_raises_if_multiple_matches_without_occurrence(
+    async def test_raises_if_multiple_matches_without_specify_occurrence(
         self, agent_with_repeated_content, tool_fn, ambiguous_args
     ):
         """Tool raises ModelRetry when target appears multiple times and occurrence not specified."""
@@ -471,6 +475,12 @@ class TestMemoryToolsShared:
         assert agent_b["block"].content == "Agent B: Line one."
 
 
+    def test_tools_module_cannot_trigger_recompilation(self):
+        """Tools module has no access to compile_system_prompt — deferred by architecture."""
+        import agent.tools as tools_module
+        assert not hasattr(tools_module, "compile_system_prompt")
+
+
 # --- TestMemoryReplace (tool-specific) ---
 
 class TestMemoryReplace:
@@ -532,10 +542,8 @@ class TestMemoryReplace:
 
 # --- TestMemoryInsert (tool-specific) ---
 
-
 class TestMemoryInsert:
     """Tests specific to memory_insert behavior."""
-
 
     @pytest_asyncio.fixture(autouse=True)
     async def setup(self, agent_with_editable_block):
