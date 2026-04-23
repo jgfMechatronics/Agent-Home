@@ -3,6 +3,8 @@ Agent tool registry — Section 3.2
 
 Maps tool name strings to callable tool functions for agent construction.
 Memory tools raise ModelRetry on failure (for model self-correction).
+TODO: Add a memory_delete which just wraps memory replace with an empty new content, for convenience
+and associated tests
 """
 from typing import Callable
 

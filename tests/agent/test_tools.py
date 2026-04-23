@@ -516,10 +516,18 @@ class TestMemoryInsert:
         result = await memory_insert(self.ctx, label=self.block.label, content="PREPENDED\n", after="<start>")
 
         await self.ctx.deps.session.refresh(self.block)
-        assert self.block.content.startswith("PREPENDED\n")
         assert self.block.content == "PREPENDED\nfoo one.\nfoo two.\nfoo three."
         # Snippet should contain the inserted text
         assert "PREPENDED" in result
+
+
+    async def test_after_end_inserts_at_end(self):
+        """after='<end>' inserts content at the end of the block."""
+        await memory_insert(self.ctx, label=self.block.label, content="\nAPPENDED", after="<end>")
+
+        await self.ctx.deps.session.refresh(self.block)
+        assert self.block.content.endswith("\nAPPENDED")
+        assert self.block.content == "foo one.\nfoo two.\nfoo three.\nAPPENDED"
 
 
     async def test_occurrence_with_start_raises(self):
@@ -536,15 +544,6 @@ class TestMemoryInsert:
             await memory_insert(
                 self.ctx, label=self.block.label, content="X", after="<end>", occurrence=1
             )
-
-
-    async def test_after_end_inserts_at_end(self):
-        """after='<end>' inserts content at the end of the block."""
-        await memory_insert(self.ctx, label=self.block.label, content="\nAPPENDED", after="<end>")
-
-        await self.ctx.deps.session.refresh(self.block)
-        assert self.block.content.endswith("\nAPPENDED")
-        assert self.block.content == "foo one.\nfoo two.\nfoo three.\nAPPENDED"
 
 
     async def test_after_anchor_inserts_after_match(self):
