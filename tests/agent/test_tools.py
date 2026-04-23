@@ -251,7 +251,7 @@ class TestMemoryToolsShared:
     ])
     async def test_raises_if_exceeds_char_limit(self, tool_fn, overflow_args):
         """Tool raises ModelRetry when result would exceed char_limit."""
-        with pytest.raises(ModelRetry, match="char_limit"):
+        with pytest.raises(ModelRetry, match="exceeds char limit"):
             await tool_fn(self.ctx, label=self.block.label, **overflow_args)
 
 

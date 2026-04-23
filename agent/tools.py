@@ -12,7 +12,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 
 from agent.types import AgentDeps
-from memory.block_crud import get_block
+from memory.block_crud import get_block, update_block
 
 
 def _get_edit_line_info(content: str, edit_start_idx: int, new_text: str) -> tuple[int, int]:
@@ -144,15 +144,11 @@ async def memory_replace(
     end_pos = start_pos + len(old_string)
     new_content = block.content[:start_pos] + new_string + block.content[end_pos:]
     
-    # Check char limit
-    if len(new_content) > block.char_limit:
-        raise ModelRetry(f"result would exceed char_limit ({len(new_content)} > {block.char_limit})")
-    
-    # Update block
-    # TODO: consider adding a persist_block(session, block, commit=False) helper to
-    # block_crud and delegating persistence there, rather than flushing directly here.
-    block.content = new_content
-    await deps.session.flush()
+    # Update block via crud (handles char limit check and persistence)
+    try:
+        await update_block(deps, label, new_content, commit=False, block=block)
+    except ValueError as e:
+        raise ModelRetry(str(e))
     
     # Compute and return snippet
     return _compute_snippet(new_content, start_pos, new_string)
@@ -207,14 +203,11 @@ async def memory_insert(
     # Perform insertion
     new_content = block.content[:insert_pos] + content + block.content[insert_pos:]
     
-    # Check char limit
-    if len(new_content) > block.char_limit:
-        raise ModelRetry(f"result would exceed char_limit ({len(new_content)} > {block.char_limit})")
-    
-    # Update block
-    # TODO: same as memory_replace — consider delegating to block_crud.persist_block
-    block.content = new_content
-    await deps.session.flush()
+    # Update block via crud (handles char limit check and persistence)
+    try:
+        await update_block(deps, label, new_content, commit=False, block=block)
+    except ValueError as e:
+        raise ModelRetry(str(e))
     
     # Compute and return snippet
     return _compute_snippet(new_content, insert_pos, content)

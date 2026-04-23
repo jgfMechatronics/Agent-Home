@@ -51,18 +51,25 @@ async def get_block(session: AsyncSession, agent_id: str, label: str) -> MemoryB
 
 # --- Write operations (require deps → lock held) ---
 
-async def update_block(deps: AgentDeps, label: str, content: str, commit: bool = True) -> MemoryBlockRecord:
+async def update_block(
+    deps: AgentDeps,
+    label: str,
+    content: str,
+    commit: bool = True,
+    block: MemoryBlockRecord | None = None,
+) -> MemoryBlockRecord:
     """
     Update block content.
     
     Raises if block doesn't exist or content exceeds char_limit.
     commit=False flushes instead of committing, for chaining ops atomically.
+    block: Optional pre-fetched block to avoid redundant DB query if user 
+    already has it
     """
-
-    # calling get block here ensures we don't proceed if there is not one and only one matching block    
-    block = await get_block(deps.session, deps.agent_id, label)
     if block is None:
-        raise ValueError("block not found")
+        block = await get_block(deps.session, deps.agent_id, label)
+        if block is None:
+            raise ValueError("block not found")
 
     if len(content) > block.char_limit:
         raise ValueError("new content exceeds char limit")
