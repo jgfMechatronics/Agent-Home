@@ -128,11 +128,9 @@ async def memory_replace(
     """
     deps = ctx.deps
     
-    # Validate old_string not empty
     if not old_string:
         raise ModelRetry("old_string cannot be empty")
     
-    # Get block
     block = await get_block(deps.session, deps.agent_id, label)
     if block is None:
         raise ModelRetry(f"block '{label}' not found")
@@ -144,7 +142,7 @@ async def memory_replace(
     end_pos = start_pos + len(old_string)
     new_content = block.content[:start_pos] + new_string + block.content[end_pos:]
     
-    # Update block via crud (handles char limit check and persistence)
+    # handles char limit check and persistence
     try:
         await update_block(deps, label, new_content, commit=False, block=block)
     except ValueError as e:
@@ -180,9 +178,8 @@ async def memory_insert(
     """
     deps = ctx.deps
     
-    # Validate after not empty (unless it's a special marker)
     if not after:
-        raise ModelRetry("'after' cannot be empty. Use '<start>' or '<end>' for boundaries.")
+        raise ModelRetry("'after' cannot be empty. Use '<start>' or '<end>' for boundary insertions.")
     
     # Get block
     block = await get_block(deps.session, deps.agent_id, label)
@@ -203,13 +200,12 @@ async def memory_insert(
     # Perform insertion
     new_content = block.content[:insert_pos] + content + block.content[insert_pos:]
     
-    # Update block via crud (handles char limit check and persistence)
+    # handles char limit check and persistence
     try:
         await update_block(deps, label, new_content, commit=False, block=block)
     except ValueError as e:
         raise ModelRetry(str(e))
     
-    # Compute and return snippet
     return _compute_snippet(new_content, insert_pos, content)
 
 
