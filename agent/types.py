@@ -20,6 +20,7 @@ class AgentConfig(BaseModel):
     - soft_compaction_limit: Token threshold for triggering compaction
     
     Optional fields:
+    - compaction_target_percentage: Target context size after compaction as fraction of soft_compaction_limit
     - is_deletable: Whether agent can be deleted (default False)
     """
     model_config = ConfigDict(extra="forbid")
@@ -27,6 +28,7 @@ class AgentConfig(BaseModel):
     model_name: str
     tool_names: list[str]
     soft_compaction_limit: int
+    compaction_target_percentage: float = 0.25
     is_deletable: bool = False
     
     @field_validator("model_name")
@@ -43,6 +45,13 @@ class AgentConfig(BaseModel):
     def validate_soft_compaction_limit(cls, v: int) -> int:
         if v <= 0:
             raise ValueError("soft_compaction_limit must be positive")
+        return v
+    
+    @field_validator("compaction_target_percentage")
+    @classmethod
+    def validate_compaction_target_percentage(cls, v: float) -> float:
+        if not 0 < v < 1:
+            raise ValueError("compaction_target_percentage must be between 0 and 1 (exclusive)")
         return v
 
 
