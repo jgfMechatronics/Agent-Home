@@ -91,66 +91,54 @@ class TestComputeSnippet:
     """
 
     def test_edit_in_middle_returns_surrounding_window(self):
-        """Edit at line 5 (F) with 3 context lines returns C-I (lines 2-8)."""
-        snippet = _compute_snippet(
-            ALPHABET_CONTENT, edit_start_line=5, edit_line_count=1, context_lines=3
-        )
+        """Edit at line 5 (F, char idx 10) with 3 context lines returns C-I."""
+        snippet = _compute_snippet(ALPHABET_CONTENT, edit_start_idx=10, new_text="F", context_lines=3)
         expected = "\n".join("CDEFGHI")
         assert snippet == expected
 
 
     def test_edit_at_start_clips_to_beginning(self):
-        """Edit at line 0 (A) doesn't go negative — returns A-D."""
-        snippet = _compute_snippet(
-            ALPHABET_CONTENT, edit_start_line=0, edit_line_count=1, context_lines=3
-        )
+        """Edit at line 0 (A, char idx 0) doesn't go negative — returns A-D."""
+        snippet = _compute_snippet(ALPHABET_CONTENT, edit_start_idx=0, new_text="A", context_lines=3)
         expected = "\n".join("ABCD")
         assert snippet == expected
 
 
     def test_edit_at_end_clips_to_end(self):
-        """Edit at line 9 (J) doesn't exceed bounds — returns G-J."""
-        snippet = _compute_snippet(
-            ALPHABET_CONTENT, edit_start_line=9, edit_line_count=1, context_lines=3
-        )
+        """Edit at line 9 (J, char idx 18) doesn't exceed bounds — returns G-J."""
+        snippet = _compute_snippet(ALPHABET_CONTENT, edit_start_idx=18, new_text="J", context_lines=3)
         expected = "\n".join("GHIJ")
         assert snippet == expected
 
 
     def test_multiline_edit_includes_full_edit_region(self):
-        """Edit spanning lines 4-6 (E-G) with 2 context returns C-I."""
-        snippet = _compute_snippet(
-            ALPHABET_CONTENT, edit_start_line=4, edit_line_count=3, context_lines=2
-        )
+        """Edit spanning lines 4-6 (E-G, char idx 8) with 2 context lines returns C-I."""
+        snippet = _compute_snippet(ALPHABET_CONTENT, edit_start_idx=8, new_text="E\nF\nG", context_lines=2)
         expected = "\n".join("CDEFGHI")
         assert snippet == expected
 
 
     def test_empty_content_returns_empty(self):
         """Empty content returns empty string."""
-        assert _compute_snippet("", edit_start_line=0, edit_line_count=0) == ""
+        assert _compute_snippet("", edit_start_idx=0, new_text="") == ""
 
 
     def test_single_line_content(self):
         """Single line content returns that line."""
-        assert _compute_snippet("only", edit_start_line=0, edit_line_count=1) == "only"
+        assert _compute_snippet("only", edit_start_idx=0, new_text="only") == "only"
 
 
     def test_default_context_is_three(self):
         """Default context_lines is 3."""
-        default = _compute_snippet(ALPHABET_CONTENT, edit_start_line=5, edit_line_count=1)
-        explicit = _compute_snippet(
-            ALPHABET_CONTENT, edit_start_line=5, edit_line_count=1, context_lines=3
-        )
+        default = _compute_snippet(ALPHABET_CONTENT, edit_start_idx=10, new_text="F")
+        explicit = _compute_snippet(ALPHABET_CONTENT, edit_start_idx=10, new_text="F", context_lines=3)
         assert default == explicit
 
 
 # --- TestToolRegistry ---
 
-
 class TestToolRegistry:
     """Tests for TOOL_REGISTRY and get_tools_for_agent."""
-
 
     def test_registry_contains_memory_tools(self):
         """TOOL_REGISTRY contains memory_replace and memory_insert keyed by name."""
@@ -285,24 +273,26 @@ class TestMemoryToolsShared:
         assert self.block.content != original_content
 
 
-    @pytest.mark.parametrize("tool_fn,tool_args,expected_new_content,edit_line", [
+    @pytest.mark.parametrize("tool_fn,tool_args,expected_new_content,edit_start_idx,new_text", [
         pytest.param(
             memory_replace,
             {"old_string": "E", "new_string": "EDITED"},
             "A\nB\nC\nD\nEDITED\nF\nG\nH\nI\nJ",
-            4,  # Line where "E" was (0-indexed)
+            8,      # "E" is at char idx 8 in ALPHABET_CONTENT
+            "EDITED",
             id="memory_replace",
         ),
         pytest.param(
             memory_insert,
             {"content": "[INS]", "after": "E"},
             "A\nB\nC\nD\nE[INS]\nF\nG\nH\nI\nJ",
-            4,  # Line where insert happened
+            9,      # insert_pos = idx("E") + len("E") = 8 + 1 = 9
+            "[INS]",
             id="memory_insert",
         ),
     ])
     async def test_returns_snippet_on_success(
-        self, session: AsyncSession, tool_fn, tool_args, expected_new_content, edit_line
+        self, session: AsyncSession, tool_fn, tool_args, expected_new_content, edit_start_idx, new_text
     ):
         """Tool returns snippet matching _compute_snippet output."""
         # Use 10-line content so snippeting actually happens
@@ -315,9 +305,7 @@ class TestMemoryToolsShared:
         result = await tool_fn(ctx, label=block.label, **tool_args)
 
         # Result should match what _compute_snippet produces
-        expected_snippet = _compute_snippet(
-            expected_new_content, edit_start_line=edit_line, edit_line_count=1
-        )
+        expected_snippet = _compute_snippet(expected_new_content, edit_start_idx, new_text)
         assert result == expected_snippet
 
 

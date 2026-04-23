@@ -15,20 +15,39 @@ from agent.types import AgentDeps
 from memory.block_crud import get_block
 
 
+def _get_edit_line_info(content: str, edit_start_idx: int, new_text: str) -> tuple[int, int]:
+    """Get line number and line count for snippet computation.
+    
+    Args:
+        content: The content AFTER the edit (temporally after, not positionally)
+        edit_start_idx: Character index where edit started in original content
+        new_text: The text that was inserted/replaced
+    
+    Returns:
+        (edit_start_line, edit_line_count) for _compute_snippet
+    """
+    # Count newlines before the edit position to get 0-indexed line number
+    edit_start_line = content[:edit_start_idx].count("\n")
+    # Count lines in the new text
+    edit_line_count = new_text.count("\n") + 1
+    return edit_start_line, edit_line_count
+
+
 def _compute_snippet(
-    content: str, edit_start_line: int, edit_line_count: int, context_lines: int = 3
+    content: str, edit_start_idx: int, new_text: str, context_lines: int = 3
 ) -> str:
     """Extract a snippet of content around an edited region.
 
     Args:
         content: The full content (after edit) to extract from
-        edit_start_line: 0-indexed line number where the edit begins
-        edit_line_count: Number of lines the edit spans
-        context_lines: Number of lines of context before/after
+        edit_start_idx: Character index where the edit begins
+        new_text: The text that was inserted/replaced (used to determine line span)
+        context_lines: Number of lines of context before + after
 
     Returns:
         A string containing the snippet with context around the edit
     """
+    edit_start_line, edit_line_count = _get_edit_line_info(content, edit_start_idx, new_text)
     lines = content.split("\n")
     start = max(0, edit_start_line - context_lines)
     end = min(len(lines), edit_start_line + edit_line_count + context_lines)
@@ -85,24 +104,6 @@ def _resolve_occurrence(
     return indices[target_idx]
 
 
-def _get_edit_line_info(content: str, edit_start_idx: int, new_text: str) -> tuple[int, int]:
-    """Get line number and line count for snippet computation.
-    
-    Args:
-        content: The content AFTER the edit
-        edit_start_idx: Character index where edit started in original content
-        new_text: The text that was inserted/replaced
-    
-    Returns:
-        (edit_start_line, edit_line_count) for _compute_snippet
-    """
-    # Count newlines before the edit position to get 0-indexed line number
-    edit_start_line = content[:edit_start_idx].count("\n")
-    # Count lines in the new text
-    edit_line_count = new_text.count("\n") + 1
-    return edit_start_line, edit_line_count
-
-
 async def memory_replace(
     ctx: RunContext[AgentDeps],
     label: str,
@@ -154,8 +155,7 @@ async def memory_replace(
     await deps.session.flush()
     
     # Compute and return snippet
-    edit_line, edit_count = _get_edit_line_info(new_content, start_pos, new_string)
-    return _compute_snippet(new_content, edit_line, edit_count)
+    return _compute_snippet(new_content, start_pos, new_string)
 
 
 async def memory_insert(
@@ -217,8 +217,7 @@ async def memory_insert(
     await deps.session.flush()
     
     # Compute and return snippet
-    edit_line, edit_count = _get_edit_line_info(new_content, insert_pos, content)
-    return _compute_snippet(new_content, edit_line, edit_count)
+    return _compute_snippet(new_content, insert_pos, content)
 
 
 # =============================================================================
