@@ -73,6 +73,8 @@ async def get_system_prompt(ctx_or_deps : RunContext[AgentDeps] | AgentDeps) -> 
         deps = ctx_or_deps.deps
     elif isinstance(ctx_or_deps, AgentDeps):
         deps = ctx_or_deps
+    else:
+        raise TypeError("ctx_or_deps must be of type RunContext[AgentDeps] or AgentDeps")
 
     session = deps.session
     agent = await session.get(AgentRecord, deps.agent_id)

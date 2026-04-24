@@ -11,11 +11,13 @@ from sqlalchemy.pool import StaticPool
 
 from agent.types import AgentConfig, AgentDeps
 from db.models import AgentRecord, Base, MemoryBlockRecord
+from pydantic_ai import RunContext
 
 
 def mock_run_context(deps: AgentDeps):
     """Create a mock RunContext with deps attached, for testing tools."""
-    ctx = Mock()
+    # spoof for isinstance checks
+    ctx = Mock(spec=RunContext)
     ctx.deps = deps
     return ctx
 
