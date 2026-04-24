@@ -106,9 +106,9 @@ class TestIsCompactionNeeded:
 
 # --- compact tests ---
 
-
 class CompactTestBase:
-    """Base class for compact tests.
+    """
+    Base class for compact tests. Allows easier commonization of setup
     
     Token math for tests:
     - System prompt tokens ≈ len(compiled_system_prompt) / 4
@@ -120,10 +120,10 @@ class CompactTestBase:
         self,
         session: AsyncSession,
         *,
-        limit: int = 500,
-        target: float = 0.5,
-        msg_count: int = 10,
-        input_tokens: int = 1100,
+        limit: int,
+        target: float,
+        msg_count: int,
+        input_tokens: int,
     ):
         """Set up test scenario with specified compaction parameters."""
         config = _make_config(soft_compaction_limit=limit, compaction_target_percentage=target)
@@ -138,10 +138,12 @@ class CompactTestBase:
 
 class TestCompactCommon(CompactTestBase):
     """Tests with standard config: 500 limit, 0.5 target, 10 messages, 1100 tokens."""
+    
+    MSG_COUNT = 10
 
     @pytest_asyncio.fixture(autouse=True)
     async def setup(self, session: AsyncSession):
-        await self._setup(session)
+        await self._setup(session, limit=500, target=0.5, msg_count=self.MSG_COUNT, input_tokens=1100)
 
     async def test_advances_context_window_start(self, session: AsyncSession):
         """compact advances context_window_start pointer in DB."""
@@ -163,9 +165,9 @@ class TestCompactCommon(CompactTestBase):
             )
         )
         db_count = result.scalar()
-        assert db_count == 10
+        assert db_count == self.MSG_COUNT
 
-    async def test_calls_compile_system_prompt(self, session: AsyncSession, mocker):
+    async def test_calls_compile_system_prompt(self, mocker):
         """compact calls compile_system_prompt after advancing pointer."""
         from agent import compaction as compaction_module
         
@@ -175,33 +177,19 @@ class TestCompactCommon(CompactTestBase):
         
         spy.assert_called_once_with(self.deps)
 
-    async def test_updates_pointer_and_recompiles_together(self, session: AsyncSession):
-        """Both pointer advance and prompt recompilation happen in the same compact call."""
-        original_compiled_at = self.agent.sys_prompt_compiled_at
-        
-        await compact(self.deps, input_tokens=self.input_tokens)
-        
-        await session.refresh(self.agent)
-        
-        # Both should be updated
-        assert self.agent.context_window_start is not None
-        assert self.agent.sys_prompt_compiled_at is not None
-        assert self.agent.sys_prompt_compiled_at != original_compiled_at
-
 
 class TestCompactEdgeCases(CompactTestBase):
-    """Tests for edge cases requiring non-standard config."""
+    """Tests for edge cases requiring per-test bespoke setup params"""
 
     async def test_minimum_history_guard_preserves_recent_messages(self, session: AsyncSession):
         """compact never evicts the most recent 4 messages."""
-        await self._setup(session, limit=100, target=0.1, input_tokens=5000)
+        await self._setup(session, limit=100, target=0.01, msg_count=10, input_tokens=5000)
         
         await compact(self.deps, input_tokens=self.input_tokens)
         
         await session.refresh(self.agent)
         
         # The 4 most recent messages should still be in context
-        # context_window_start should be <= timestamp of 4th-from-last message
         fourth_from_last = self.messages[-4]
         assert self.agent.context_window_start <= fourth_from_last.timestamp
 
@@ -218,14 +206,14 @@ class TestCompactEdgeCases(CompactTestBase):
     async def test_targets_percentage_of_limit(self, session: AsyncSession):
         """compact targets compaction_target_percentage of soft_compaction_limit.
         
-        Setup: 400 char prompt ≈ 100 tokens, 10 messages, input_tokens=1100
-        → message_tokens = 1100 - 100 = 1000, avg = 100 tok/msg
+        Setup: 400 char prompt ≈ 100 tokens, 20 messages, input_tokens=2100
+        → message_tokens = 2100 - 100 = 2000, avg = 100 tok/msg
         
-        Target: 50% of 1000 limit = 500 tokens
-        System prompt = 100, so message budget = 400 tokens = ~4 messages
-        Should keep ~4-5 messages (with tolerance for estimation drift)
+        Target: 50% of 2000 limit = 1000 tokens
+        System prompt = 100, so message budget = 900 tokens = ~9 messages
+        Should keep ~8-10 messages (well above the 4-message guard)
         """
-        await self._setup(session, limit=1000, target=0.5, input_tokens=1100)
+        await self._setup(session, limit=2000, target=0.5, msg_count=20, input_tokens=2100)
         
         await compact(self.deps, input_tokens=self.input_tokens)
         
@@ -234,5 +222,5 @@ class TestCompactEdgeCases(CompactTestBase):
         # Count messages still in context (timestamp >= context_window_start)
         in_context = [m for m in self.messages if m.timestamp >= self.agent.context_window_start]
         
-        # Allow tolerance for estimation drift (minimum 4 due to guard)
-        assert 4 <= len(in_context) <= 6
+        # Clear of the 4-message guard — tests percentage targeting, not the guard
+        assert 8 <= len(in_context) <= 10
