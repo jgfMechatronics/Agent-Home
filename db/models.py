@@ -20,7 +20,7 @@ class AgentConfigType(TypeDecorator):
     impl = JSON
     cache_ok = True
 
-    def process_bind_param(self, value, _dialect):
+    def process_bind_param(self, value, dialect):
         """Python → Database (when writing/updating)."""
         if value is None:
             return None
@@ -28,7 +28,7 @@ class AgentConfigType(TypeDecorator):
             raise TypeError(f"Expected AgentConfig, got {type(value).__name__}")
         return value.model_dump()
 
-    def process_result_value(self, value, _dialect):
+    def process_result_value(self, value, dialect):
         """Database → Python (when reading/loading)."""
         if value is None:
             return None
