@@ -42,7 +42,7 @@ async def compile_system_prompt(deps: AgentDeps) -> None:
     agent = await session.get(AgentRecord, deps.agent_id)
 
     if agent is None:
-        raise ValueError(f"Agent{deps.agent_id} not found in DB during system prompt compilation attempt")
+        raise ValueError(f"Agent {deps.agent_id} not found in DB during system prompt compilation attempt")
     
     # Load blocks in position order
     blocks = await get_blocks(session, deps.agent_id)
