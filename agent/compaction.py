@@ -4,7 +4,7 @@ Handles context window management by advancing the message history pointer
 when token limits are exceeded.
 """
 from agent.types import AgentConfig, AgentDeps
-from memory.system_prompt_compilation import compile_system_prompt
+from memory.system_prompt_compilation import compile_system_prompt, get_system_prompt
 
 
 def is_compaction_needed(input_tokens: int, config: AgentConfig) -> bool:
@@ -12,7 +12,7 @@ def is_compaction_needed(input_tokens: int, config: AgentConfig) -> bool:
     
     Returns True when input_tokens exceeds the soft_compaction_limit.
     """
-    raise NotImplementedError
+    return input_tokens > config.soft_compaction_limit
 
 
 async def compact(deps: AgentDeps, input_tokens: int) -> None:
@@ -28,4 +28,6 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
     - Does NOT delete messages (pointer-only)
     - Calls compile_system_prompt after advancing pointer
     """
+    # TODO: This is dependent on messages.py impl
+    # TODO: Consider an _advance_pointer helper fcn
     raise NotImplementedError

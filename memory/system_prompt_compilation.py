@@ -9,6 +9,7 @@ from datetime import datetime, UTC
 from agent.types import AgentDeps
 from db.models import AgentRecord, MemoryBlockRecord
 from memory.block_crud import get_blocks
+from pydantic_ai import RunContext
 
 
 def _format_block(block: MemoryBlockRecord) -> str:
@@ -39,6 +40,9 @@ async def compile_system_prompt(deps: AgentDeps) -> None:
     
     # Load agent
     agent = await session.get(AgentRecord, deps.agent_id)
+
+    if agent is None:
+        raise ValueError(f"Agent{deps.agent_id} not found in DB during system prompt compilation attempt")
     
     # Load blocks in position order
     blocks = await get_blocks(session, deps.agent_id)
@@ -56,15 +60,21 @@ async def compile_system_prompt(deps: AgentDeps) -> None:
     await session.flush()
 
 
-async def get_system_prompt(ctx) -> str:
+async def get_system_prompt(ctx_or_deps : RunContext[AgentDeps] | AgentDeps) -> str:
     """
     Return cached compiled_system_prompt for Pydantic AI instructions param.
     
-    - Extracts agent from ctx.deps
+    - Extracts agent from ctx.deps OR from deps depending on what is provided.
+      Needs to be able to accept ctx so pydantic AI can call it
     - Returns agent.compiled_system_prompt (empty string if NULL/empty)
     - Does NOT recompile — that's deferred compilation
     """
-    session = ctx.deps.session
-    agent = await session.get(AgentRecord, ctx.deps.agent_id)
+    if isinstance(ctx_or_deps, RunContext):
+        deps = ctx_or_deps.deps
+    elif isinstance(ctx_or_deps, AgentDeps):
+        deps = ctx_or_deps
+
+    session = deps.session
+    agent = await session.get(AgentRecord, deps.agent_id)
     
     return agent.compiled_system_prompt or ""
