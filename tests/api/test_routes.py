@@ -1,0 +1,439 @@
+"""HTTP route tests for Section 4.1.
+
+Tests the FastAPI routes using httpx AsyncClient. Uses dependency_overrides
+to inject mock factories, avoiding real DB lookups in route tests.
+
+Fixtures are defined here (not in conftest) because only this file uses them.
+
+Fixtures from conftest used here:
+- session: Test DB session (function-scoped, rolled back after each test)
+- agent_record: Pre-created agent for tests that need an existing agent
+- agent_with_blocks: Agent with memory blocks attached
+"""
+# Standard library
+import json
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
+
+# Third-party
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from pydantic_ai import AgentRunResultEvent
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ToolCallPart,
+    ToolReturnPart,
+)
+
+# Local
+from agent.factory import AgentNotFoundError, AgentLockedError, get_agent_factory
+from conftest import make_deps
+
+
+# --- Module-level test data ---
+
+TOOL_CALL_PART = ToolCallPart(tool_name="memory_replace", args={"label": "notes"}, tool_call_id="call-1")
+TOOL_RETURN_PART = ToolReturnPart(tool_name="memory_replace", content="Updated.", tool_call_id="call-1")
+
+# Common event sequences for reuse across tests
+MINIMAL_STREAM = lambda: [AgentRunResultEvent(result=Mock())]
+TEXT_STREAM = lambda: [
+    PartStartEvent(index=0, part=TextPart(content="Hello")),
+    PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=" world")),
+    AgentRunResultEvent(result=Mock()),
+]
+TOOL_STREAM = lambda: [
+    FunctionToolCallEvent(part=TOOL_CALL_PART),
+    FunctionToolResultEvent(result=TOOL_RETURN_PART),
+    AgentRunResultEvent(result=Mock()),
+]
+
+
+# --- Test Fixtures ---
+
+@pytest.fixture
+def app():
+    """FastAPI app instance. Import here to avoid module-level side effects."""
+    from main import app as _app
+    return _app
+
+
+@pytest_asyncio.fixture
+async def client(app):
+    """Async HTTP client bound to the test app."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test"
+    ) as c:
+        yield c
+
+
+def make_mock_agent(events=None, raises_mid_stream=None) -> Mock:
+    """Create a mock agent whose run_stream_events yields the given events.
+
+    The mock is a plain async generator, matching Pydantic AI's current API.
+    If raises_mid_stream is set, the exception is raised after all events are yielded.
+    """
+    agent = Mock()
+
+    async def _stream(_message):
+        for event in (events or []):
+            yield event
+        if raises_mid_stream is not None:
+            raise raises_mid_stream
+
+    agent.run_stream_events = _stream
+    return agent
+
+
+@pytest.fixture(autouse=True)
+def override_db_session(app, session):
+    """Ensure routes use the test session, not a separate DB connection.
+    
+    Without this, routes call get_session_dep() -> new connection -> test data invisible.
+    """
+    from api.app import get_session_dep
+    
+    async def _get_test_session():
+        yield session
+    
+    app.dependency_overrides[get_session_dep] = _get_test_session
+    yield
+    app.dependency_overrides.pop(get_session_dep, None)
+
+
+@pytest.fixture
+def mock_factory_override(app, session, agent_record):
+    """Factory for configuring mock agent behavior.
+    
+    Usage:
+        def test_something(mock_factory_override):
+            mock_factory_override(events=[...])  # happy path
+            mock_factory_override(raise_exc=AgentNotFoundError())  # error case
+    
+    Removes factory override on teardown (preserves session override).
+    """
+    def _configure(events=None, raise_exc=None, raises_mid_stream=None):
+        class _MockFactory:
+            @asynccontextmanager
+            async def build_agent_and_deps(self, agent_id):
+                if raise_exc is not None:
+                    raise raise_exc
+                # Yield mock agent + real deps (for persistence tests)
+                yield make_mock_agent(events, raises_mid_stream), make_deps(session, agent_record)
+        
+        app.dependency_overrides[get_agent_factory] = lambda: _MockFactory()
+    
+    yield _configure
+    # Use pop() not clear() — preserve session override from autouse fixture
+    app.dependency_overrides.pop(get_agent_factory, None)
+
+
+# --- Helpers ---
+
+async def collect_sse_events(response) -> list[dict]:
+    """Parse SSE data lines from a streaming response."""
+    events = []
+    async for line in response.aiter_lines():
+        if line.startswith("data: "):
+            events.append(json.loads(line[6:]))
+    return events
+
+
+async def stream_and_collect(client, agent_id, message: str = "test") -> list[dict]:
+    """POST to messages endpoint, assert 200, return parsed SSE events.
+    
+    Reduces boilerplate in happy-path streaming tests.
+    """
+    async with client.stream(
+        "POST",
+        f"/agents/{agent_id}/messages",
+        json={"message": message},
+    ) as response:
+        assert response.status_code == 200
+        return await collect_sse_events(response)
+
+
+# --- Test Classes ---
+
+class TestSendMessage:
+    """POST /agents/{agent_id}/messages — main streaming endpoint."""
+
+    @pytest.fixture(autouse=True)
+    def mock_route_side_effects(self):
+        """Patch route-level side effects for all TestSendMessage tests.
+
+        Uses create=True so existing tests stay green before routes.py imports these
+        functions. Once implementation adds the imports, create=True is a harmless no-op.
+
+        Provides self.mock_persist, self.mock_needs_compact, self.mock_compact
+        for tests that assert on persistence/compaction behavior.
+        """
+        with (
+            patch("api.routes.persist_messages", new_callable=AsyncMock, create=True) as mock_persist,
+            patch("api.routes.is_compaction_needed", create=True) as mock_needs_compact,
+            patch("api.routes.compact", new_callable=AsyncMock, create=True) as mock_compact,
+        ):
+            mock_needs_compact.return_value = False  # safe default — no compaction unless overridden
+            self.mock_persist = mock_persist
+            self.mock_needs_compact = mock_needs_compact
+            self.mock_compact = mock_compact
+            yield
+
+    @pytest.mark.parametrize("events_factory,expected_types", [
+        pytest.param(TEXT_STREAM, ["PartStartEvent", "PartDeltaEvent", "AgentRunResultEvent"], id="text-stream"),
+        pytest.param(TOOL_STREAM, ["FunctionToolCallEvent", "FunctionToolResultEvent", "AgentRunResultEvent"], id="tool-stream"),
+    ])
+    async def test_event_types_are_forwarded_as_sse(
+        self, client, mock_factory_override, agent_record, events_factory, expected_types
+    ):
+        """All run_stream_events event types are serialized and forwarded as SSE.
+
+        Covers both text and tool-call streams to verify forwarding is event-agnostic.
+        Tool-only stream also confirms zero-text-output runs complete normally.
+        """
+        mock_factory_override(events=events_factory())
+        sse_events = await stream_and_collect(client, agent_record.id)
+        assert [e["type"] for e in sse_events] == expected_types
+
+    @pytest.mark.parametrize("exc,expected_status", [
+        (AgentNotFoundError("not found"), 404),
+        (AgentLockedError("in use"), 503),
+    ])
+    async def test_factory_error_returns_appropriate_status(
+        self, client, mock_factory_override, exc, expected_status
+    ):
+        """Factory exceptions are mapped to their appropriate HTTP status codes."""
+        mock_factory_override(raise_exc=exc)
+        response = await client.post(f"/agents/{uuid4()}/messages", json={"message": "hi"})
+        assert response.status_code == expected_status
+    
+    async def test_content_type_is_event_stream(self, client, mock_factory_override, agent_record):
+        """Response Content-Type is text/event-stream for SSE."""
+        mock_factory_override(events=MINIMAL_STREAM())
+        
+        async with client.stream(
+            "POST",
+            f"/agents/{agent_record.id}/messages",
+            json={"message": "test"},
+        ) as response:
+            assert "text/event-stream" in response.headers["content-type"]
+            await collect_sse_events(response)  # Consume to avoid warnings
+
+    async def test_returns_400_for_malformed_body(self, client):
+        """Missing required 'message' field returns 400 or 422 before factory is called."""
+        response = await client.post(f"/agents/{uuid4()}/messages", json={})
+        assert response.status_code in (400, 422)
+
+    async def test_persists_messages_on_agent_run_result_event(
+        self, client, mock_factory_override, agent_record
+    ):
+        """persist_messages is called exactly once, triggered by AgentRunResultEvent.
+
+        Three events in the stream — persist must not be called on the earlier two.
+        """
+        mock_factory_override(events=TEXT_STREAM())
+
+        await stream_and_collect(client, agent_record.id)
+
+        self.mock_persist.assert_called_once()
+
+    @pytest.mark.parametrize("needs_compact,expect_compact", [(True, True), (False, False)])
+    async def test_compaction_called_based_on_check(
+        self, client, mock_factory_override, agent_record, needs_compact, expect_compact
+    ):
+        """compact is called iff is_compaction_needed returns True."""
+        self.mock_needs_compact.return_value = needs_compact
+        mock_factory_override(events=MINIMAL_STREAM())
+
+        await stream_and_collect(client, agent_record.id)
+
+        assert self.mock_compact.called == expect_compact
+
+    async def test_yields_error_event_on_exception(
+        self, client, mock_factory_override, agent_record
+    ):
+        """Exception mid-stream yields Error SSE event after partial output, then closes."""
+        # Simulate partial stream before exception (more realistic than immediate failure)
+        mock_factory_override(
+            events=[PartStartEvent(index=0, part=TextPart(content="Starting..."))],
+            raises_mid_stream=RuntimeError("something went wrong"),
+        )
+
+        sse_events = await stream_and_collect(client, agent_record.id)
+
+        # Should see partial event(s) + Error
+        assert len(sse_events) == 2
+        assert sse_events[0]["type"] == "PartStartEvent"
+        assert sse_events[1]["type"] == "Error"
+        assert "message" in sse_events[1]
+
+    async def test_persist_called_when_new_messages_empty(
+        self, client, mock_factory_override, agent_record
+    ):
+        """persist_messages is called even when new_messages() returns [] — no-op for DB layer."""
+        mock_result = Mock()
+        mock_result.new_messages.return_value = []
+        mock_factory_override(events=[AgentRunResultEvent(result=mock_result)])
+
+        await stream_and_collect(client, agent_record.id)
+
+        self.mock_persist.assert_called_once()
+
+
+class TestCreateAgent:
+    """POST /agents/ — create a new agent."""
+    
+    async def test_creates_agent_and_returns_id(self, client):
+        """Creating an agent returns its ID and 201 status."""
+        response = await client.post(
+            "/agents/",
+            json={
+                "name": "test-agent",
+                "model_name": "claude-sonnet-4-20250514",
+                "system_instructions": "Be helpful.",
+            }
+        )
+        
+        assert response.status_code == 201
+        data = response.json()
+        assert "id" in data
+        assert data["name"] == "test-agent"
+    
+    async def test_returns_400_for_invalid_config(self, client):
+        """Missing required fields result in 400."""
+        response = await client.post(
+            "/agents/",
+            json={"name": "incomplete"}  # missing model_name
+        )
+        
+        assert response.status_code in (400, 422)  # FastAPI validation error
+
+
+class TestGetAgent:
+    """GET /agents/{agent_id} — agent metadata."""
+    
+    async def test_returns_agent_metadata(self, client, agent_record):
+        """Returns agent metadata: name, model, created_at, updated_at."""
+        response = await client.get(f"/agents/{agent_record.id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == agent_record.name
+        assert data["model"] == agent_record.agent_config.model_name
+        assert "created_at" in data
+        assert "updated_at" in data
+    
+    # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
+
+
+class TestGetCoreMemory:
+    """GET /agents/{agent_id}/core_memory — memory blocks."""
+    
+    async def test_returns_memory_blocks(self, client, agent_with_blocks):
+        """Returns blocks in position order with all schema fields present."""
+        agent = agent_with_blocks["agent"]
+        blocks = agent_with_blocks["blocks"]
+
+        response = await client.get(f"/agents/{agent.id}/core_memory")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["blocks"]) == len(blocks)
+        first = data["blocks"][0]
+        assert first["label"] == "persona"
+        assert first["description"] == "The agent's identity"
+        assert first["content"] == "I am a test agent."
+        assert first["char_limit"] == 1000
+        assert "updated_at" in first
+
+    async def test_returns_empty_blocks_list_when_no_blocks(self, client, agent_record):
+        """Returns empty blocks list when agent has no memory blocks."""
+        response = await client.get(f"/agents/{agent_record.id}/core_memory")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["blocks"] == []
+
+    # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
+
+
+class TestGetMessages:
+    """GET /agents/{agent_id}/messages — conversation history."""
+
+    @pytest.fixture(autouse=True)
+    def mock_message_loaders(self):
+        """Patch message-loading functions for all TestGetMessages tests.
+
+        Uses create=True so tests stay green before routes.py imports these functions.
+
+        Provides self.mock_in_context and self.mock_full for loader-routing assertions.
+        """
+        with (
+            patch("api.routes.load_in_context_messages", new_callable=AsyncMock, create=True) as mock_in_context,
+            patch("api.routes.load_message_history", new_callable=AsyncMock, create=True) as mock_full,
+        ):
+            mock_in_context.return_value = []
+            mock_full.return_value = []
+            self.mock_in_context = mock_in_context
+            self.mock_full = mock_full
+            yield
+
+    async def test_default_loads_context_window_and_returns_messages(self, client, agent_record):
+        """Without ?full=true: calls load_in_context_messages, returns its result."""
+        expected_messages = [{"role": "user", "content": "test"}]
+        self.mock_in_context.return_value = expected_messages
+
+        response = await client.get(f"/agents/{agent_record.id}/messages")
+
+        assert response.status_code == 200
+        assert response.json()["messages"] == expected_messages
+        self.mock_in_context.assert_called_once()
+        self.mock_full.assert_not_called()
+
+    async def test_full_true_returns_complete_history(self, client, agent_record):
+        """With ?full=true: calls load_message_history, returns its result."""
+        expected_messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}]
+        self.mock_full.return_value = expected_messages
+
+        response = await client.get(f"/agents/{agent_record.id}/messages?full=true")
+
+        assert response.status_code == 200
+        assert response.json()["messages"] == expected_messages
+        self.mock_full.assert_called_once()
+        self.mock_in_context.assert_not_called()
+
+    # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
+
+
+class TestHealthCheck:
+    """GET /health — service health."""
+    
+    async def test_returns_200_ok(self, client):
+        """Health endpoint returns 200 with status."""
+        response = await client.get("/health")
+        
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+
+
+class TestNotFound:
+    """404 behavior for unknown agent_id across all endpoints."""
+
+    @pytest.mark.parametrize("path", [
+        "/agents/{agent_id}",
+        "/agents/{agent_id}/core_memory",
+        "/agents/{agent_id}/messages",
+    ])
+    async def test_get_endpoints_return_404_for_unknown_agent(self, client, path):
+        """All GET endpoints with agent_id return 404 for unknown agents."""
+        url = path.format(agent_id=uuid4())
+        response = await client.get(url)
+        assert response.status_code == 404
