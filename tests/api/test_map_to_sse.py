@@ -6,6 +6,8 @@ SSE-compatible dict. Pure unit tests: no DB, no HTTP, no async.
 NOTE: BuiltinToolCallEvent and BuiltinToolResultEvent are intentionally not tested.
 Agent Home uses custom function tools exclusively — we don't use provider-side
 built-in tools (WebSearchTool, CodeExecutionTool, etc.).
+
+NOTE: JF Skimmed this file but did not review in detail
 """
 import pytest
 from unittest.mock import Mock
@@ -69,6 +71,10 @@ class TestMapToSSEShared:
         result = map_to_sse(event)
         assert isinstance(result, dict)
         assert result["type"] == expected_type
+
+    def test_raises_for_unknown_event_type(self):
+        with pytest.raises(ValueError, match="Unhandled event type"):
+            map_to_sse(object())
 
 
 class TestPartBoundaryEvents:
