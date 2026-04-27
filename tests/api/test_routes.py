@@ -148,10 +148,21 @@ def mock_factory_override(app: FastAPI, session: AsyncSession, agent_record: Age
 
 # --- Helpers ---
 
+VALID_SSE_PREFIXES = ("data: ", "event: ", "id: ", "retry: ", ":")
+
 async def collect_sse_events(response: Response) -> list[dict]:
-    """Parse SSE data lines from a streaming response."""
+    """Parse SSE data lines from a streaming response.
+
+    Asserts that every non-empty line is a recognised SSE field — catches
+    garbage or malformed content that a silent filter would miss.
+    """
     events = []
     async for line in response.aiter_lines():
+        if not line:
+            continue  # blank lines are valid SSE event separators
+        assert any(line.startswith(prefix) for prefix in VALID_SSE_PREFIXES), (
+            f"Unexpected content in SSE stream: {line!r}"
+        )
         if line.startswith("data: "):
             events.append(json.loads(line[6:]))
     return events
@@ -283,12 +294,15 @@ class TestSendMessage:
         assert len(sse_events) == 2
         assert sse_events[0]["type"] == "PartStartEvent"
         assert sse_events[1]["type"] == "Error"
-        assert "message" in sse_events[1]
+        assert sse_events[1]["message"] == "Internal server error. RuntimeError: something went wrong"
 
     async def test_persist_called_when_new_messages_empty(
         self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord
     ):
-        """persist_messages is called even when new_messages() returns [] — no-op for DB layer."""
+        """
+        persist_messages is called even when new_messages() returns [] — no-op for DB layer.
+        TODO: Idk why we actually set this requirement
+        """
         mock_result = Mock()
         mock_result.new_messages.return_value = []
         mock_factory_override(events=[AgentRunResultEvent(result=mock_result)])
