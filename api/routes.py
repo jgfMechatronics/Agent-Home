@@ -2,6 +2,8 @@
 import dataclasses
 from typing import Any
 
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from pydantic_ai import AgentRunResultEvent
 from pydantic_ai.messages import (
     FinalResultEvent,
@@ -11,6 +13,20 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from agent.factory import AgentFactory, get_agent_factory
+from db.connection import get_session_dep
+from api.schemas import (
+    AgentMetadataResponse,
+    CoreMemoryResponse,
+    CreateAgentRequest,
+    MessageRequest,
+    MessageResponse,
+    MessagesResponse,
+)
+
+router = APIRouter(prefix="/agents")
 
 
 def map_to_sse(event: Any) -> dict:
@@ -37,3 +53,47 @@ def map_to_sse(event: Any) -> dict:
             return {"type": type_name}
         case _:
             raise ValueError(f"Unhandled event type: {type_name}")
+
+
+# --- Routes ---
+
+@router.post("/{agent_id}/messages")
+async def send_message(
+    agent_id: str,
+    body: MessageRequest,
+    factory: AgentFactory = Depends(get_agent_factory),
+) -> StreamingResponse:
+    raise NotImplementedError
+
+
+@router.post("/", status_code=201)
+async def create_agent(
+    body: CreateAgentRequest,
+    session: AsyncSession = Depends(get_session_dep),
+) -> MessageResponse:
+    raise NotImplementedError
+
+
+@router.get("/{agent_id}")
+async def get_agent(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session_dep),
+) -> AgentMetadataResponse:
+    raise NotImplementedError
+
+
+@router.get("/{agent_id}/core_memory")
+async def get_core_memory(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session_dep),
+) -> CoreMemoryResponse:
+    raise NotImplementedError
+
+
+@router.get("/{agent_id}/messages")
+async def get_messages(
+    agent_id: str,
+    full: bool = False,
+    session: AsyncSession = Depends(get_session_dep),
+) -> MessagesResponse:
+    raise NotImplementedError

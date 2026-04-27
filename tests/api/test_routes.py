@@ -99,7 +99,7 @@ def override_db_session(app, session):
     
     Without this, routes call get_session_dep() -> new connection -> test data invisible.
     """
-    from api.app import get_session_dep
+    from db.connection import get_session_dep
     
     async def _get_test_session():
         yield session
@@ -422,6 +422,12 @@ class TestHealthCheck:
         
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
+
+    @pytest.mark.xfail(reason="TODO: requires DB integration in app lifespan — need to determine how to simulate unreachable DB")
+    async def test_returns_503_when_db_unreachable(self, client):
+        """Health endpoint should return 503 when the DB is unreachable."""
+        response = await client.get("/health")
+        assert response.status_code == 503
 
 
 class TestNotFound:

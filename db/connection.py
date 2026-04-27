@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
+from fastapi import Request
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -33,4 +34,13 @@ async def get_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
         yield session
     finally:
         await session.close()
+
+
+async def get_session_dep(request: Request) -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency: yields session from app.state.engine.
+
+    Stub — implementation will use get_session(request.app.state.engine).
+    """
+    raise NotImplementedError("get_session_dep not implemented")
+    yield  # type: ignore — makes this a generator for type checking
 
