@@ -12,6 +12,7 @@ Fixtures from conftest used here:
 """
 # Standard library
 import json
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
@@ -19,8 +20,10 @@ from uuid import uuid4
 # Third-party
 import pytest
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient, Response
 from pydantic_ai import AgentRunResultEvent
+from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -35,6 +38,7 @@ from pydantic_ai.messages import (
 # Local
 from agent.factory import AgentNotFoundError, AgentLockedError, get_agent_factory
 from conftest import make_deps
+from db.models import AgentRecord
 
 
 # --- Module-level test data ---
@@ -59,14 +63,14 @@ TOOL_STREAM = lambda: [
 # --- Test Fixtures ---
 
 @pytest.fixture
-def app():
+def app() -> FastAPI:
     """FastAPI app instance. Import here to avoid module-level side effects."""
     from main import app as _app
     return _app
 
 
 @pytest_asyncio.fixture
-async def client(app):
+async def client(app: FastAPI) -> AsyncClient:
     """Async HTTP client bound to the test app."""
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -75,7 +79,7 @@ async def client(app):
         yield c
 
 
-def make_mock_agent(events=None, raises_mid_stream=None) -> Mock:
+def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | None = None) -> Mock:
     """Create a mock agent whose run_stream_events yields the given events.
 
     The mock is a plain async generator, matching Pydantic AI's current API.
@@ -94,7 +98,7 @@ def make_mock_agent(events=None, raises_mid_stream=None) -> Mock:
 
 
 @pytest.fixture(autouse=True)
-def override_db_session(app, session):
+def override_db_session(app: FastAPI, session: AsyncSession):
     """Ensure routes use the test session, not a separate DB connection.
     
     Without this, routes call get_session_dep() -> new connection -> test data invisible.
@@ -106,11 +110,11 @@ def override_db_session(app, session):
     
     app.dependency_overrides[get_session_dep] = _get_test_session
     yield
-    app.dependency_overrides.pop(get_session_dep, None)
+    app.dependency_overrides.pop(get_session_dep)
 
 
 @pytest.fixture
-def mock_factory_override(app, session, agent_record):
+def mock_factory_override(app: FastAPI, session: AsyncSession, agent_record: AgentRecord):
     """Factory for configuring mock agent behavior.
     
     Usage:
@@ -120,6 +124,7 @@ def mock_factory_override(app, session, agent_record):
     
     Removes factory override on teardown (preserves session override).
     """
+    _configured = False
     def _configure(events=None, raise_exc=None, raises_mid_stream=None):
         class _MockFactory:
             @asynccontextmanager
@@ -130,15 +135,20 @@ def mock_factory_override(app, session, agent_record):
                 yield make_mock_agent(events, raises_mid_stream), make_deps(session, agent_record)
         
         app.dependency_overrides[get_agent_factory] = lambda: _MockFactory()
+        nonlocal _configured 
+        _configured = True
     
     yield _configure
-    # Use pop() not clear() — preserve session override from autouse fixture
-    app.dependency_overrides.pop(get_agent_factory, None)
+
+    if _configured:
+        # Dependency only overriden if _configure ran
+        # Use pop() not clear() — preserve session override from autouse fixture
+        app.dependency_overrides.pop(get_agent_factory)
 
 
 # --- Helpers ---
 
-async def collect_sse_events(response) -> list[dict]:
+async def collect_sse_events(response: Response) -> list[dict]:
     """Parse SSE data lines from a streaming response."""
     events = []
     async for line in response.aiter_lines():
@@ -147,7 +157,7 @@ async def collect_sse_events(response) -> list[dict]:
     return events
 
 
-async def stream_and_collect(client, agent_id, message: str = "test") -> list[dict]:
+async def stream_and_collect(client: AsyncClient, agent_id, message: str = "test") -> list[dict]:
     """POST to messages endpoint, assert 200, return parsed SSE events.
     
     Reduces boilerplate in happy-path streaming tests.
@@ -192,7 +202,7 @@ class TestSendMessage:
         pytest.param(TOOL_STREAM, ["FunctionToolCallEvent", "FunctionToolResultEvent", "AgentRunResultEvent"], id="tool-stream"),
     ])
     async def test_event_types_are_forwarded_as_sse(
-        self, client, mock_factory_override, agent_record, events_factory, expected_types
+        self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord, events_factory, expected_types
     ):
         """All run_stream_events event types are serialized and forwarded as SSE.
 
@@ -208,14 +218,14 @@ class TestSendMessage:
         (AgentLockedError("in use"), 503),
     ])
     async def test_factory_error_returns_appropriate_status(
-        self, client, mock_factory_override, exc, expected_status
+        self, client: AsyncClient, mock_factory_override: Callable, exc, expected_status
     ):
         """Factory exceptions are mapped to their appropriate HTTP status codes."""
         mock_factory_override(raise_exc=exc)
         response = await client.post(f"/agents/{uuid4()}/messages", json={"message": "hi"})
         assert response.status_code == expected_status
     
-    async def test_content_type_is_event_stream(self, client, mock_factory_override, agent_record):
+    async def test_content_type_is_event_stream(self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord):
         """Response Content-Type is text/event-stream for SSE."""
         mock_factory_override(events=MINIMAL_STREAM())
         
@@ -227,13 +237,13 @@ class TestSendMessage:
             assert "text/event-stream" in response.headers["content-type"]
             await collect_sse_events(response)  # Consume to avoid warnings
 
-    async def test_returns_400_for_malformed_body(self, client):
+    async def test_returns_400_for_malformed_body(self, client: AsyncClient):
         """Missing required 'message' field returns 400 or 422 before factory is called."""
         response = await client.post(f"/agents/{uuid4()}/messages", json={})
         assert response.status_code in (400, 422)
 
     async def test_persists_messages_on_agent_run_result_event(
-        self, client, mock_factory_override, agent_record
+        self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord
     ):
         """persist_messages is called exactly once, triggered by AgentRunResultEvent.
 
@@ -247,7 +257,7 @@ class TestSendMessage:
 
     @pytest.mark.parametrize("needs_compact,expect_compact", [(True, True), (False, False)])
     async def test_compaction_called_based_on_check(
-        self, client, mock_factory_override, agent_record, needs_compact, expect_compact
+        self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord, needs_compact, expect_compact
     ):
         """compact is called iff is_compaction_needed returns True."""
         self.mock_needs_compact.return_value = needs_compact
@@ -258,7 +268,7 @@ class TestSendMessage:
         assert self.mock_compact.called == expect_compact
 
     async def test_yields_error_event_on_exception(
-        self, client, mock_factory_override, agent_record
+        self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord
     ):
         """Exception mid-stream yields Error SSE event after partial output, then closes."""
         # Simulate partial stream before exception (more realistic than immediate failure)
@@ -276,7 +286,7 @@ class TestSendMessage:
         assert "message" in sse_events[1]
 
     async def test_persist_called_when_new_messages_empty(
-        self, client, mock_factory_override, agent_record
+        self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord
     ):
         """persist_messages is called even when new_messages() returns [] — no-op for DB layer."""
         mock_result = Mock()
@@ -291,7 +301,7 @@ class TestSendMessage:
 class TestCreateAgent:
     """POST /agents/ — create a new agent."""
     
-    async def test_creates_agent_and_returns_id(self, client):
+    async def test_creates_agent_and_returns_id(self, client: AsyncClient):
         """Creating an agent returns its ID and 201 status."""
         response = await client.post(
             "/agents/",
@@ -307,7 +317,7 @@ class TestCreateAgent:
         assert "id" in data
         assert data["name"] == "test-agent"
     
-    async def test_returns_400_for_invalid_config(self, client):
+    async def test_returns_400_for_invalid_config(self, client: AsyncClient):
         """Missing required fields result in 400."""
         response = await client.post(
             "/agents/",
@@ -320,7 +330,7 @@ class TestCreateAgent:
 class TestGetAgent:
     """GET /agents/{agent_id} — agent metadata."""
     
-    async def test_returns_agent_metadata(self, client, agent_record):
+    async def test_returns_agent_metadata(self, client: AsyncClient, agent_record: AgentRecord):
         """Returns agent metadata: name, model, created_at, updated_at."""
         response = await client.get(f"/agents/{agent_record.id}")
 
@@ -337,7 +347,7 @@ class TestGetAgent:
 class TestGetCoreMemory:
     """GET /agents/{agent_id}/core_memory — memory blocks."""
     
-    async def test_returns_memory_blocks(self, client, agent_with_blocks):
+    async def test_returns_memory_blocks(self, client: AsyncClient, agent_with_blocks: dict):
         """Returns blocks in position order with all schema fields present."""
         agent = agent_with_blocks["agent"]
         blocks = agent_with_blocks["blocks"]
@@ -354,7 +364,7 @@ class TestGetCoreMemory:
         assert first["char_limit"] == 1000
         assert "updated_at" in first
 
-    async def test_returns_empty_blocks_list_when_no_blocks(self, client, agent_record):
+    async def test_returns_empty_blocks_list_when_no_blocks(self, client: AsyncClient, agent_record: AgentRecord):
         """Returns empty blocks list when agent has no memory blocks."""
         response = await client.get(f"/agents/{agent_record.id}/core_memory")
 
@@ -386,7 +396,7 @@ class TestGetMessages:
             self.mock_full = mock_full
             yield
 
-    async def test_default_loads_context_window_and_returns_messages(self, client, agent_record):
+    async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord):
         """Without ?full=true: calls load_in_context_messages, returns its result."""
         expected_messages = [{"role": "user", "content": "test"}]
         self.mock_in_context.return_value = expected_messages
@@ -398,7 +408,7 @@ class TestGetMessages:
         self.mock_in_context.assert_called_once()
         self.mock_full.assert_not_called()
 
-    async def test_full_true_returns_complete_history(self, client, agent_record):
+    async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord):
         """With ?full=true: calls load_message_history, returns its result."""
         expected_messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}]
         self.mock_full.return_value = expected_messages
@@ -416,7 +426,7 @@ class TestGetMessages:
 class TestHealthCheck:
     """GET /health — service health."""
     
-    async def test_returns_200_ok(self, client):
+    async def test_returns_200_ok(self, client: AsyncClient):
         """Health endpoint returns 200 with status."""
         response = await client.get("/health")
         
@@ -424,7 +434,7 @@ class TestHealthCheck:
         assert response.json()["status"] == "ok"
 
     @pytest.mark.xfail(reason="TODO: requires DB integration in app lifespan — need to determine how to simulate unreachable DB")
-    async def test_returns_503_when_db_unreachable(self, client):
+    async def test_returns_503_when_db_unreachable(self, client: AsyncClient):
         """Health endpoint should return 503 when the DB is unreachable."""
         response = await client.get("/health")
         assert response.status_code == 503
@@ -438,7 +448,7 @@ class TestNotFound:
         "/agents/{agent_id}/core_memory",
         "/agents/{agent_id}/messages",
     ])
-    async def test_get_endpoints_return_404_for_unknown_agent(self, client, path):
+    async def test_get_endpoints_return_404_for_unknown_agent(self, client: AsyncClient, path: str):
         """All GET endpoints with agent_id return 404 for unknown agents."""
         url = path.format(agent_id=uuid4())
         response = await client.get(url)
