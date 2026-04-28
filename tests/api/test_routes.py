@@ -345,15 +345,19 @@ class TestGetAgent:
     """GET /agents/{agent_id} — agent metadata."""
     
     async def test_returns_agent_metadata(self, client: AsyncClient, agent_record: AgentRecord):
-        """Returns agent metadata: name, model, created_at, updated_at."""
+        """
+        Returns agent metadata: name, model, created_at, updated_at.
+        TODO: Should this assert that calls the appropriate internal function?
+        Might be an impl detail we *don't* want to test actually
+        """
         response = await client.get(f"/agents/{agent_record.id}")
 
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == agent_record.name
         assert data["model"] == agent_record.agent_config.model_name
-        assert "created_at" in data
-        assert "updated_at" in data
+        assert "created_at" == agent_record.created_at
+        assert "updated_at" == agent_record.updated_at
     
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 

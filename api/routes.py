@@ -63,6 +63,7 @@ async def send_message(
     body: MessageRequest,
     factory: AgentFactory = Depends(get_agent_factory),
 ) -> StreamingResponse:
+    """TODO: Agent run should still be able to complete and persist in the event that client disconnects"""
     raise NotImplementedError
 
 
