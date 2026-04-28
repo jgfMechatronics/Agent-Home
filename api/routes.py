@@ -22,7 +22,6 @@ from api.schemas import (
     CoreMemoryResponse,
     CreateAgentRequest,
     MessageRequest,
-    MessageResponse,
     MessagesResponse,
 )
 
@@ -71,7 +70,7 @@ async def send_message(
 async def create_agent(
     body: CreateAgentRequest,
     session: AsyncSession = Depends(get_session_dep),
-) -> MessageResponse:
+) -> AgentMetadataResponse:
     raise NotImplementedError
 
 
