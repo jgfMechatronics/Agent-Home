@@ -315,52 +315,63 @@ class TestSendMessage:
 
 class TestCreateAgent:
     """POST /agents/ — create a new agent."""
-    
-    async def test_creates_agent_and_returns_metadata(self, client: AsyncClient):
-        """Creating an agent returns its ID and 201 status."""
+
+    _NAME = "test-agent"
+    _MODEL = "claude-sonnet-4-20250514"
+    _VALID_BODY: dict = {
+        "name": _NAME,
+        "system_instructions": "Be helpful.",
+        "config": {
+            "model_name": _MODEL,
+            "tool_names": [],
+            "soft_compaction_limit": 1000,
+        },
+    }
+
+    @pytest.fixture(autouse=True)
+    def mock_create_agent_deps(self):
         with (
-            patch("api.routes.create_agent", new_callable=AsyncMock) as mock_create_agent,
-            patch("api.routes.get_agent", new_callable=AsyncMock) as mock_get_agent,
+            patch("api.routes.create_agent", new_callable=AsyncMock, create=True) as mock_create,
+            patch("api.routes.get_agent", new_callable=AsyncMock, create=True) as mock_get,
         ):
-            expected_id = str(uuid4())
-            mock_create_agent.return_value = expected_id
+            self.mock_create_agent = mock_create
+            self.mock_get_agent = mock_get
+            yield
 
-            NAME = "test-agent"
-            MODEL = "claude-sonnet-4-20250514"
-            DATETIME_NOW = _utcnow()
-            expected_metadata = AgentMetadataResponse(id=expected_id,
-                                                      name=NAME,
-                                                      model=MODEL,
-                                                      created_at=DATETIME_NOW,
-                                                      updated_at=DATETIME_NOW)
+    async def test_creates_agent_and_returns_metadata(self, client: AsyncClient) -> None:
+        """Creating an agent returns full metadata and 201 status."""
+        expected_id = str(uuid4())
+        self.mock_create_agent.return_value = expected_id
 
-            mock_get_agent.return_value = expected_metadata
+        DATETIME_NOW = _utcnow()
+        expected_metadata = AgentMetadataResponse(
+            id=expected_id,
+            name=self._NAME,
+            model=self._MODEL,
+            created_at=DATETIME_NOW,
+            updated_at=DATETIME_NOW,
+        )
+        self.mock_get_agent.return_value = expected_metadata
 
-            response = await client.post(
-                "/agents/",
-                json={
-                    "name": NAME,
-                    "system_instructions": "Be helpful.",
-                    "config": {
-                        "model_name": MODEL,
-                        "tool_names": [],
-                        "soft_compaction_limit": 1000,
-                    },
-                }
-            )
-            
-            assert response.status_code == 201
-            mock_create_agent.assert_called_once()
-            mock_get_agent.assert_called_once_with(expected_id)
-            
-            metadata = AgentMetadataResponse.model_validate(response.json())
-            assert metadata == expected_metadata
-    
+        response = await client.post("/agents/", json=self._VALID_BODY)
+
+        assert response.status_code == 201
+        self.mock_create_agent.assert_called_once()
+        self.mock_get_agent.assert_called_once_with(expected_id)
+        assert AgentMetadataResponse.model_validate(response.json()) == expected_metadata
+
+    async def test_returns_500_when_create_agent_fails(self, client: AsyncClient):
+        """Internal failure in create_agent returns 500 with exception details."""
+        self.mock_create_agent.side_effect = RuntimeError("DB failure")
+        response = await client.post("/agents/", json=self._VALID_BODY)
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Exception during agent creation: RuntimeError: DB failure"
+
     async def test_returns_400_for_invalid_config(self, client: AsyncClient):
-        """Missing required fields result in 400."""
+        """Missing required fields result in 400 before route logic is reached."""
         response = await client.post(
             "/agents/",
-            json={"name": "incomplete"}  # missing system_instructions and config
+            json={"name": "incomplete"},  # missing system_instructions and config
         )
         
         assert response.status_code in (400, 422)  # FastAPI validation error
