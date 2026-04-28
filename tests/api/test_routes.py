@@ -37,9 +37,10 @@ from pydantic_ai.messages import (
 
 # Local
 from agent.factory import AgentNotFoundError, AgentLockedError, get_agent_factory
+from agent.crud import create_agent
 from conftest import make_deps
-from db.models import AgentRecord
-
+from db.models import AgentRecord, _utcnow
+from api.schemas import AgentMetadataResponse
 
 # --- Module-level test data ---
 
@@ -315,30 +316,56 @@ class TestSendMessage:
 class TestCreateAgent:
     """POST /agents/ — create a new agent."""
     
-    async def test_creates_agent_and_returns_id(self, client: AsyncClient):
+    async def test_creates_agent_and_returns_metadata(self, client: AsyncClient):
         """Creating an agent returns its ID and 201 status."""
-        response = await client.post(
-            "/agents/",
-            json={
-                "name": "test-agent",
-                "model_name": "claude-sonnet-4-20250514",
-                "system_instructions": "Be helpful.",
-            }
-        )
-        
-        assert response.status_code == 201
-        data = response.json()
-        assert "id" in data
-        assert data["name"] == "test-agent"
+        with (
+            patch("api.routes.create_agent", new_callable=AsyncMock) as mock_create_agent,
+            patch("api.routes.get_agent", new_callable=AsyncMock) as mock_get_agent,
+        ):
+            expected_id = str(uuid4())
+            mock_create_agent.return_value = expected_id
+
+            NAME = "test-agent"
+            MODEL = "claude-sonnet-4-20250514"
+            DATETIME_NOW = _utcnow()
+            expected_metadata = AgentMetadataResponse(id=expected_id,
+                                                      name=NAME,
+                                                      model=MODEL,
+                                                      created_at=DATETIME_NOW,
+                                                      updated_at=DATETIME_NOW)
+
+            mock_get_agent.return_value = expected_metadata
+
+            response = await client.post(
+                "/agents/",
+                json={
+                    "name": NAME,
+                    "system_instructions": "Be helpful.",
+                    "config": {
+                        "model_name": MODEL,
+                        "tool_names": [],
+                        "soft_compaction_limit": 1000,
+                    },
+                }
+            )
+            
+            assert response.status_code == 201
+            mock_create_agent.assert_called_once()
+            mock_get_agent.assert_called_once_with(expected_id)
+            
+            metadata = AgentMetadataResponse.model_validate(response.json())
+            assert metadata == expected_metadata
     
     async def test_returns_400_for_invalid_config(self, client: AsyncClient):
         """Missing required fields result in 400."""
         response = await client.post(
             "/agents/",
-            json={"name": "incomplete"}  # missing model_name
+            json={"name": "incomplete"}  # missing system_instructions and config
         )
         
         assert response.status_code in (400, 422)  # FastAPI validation error
+
+    
 
 
 class TestGetAgent:

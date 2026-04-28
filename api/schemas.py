@@ -2,9 +2,7 @@
 Pydantic request/response schemas for the API layer.
 """
 from datetime import datetime
-
 from pydantic import BaseModel, field_validator
-
 from agent.types import AgentConfig
 
 
