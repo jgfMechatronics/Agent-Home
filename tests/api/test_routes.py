@@ -40,7 +40,7 @@ from agent.factory import AgentNotFoundError, AgentLockedError, get_agent_factor
 from agent.crud import create_agent
 from conftest import make_deps
 from db.models import AgentRecord, _utcnow
-from api.schemas import AgentMetadataResponse
+from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 
 # --- Module-level test data ---
 
@@ -376,8 +376,6 @@ class TestCreateAgent:
         
         assert response.status_code in (400, 422)  # FastAPI validation error
 
-    
-
 
 class TestGetAgent:
     """GET /agents/{agent_id} — agent metadata."""
@@ -389,13 +387,17 @@ class TestGetAgent:
         Might be an impl detail we *don't* want to test actually
         """
         response = await client.get(f"/agents/{agent_record.id}")
+        metadata = AgentMetadataResponse.model_validate(response.json())
+        expected_metadata = AgentMetadataResponse(
+            id=agent_record.id,
+            name=agent_record.name,
+            model=agent_record.agent_config.model_name,
+            created_at=agent_record.created_at,
+            updated_at=agent_record.updated_at,
+        )
 
         assert response.status_code == 200
-        data = response.json()
-        assert data["name"] == agent_record.name
-        assert data["model"] == agent_record.agent_config.model_name
-        assert "created_at" == agent_record.created_at
-        assert "updated_at" == agent_record.updated_at
+        assert metadata == expected_metadata
     
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
@@ -411,14 +413,18 @@ class TestGetCoreMemory:
         response = await client.get(f"/agents/{agent.id}/core_memory")
 
         assert response.status_code == 200
-        data = response.json()
-        assert len(data["blocks"]) == len(blocks)
-        first = data["blocks"][0]
-        assert first["label"] == "persona"
-        assert first["description"] == "The agent's identity"
-        assert first["content"] == "I am a test agent."
-        assert first["char_limit"] == 1000
-        assert "updated_at" in first
+        actual = CoreMemoryResponse.model_validate(response.json())
+        expected = CoreMemoryResponse(blocks=[
+            MemoryBlockResponse(
+                label=block.label,
+                description=block.description,
+                content=block.content,
+                char_limit=block.char_limit,
+                updated_at=block.updated_at,
+            )
+            for block in blocks
+        ])
+        assert actual == expected
 
     async def test_returns_empty_blocks_list_when_no_blocks(self, client: AsyncClient, agent_record: AgentRecord):
         """Returns empty blocks list when agent has no memory blocks."""
@@ -432,7 +438,10 @@ class TestGetCoreMemory:
 
 
 class TestGetMessages:
-    """GET /agents/{agent_id}/messages — conversation history."""
+    """
+    GET /agents/{agent_id}/messages — conversation history.
+    TODO: This is OK for now but we will likely rework the endpoint after defining what is most useful for the frontend in terms of message format
+    """
 
     @pytest.fixture(autouse=True)
     def mock_message_loaders(self):
