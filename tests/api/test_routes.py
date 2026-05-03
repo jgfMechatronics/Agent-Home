@@ -152,20 +152,28 @@ def mock_factory_override(app: FastAPI, session: AsyncSession, agent_record: Age
 VALID_SSE_PREFIXES = ("data: ", "event: ", "id: ", "retry: ", ":")
 
 async def collect_sse_events(response: Response) -> list[dict]:
-    """Parse SSE data lines from a streaming response.
+    """Parse SSE events from a streaming response.
 
+    Returns a list of dicts with 'event' (SSE event field) and 'data' (parsed JSON):
+        {"event": "PartDeltaEvent", "data": {"index": 0, ...}}
+
+    Assumes event: field precedes data: field within each event block (standard SSE order).
     Asserts that every non-empty line is a recognised SSE field — catches
     garbage or malformed content that a silent filter would miss.
     """
     events = []
+    current_event_type: str | None = None
     async for line in response.aiter_lines():
         if not line:
-            continue  # blank lines are valid SSE event separators
+            current_event_type = None  # blank line = event separator
+            continue
         assert any(line.startswith(prefix) for prefix in VALID_SSE_PREFIXES), (
             f"Unexpected content in SSE stream: {line!r}"
         )
-        if line.startswith("data: "):
-            events.append(json.loads(line[6:]))
+        if line.startswith("event: "):
+            current_event_type = line[7:]
+        elif line.startswith("data: "):
+            events.append({"event": current_event_type, "data": json.loads(line[6:])})
     return events
 
 
@@ -223,7 +231,7 @@ class TestSendMessage:
         """
         mock_factory_override(events=events_factory())
         sse_events = await stream_and_collect(client, agent_record.id)
-        assert [e["type"] for e in sse_events] == expected_types
+        assert [e["event"] for e in sse_events] == expected_types
 
     @pytest.mark.parametrize("exc,expected_status", [
         (AgentNotFoundError("not found"), 404),
@@ -293,9 +301,9 @@ class TestSendMessage:
 
         # Should see partial event(s) + Error
         assert len(sse_events) == 2
-        assert sse_events[0]["type"] == "PartStartEvent"
-        assert sse_events[1]["type"] == "Error"
-        assert sse_events[1]["message"] == "Internal server error. RuntimeError: something went wrong"
+        assert sse_events[0]["event"] == "PartStartEvent"
+        assert sse_events[1]["event"] == "Error"
+        assert sse_events[1]["data"]["message"] == "Internal server error. RuntimeError: something went wrong"
 
     async def test_persist_called_when_new_messages_empty(
         self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord
