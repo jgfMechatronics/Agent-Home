@@ -4,7 +4,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from pydantic_ai import AgentRunResultEvent
+from fastapi.sse import EventSourceResponse
+from pydantic_ai import AgentRunResultEvent, Agent
 from pydantic_ai.messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -24,6 +25,7 @@ from api.schemas import (
     MessageRequest,
     MessagesResponse,
 )
+from messages.messages import load_in_context_messages 
 
 router = APIRouter(prefix="/agents")
 
@@ -56,14 +58,23 @@ def map_to_sse(event: Any) -> dict:
 
 # --- Routes ---
 
-@router.post("/{agent_id}/messages")
+@router.post("/{agent_id}/messages", response_class=EventSourceResponse)
 async def send_message(
     agent_id: str,
     body: MessageRequest,
     factory: AgentFactory = Depends(get_agent_factory),
 ) -> StreamingResponse:
     """TODO: Agent run should still be able to complete and persist in the event that client disconnects"""
-    raise NotImplementedError
+    
+    async with factory.build_agent_and_deps(agent_id) as (agent, deps):
+        message_history = await load_in_context_messages(deps)
+
+        async for event in agent.run_stream_events(user_prompt=body.message,
+                                                    message_history=message_history,
+                                                    deps=deps):
+            yield map_to_sse(event)
+            
+            # if event # In progress 
 
 
 @router.post("/", status_code=201)
