@@ -39,10 +39,11 @@ def lock_reg() -> dict:
 
 @pytest.fixture
 def captured() -> dict:
-    """Populated by the test route with the resolved (agent, deps) on each request.
+    """Shared dict between tests and the test route.
 
-    Allows the happy-path test to assert on the actual objects yielded by
-    get_agent_and_deps, not just the HTTP response.
+    The route populates "agent" and "dep" on each request.
+    Tests can set "route_raises" to an exception before the request to make
+    the route raise after deps are resolved (used for sad-path CM lifecycle tests).
     """
     return {}
 
@@ -65,6 +66,8 @@ async def test_client(
         agent, deps = agent_and_deps
         captured["agent"] = agent
         captured["deps"] = deps
+        if exc := captured.get("route_raises"):
+            raise exc
         return {}
 
     async def _override_session():
@@ -84,38 +87,67 @@ async def test_client(
 class TestGetAgentAndDeps:
     """get_agent_and_deps: yields (Agent, AgentDeps) and translates domain exceptions to HTTP."""
 
+    @pytest.fixture(autouse=True)
+    def mock_build_success(self):
+        """Patches build_agent_and_deps with a success CM for all tests.
+
+        Provides self.mock_agent and self.mock_deps (the yielded objects) and
+        self.cm_state ({"entered": bool, "exited": bool}) for CM lifecycle assertions.
+        Error tests override this locally with a second patch.object call.
+        """
+        self.mock_agent = MagicMock()
+        self.mock_deps = MagicMock()
+        self.cm_state = {"entered": False, "exited": False}
+
+        @asynccontextmanager
+        async def _build(*args, **kwargs):
+            self.cm_state["entered"] = True
+            try:
+                yield self.mock_agent, self.mock_deps
+            finally:
+                self.cm_state["exited"] = True
+
+        with patch.object(AgentFactory, "build_agent_and_deps", _build):
+            yield
+
     async def test_yields_correct_agent_and_deps(
         self, test_client: AsyncClient, captured: dict
     ):
         """Happy path: passes through exactly the (agent, deps) returned by build_agent_and_deps."""
-        mock_agent = MagicMock()
-        mock_deps = MagicMock()
-
-        @asynccontextmanager
-        async def mock_build(*args, **kwargs):
-            yield mock_agent, mock_deps
-
-        with patch.object(AgentFactory, "build_agent_and_deps", mock_build):
-            response = await test_client.get("/test/any-id")
-
+        response = await test_client.get("/test/any-id")
         assert response.status_code == 200
-        assert captured["agent"] is mock_agent
-        assert captured["deps"] is mock_deps
+        assert captured["agent"] is self.mock_agent
+        assert captured["deps"] is self.mock_deps
+
+    @pytest.mark.parametrize("route_raises", [
+        pytest.param(None, id="happy_path"),
+        pytest.param(RuntimeError("route exploded"), id="route_raises"),
+    ])
+    async def test_enters_and_exits_build_cm(
+        self, test_client: AsyncClient, captured: dict, route_raises: Exception | None
+    ):
+        """build_agent_and_deps CM is entered and exited after request, whether or not the route raised."""
+        if route_raises:
+            captured["route_raises"] = route_raises
+        await test_client.get("/test/any-id")
+        assert self.cm_state["entered"], "build_agent_and_deps should have been entered as a CM"
+        assert self.cm_state["exited"], "build_agent_and_deps CM should be exited after request completes"
 
     @pytest.mark.parametrize("error,expected_status", [
         (AgentNotFoundError("Agent 'any-id' not found"), 404),
-        (AgentLockedError("Agent 'any-id' did not become available"), 503),
+        (AgentLockedError(f"Agent 'any-id' did not become available within {AgentFactory.LOCK_TIMEOUT_SECONDS}s"), 503),
     ])
     async def test_translates_domain_exceptions_to_http(
         self, test_client: AsyncClient, error: Exception, expected_status: int
     ):
         """AgentNotFoundError → 404, AgentLockedError → 503."""
         @asynccontextmanager
-        async def mock_build(*args, **kwargs):
+        async def mock_error_during_build_agent_and_deps(*args, **kwargs):
             raise error
-            yield  # makes it a valid async generator
+            yield  # unreachable — makes this an async generator function
 
-        with patch.object(AgentFactory, "build_agent_and_deps", mock_build):
+        with patch.object(AgentFactory, "build_agent_and_deps", mock_error_during_build_agent_and_deps):
             response = await test_client.get("/test/any-id")
 
         assert response.status_code == expected_status
+        assert response.json()["detail"] == str(error)
