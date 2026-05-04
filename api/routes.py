@@ -1,13 +1,14 @@
 """API routes — Section 4.1."""
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic_ai import AgentRunResultEvent
+from pydantic_ai import Agent, AgentRunResultEvent
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.factory import AgentFactory, get_agent_factory, AgentNotFoundError, AgentLockedError
-from db.connection import get_session_dep
+from agent.types import AgentDeps
+
+from api.deps import get_session_dep, get_agent_and_deps
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
@@ -42,34 +43,32 @@ def map_to_sse(event: Any) -> ServerSentEvent:
 async def send_message(
     agent_id: str,
     body: MessageRequest,
-    factory: AgentFactory = Depends(get_agent_factory),
+    agent_and_deps: tuple[Agent, AgentDeps] = Depends(get_agent_and_deps),
 ) -> AsyncGenerator[ServerSentEvent]:
     """TODO: Agent run should still be able to complete and persist in the event that client disconnects"""
+    # AgentNotFoundError / AgentLockedError are translated to HTTP 404/503 by get_agent_and_deps
+    agent, deps = agent_and_deps
     try:
-        async with factory.build_agent_and_deps(agent_id) as (agent, deps):
-            try:
-                message_history = await load_in_context_messages(deps)
+        message_history = await load_in_context_messages(deps)
 
-                async for event in agent.run_stream_events(user_prompt=body.message,
-                                                            message_history=message_history,
-                                                            deps=deps):
-                    yield map_to_sse(event)
-                    
-                    if isinstance(event, AgentRunResultEvent):
-                        final_result = event.result
-                        input_tokens = final_result.usage().input_tokens
-                        await persist_messages(deps=deps, 
-                                            messages=final_result.new_messages(), 
-                                            input_tokens=input_tokens)
-                        if is_compaction_needed(input_tokens, deps.config):
-                            await compact(deps, input_tokens)
-            except Exception as e:
-                yield ServerSentEvent(data={"message": f"Unexpected internal server error: '{type(e).__name__}: {str(e)}'"}, 
-                                      event="Error")
-    except AgentNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except AgentLockedError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+        async for event in agent.run_stream_events(user_prompt=body.message,
+                                                    message_history=message_history,
+                                                    deps=deps):
+            yield map_to_sse(event)
+
+            if isinstance(event, AgentRunResultEvent):
+                final_result = event.result
+                input_tokens = final_result.usage().input_tokens
+                await persist_messages(deps=deps,
+                                       messages=final_result.new_messages(),
+                                       input_tokens=input_tokens)
+                if is_compaction_needed(input_tokens, deps.config):
+                    await compact(deps, input_tokens)
+    except Exception as e:
+        yield ServerSentEvent(
+            data={"message": f"Unexpected internal server error: '{type(e).__name__}: {str(e)}'"},
+            event="Error",
+        )
 
 
 @router.post("/", status_code=201)

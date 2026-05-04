@@ -12,7 +12,6 @@ Fixtures from conftest used here:
 """
 # Standard library
 import json
-from collections.abc import Callable
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
@@ -20,7 +19,7 @@ from uuid import uuid4
 # Third-party
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient, Response
 from pydantic_ai import AgentRunResultEvent
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +35,7 @@ from pydantic_ai.messages import (
 )
 
 # Local
-from agent.factory import AgentNotFoundError, AgentLockedError, get_agent_factory
+from api.deps import get_agent_and_deps, get_session_dep
 from agent.crud import create_agent
 from conftest import make_deps
 from db.models import AgentRecord, _utcnow
@@ -104,8 +103,6 @@ def override_db_session(app: FastAPI, session: AsyncSession):
     
     Without this, routes call get_session_dep() -> new connection -> test data invisible.
     """
-    from db.connection import get_session_dep
-    
     async def _get_test_session():
         yield session
     
@@ -113,38 +110,6 @@ def override_db_session(app: FastAPI, session: AsyncSession):
     yield
     app.dependency_overrides.pop(get_session_dep)
 
-
-@pytest.fixture
-def mock_factory_override(app: FastAPI, session: AsyncSession, agent_record: AgentRecord):
-    """Factory for configuring mock agent behavior.
-    
-    Usage:
-        def test_something(mock_factory_override):
-            mock_factory_override(events=[...])  # happy path
-            mock_factory_override(raise_exc=AgentNotFoundError())  # error case
-    
-    Removes factory override on teardown (preserves session override).
-    """
-    _configured = False
-    def _configure(events=None, raise_exc=None, raises_mid_stream=None):
-        class _MockFactory:
-            @asynccontextmanager
-            async def build_agent_and_deps(self, agent_id):
-                if raise_exc is not None:
-                    raise raise_exc
-                # Yield mock agent + real deps (for persistence tests)
-                yield make_mock_agent(events, raises_mid_stream), make_deps(session, agent_record)
-        
-        app.dependency_overrides[get_agent_factory] = lambda: _MockFactory()
-        nonlocal _configured 
-        _configured = True
-    
-    yield _configure
-
-    if _configured:
-        # Dependency only overriden if _configure ran
-        # Use pop() not clear() — preserve session override from autouse fixture
-        app.dependency_overrides.pop(get_agent_factory)
 
 
 # --- Helpers ---
@@ -194,7 +159,37 @@ async def stream_and_collect(client: AsyncClient, agent_id, message: str = "test
 # --- Test Classes ---
 
 class TestSendMessage:
-    """POST /agents/{agent_id}/messages — main streaming endpoint."""
+    """
+    POST /agents/{agent_id}/messages — main streaming endpoint.
+    TODO (Low priority): This test class got a bit confusing, consider simplifying if possible
+    """
+
+    @pytest.fixture(autouse=True)
+    def mock_agent_dep(self, app: FastAPI, session: AsyncSession, agent_record: AgentRecord):
+        """Provides self.agent_record and self.configure_mock_get_agent_and_deps for all TestSendMessage tests.
+
+        self.configure_mock_get_agent_and_deps(events, raise_exc, raises_mid_stream) installs a mock
+        get_agent_and_deps override. Must be called before the request is made.
+        """
+        self.agent_record = agent_record
+
+        _configured = False
+        def _configure(events=None, raise_exc=None, raises_mid_stream=None):
+            async def _mock_dep():
+                if raise_exc is not None:
+                    raise raise_exc
+                yield make_mock_agent(events, raises_mid_stream), make_deps(session, agent_record)
+
+            app.dependency_overrides[get_agent_and_deps] = _mock_dep
+            nonlocal _configured 
+            _configured = True
+
+        self.configure_mock_get_agent_and_deps = _configure
+        yield
+
+        # nothing to pop if _configure wasn't called
+        if _configured:
+            app.dependency_overrides.pop(get_agent_and_deps)
 
     @pytest.fixture(autouse=True)
     def mock_route_side_effects(self):
@@ -225,88 +220,89 @@ class TestSendMessage:
         pytest.param(TOOL_STREAM, ["FunctionToolCallEvent", "FunctionToolResultEvent", "AgentRunResultEvent"], id="tool-stream"),
     ])
     async def test_event_types_are_forwarded_as_sse(
-        self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord, events_factory, expected_types
+        self, client: AsyncClient, events_factory, expected_types
     ):
         """All run_stream_events event types are serialized and forwarded as SSE.
 
         Covers both text and tool-call streams to verify forwarding is event-agnostic.
         Tool-only stream also confirms zero-text-output runs complete normally.
         """
-        mock_factory_override(events=events_factory())
-        sse_events = await stream_and_collect(client, agent_record.id)
+        self.configure_mock_get_agent_and_deps(events=events_factory())
+        sse_events = await stream_and_collect(client, self.agent_record.id)
         assert [e["event"] for e in sse_events] == expected_types
 
     @pytest.mark.parametrize("exc,expected_status", [
-        (AgentNotFoundError("not found"), 404),
-        (AgentLockedError("in use"), 503),
+        (HTTPException(status_code=404, detail="not found"), 404),
+        (HTTPException(status_code=503, detail="in use"), 503),
     ])
-    async def test_factory_error_returns_appropriate_status(
-        self, client: AsyncClient, mock_factory_override: Callable, exc, expected_status
+    async def test_dep_http_exception_returns_appropriate_status(
+        self, client: AsyncClient, exc, expected_status
     ):
-        """Factory exceptions are mapped to their appropriate HTTP status codes."""
-        mock_factory_override(raise_exc=exc)
+        """HTTPExceptions raised by get_agent_and_deps propagate to the correct HTTP status.
+
+        The actual domain→HTTP translation (AgentNotFoundError→404 etc.) is tested in test_deps.py.
+        This test confirms the route correctly surfaces HTTPException from the dependency.
+        (This test is somewhat redendant with the one in test_deps, but confirms we're using the dependency as expected)
+        """
+        self.configure_mock_get_agent_and_deps(raise_exc=exc)
         response = await client.post(f"/agents/{uuid4()}/messages", json={"message": "hi"})
         assert response.status_code == expected_status
     
-    async def test_content_type_is_event_stream(self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord):
+    async def test_content_type_is_event_stream(self, client: AsyncClient):
         """Response Content-Type is text/event-stream for SSE."""
-        mock_factory_override(events=MINIMAL_STREAM())
-        
+        self.configure_mock_get_agent_and_deps(events=MINIMAL_STREAM())
+
         async with client.stream(
             "POST",
-            f"/agents/{agent_record.id}/messages",
+            f"/agents/{self.agent_record.id}/messages",
             json={"message": "test"},
         ) as response:
             assert "text/event-stream" in response.headers["content-type"]
             await collect_sse_events(response)  # Consume to avoid warnings
 
-    async def test_returns_400_for_malformed_body(self, client: AsyncClient, mock_factory_override: Callable):
+    async def test_returns_400_for_malformed_body(self, client: AsyncClient):
         """Missing required 'message' field returns 400 or 422.
 
         The factory mock is required because FastAPI resolves dependencies before body
         validation — the stub get_agent_factory would otherwise raise NotImplementedError
         and mask the validation error.
         """
-        mock_factory_override(events=[])
+        self.configure_mock_get_agent_and_deps(events=[])
         response = await client.post(f"/agents/{uuid4()}/messages", json={})
         assert response.status_code in (400, 422)
 
-    async def test_persists_messages_on_agent_run_result_event(
-        self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord
-    ):
+    async def test_persists_messages_on_agent_run_result_event(self, client: AsyncClient):
         """persist_messages is called exactly once, triggered by AgentRunResultEvent.
 
         Three events in the stream — persist must not be called on the earlier two.
         """
-        mock_factory_override(events=TEXT_STREAM())
+        self.configure_mock_get_agent_and_deps(events=TEXT_STREAM())
 
-        await stream_and_collect(client, agent_record.id)
+        await stream_and_collect(client, self.agent_record.id)
 
         self.mock_persist.assert_called_once()
 
     @pytest.mark.parametrize("needs_compact,expect_compact", [(True, True), (False, False)])
     async def test_compaction_called_based_on_check(
-        self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord, needs_compact, expect_compact
+        self, client: AsyncClient, needs_compact, expect_compact
     ):
         """compact is called iff is_compaction_needed returns True."""
         self.mock_needs_compact.return_value = needs_compact
-        mock_factory_override(events=MINIMAL_STREAM())
+        self.configure_mock_get_agent_and_deps(events=MINIMAL_STREAM())
 
-        await stream_and_collect(client, agent_record.id)
+        await stream_and_collect(client, self.agent_record.id)
 
         assert self.mock_compact.called == expect_compact
 
-    async def test_yields_error_event_on_exception(
-        self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord
-    ):
+    async def test_yields_error_event_on_exception(self, client: AsyncClient):
         """Exception mid-stream yields Error SSE event after partial output, then closes."""
         # Simulate partial stream before exception (more realistic than immediate failure)
-        mock_factory_override(
+        self.configure_mock_get_agent_and_deps(
             events=[PartStartEvent(index=0, part=TextPart(content="Starting..."))],
             raises_mid_stream=RuntimeError("something went wrong"),
         )
 
-        sse_events = await stream_and_collect(client, agent_record.id)
+        sse_events = await stream_and_collect(client, self.agent_record.id)
 
         # Should see partial event(s) + Error
         assert len(sse_events) == 2
@@ -314,18 +310,16 @@ class TestSendMessage:
         assert sse_events[1]["event"] == "Error"
         assert sse_events[1]["data"]["message"] == "Unexpected internal server error: 'RuntimeError: something went wrong'"
 
-    async def test_persist_called_when_new_messages_empty(
-        self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord
-    ):
+    async def test_persist_called_when_new_messages_empty(self, client: AsyncClient):
         """
         persist_messages is called even when new_messages() returns [] — no-op for DB layer.
         TODO: Idk why we actually set this requirement
         """
         mock_result = Mock()
         mock_result.new_messages.return_value = []
-        mock_factory_override(events=[AgentRunResultEvent(result=mock_result)])
+        self.configure_mock_get_agent_and_deps(events=[AgentRunResultEvent(result=mock_result)])
 
-        await stream_and_collect(client, agent_record.id)
+        await stream_and_collect(client, self.agent_record.id)
 
         self.mock_persist.assert_called_once()
 
