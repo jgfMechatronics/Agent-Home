@@ -18,7 +18,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.factory import AgentFactory, get_model
+from agent.factory import AgentFactory, AgentNotFoundError, get_model
 from agent.types import AgentDeps
 from memory.system_prompt_compilation import get_system_prompt
 from conftest import SAMPLE_AGENT_CONFIG
@@ -189,8 +189,7 @@ async def test_get_deps_raises_and_releases_lock_on_fetch_failure(
     """
     lock = create_spied_lock(NONEXISTENT_AGENT_ID, lock_reg, mocker)
 
-    # TODO: Narrow to specific NotFound or whatever exception once we define it
-    with pytest.raises(ValueError):
+    with pytest.raises(AgentNotFoundError):
         async with agent_factory.get_deps(NONEXISTENT_AGENT_ID) as deps:
             pass
 

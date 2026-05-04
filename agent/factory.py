@@ -121,18 +121,3 @@ def get_model(model_name: str) -> AnthropicModel:
     if model_name not in _VALID_MODEL_NAMES:
         raise ValueError(f"Unsupported model name: {model_name!r}. Must be one of: {sorted(_VALID_MODEL_NAMES)}")
     return AnthropicModel(model_name)
-
-
-# --- FastAPI Dependency ---
-# TODO: Consider if can eliminate AgentFactory class entirely and just have get_agent_factory fulfill the
-# same function
-
-async def get_agent_factory() -> AgentFactory:
-    """FastAPI dependency: constructs per-request AgentFactory.
-    
-    Stub — implementation will use:
-        session: AsyncSession = Depends(get_session_dep)
-        lock_reg: dict = Depends(get_lock_reg)
-    """
-    raise NotImplementedError("get_agent_factory not implemented")
-    yield  # type: ignore — makes this a generator for type checking
