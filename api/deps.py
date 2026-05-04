@@ -45,5 +45,14 @@ async def get_agent_and_deps(
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
-    raise NotImplementedError("get_agent_and_deps not implemented")
-    yield  # type: ignore — makes this a generator for type checking
+
+    try:
+        factory = AgentFactory(lock_reg, session)
+        async with factory.build_agent_and_deps(agent_id) as (agent, deps):
+            yield (agent, deps)
+    except AgentNotFoundError as e:
+        raise HTTPException(404, detail=str(e))
+    except AgentLockedError as e:
+        raise HTTPException(503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(500, detail=f"Unexpected error during agent + dependency construction: {e!r}")
