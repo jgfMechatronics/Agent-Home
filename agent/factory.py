@@ -86,6 +86,8 @@ class AgentFactory:
         
         Wraps get_deps and constructs the Pydantic AI Agent with correct model and tools.
         TODO: Sanity check the DeferredToolRequests thing, JF doesn't really understand whats going on there anymore
+        TODO: This doesn't actually manage context properly. It might release the lock but that seems to be pretty much ALL
+        it does, it doesn't null out the resources actually associated with the lock!!!! Oops.
         """
         async with self.get_deps(agent_id) as deps:
             model = get_model(deps.config.model_name)
