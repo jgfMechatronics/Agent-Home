@@ -40,6 +40,8 @@ class AgentFactory:
     Write operations require get_deps() or build_agent_and_deps(),
     which proves the caller holds the lock.
     """
+
+    LOCK_TIMEOUT_SECONDS: int = 60
     
     def __init__(self, lock_reg: dict[str, asyncio.Lock], session: AsyncSession):
         """Initialize factory with shared lock registry and per-request session."""
@@ -61,12 +63,15 @@ class AgentFactory:
         Releases lock on exit (normal or exception) via try/finally.
         """
         lock = self._get_lock(agent_id)
-        await lock.acquire()
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=self.LOCK_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            raise AgentLockedError(f"Agent {agent_id!r} did not become available within {self.LOCK_TIMEOUT_SECONDS}s")
 
         try:
             agent_record = await self._session.get(AgentRecord, agent_id)
             if agent_record is None:
-                raise ValueError
+                raise AgentNotFoundError(f"Agent {agent_id!r} not found")
                         
             config = agent_record.agent_config
             deps = AgentDeps(self._session, agent_id, config, agent_record.name)

@@ -88,7 +88,7 @@ def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | N
     """
     agent = Mock()
 
-    async def _stream(_message):
+    async def _stream(*args, **kwargs):
         for event in (events or []):
             yield event
         if raises_mid_stream is not None:
@@ -207,11 +207,14 @@ class TestSendMessage:
         for tests that assert on persistence/compaction behavior.
         """
         with (
+            patch("api.routes.load_in_context_messages", new_callable=AsyncMock, create=True) as mock_load,
             patch("api.routes.persist_messages", new_callable=AsyncMock, create=True) as mock_persist,
             patch("api.routes.is_compaction_needed", create=True) as mock_needs_compact,
             patch("api.routes.compact", new_callable=AsyncMock, create=True) as mock_compact,
         ):
+            mock_load.return_value = []  # safe default — no prior history
             mock_needs_compact.return_value = False  # safe default — no compaction unless overridden
+            self.mock_load_in_context = mock_load
             self.mock_persist = mock_persist
             self.mock_needs_compact = mock_needs_compact
             self.mock_compact = mock_compact
@@ -257,8 +260,14 @@ class TestSendMessage:
             assert "text/event-stream" in response.headers["content-type"]
             await collect_sse_events(response)  # Consume to avoid warnings
 
-    async def test_returns_400_for_malformed_body(self, client: AsyncClient):
-        """Missing required 'message' field returns 400 or 422 before factory is called."""
+    async def test_returns_400_for_malformed_body(self, client: AsyncClient, mock_factory_override: Callable):
+        """Missing required 'message' field returns 400 or 422.
+
+        The factory mock is required because FastAPI resolves dependencies before body
+        validation — the stub get_agent_factory would otherwise raise NotImplementedError
+        and mask the validation error.
+        """
+        mock_factory_override(events=[])
         response = await client.post(f"/agents/{uuid4()}/messages", json={})
         assert response.status_code in (400, 422)
 
@@ -303,7 +312,7 @@ class TestSendMessage:
         assert len(sse_events) == 2
         assert sse_events[0]["event"] == "PartStartEvent"
         assert sse_events[1]["event"] == "Error"
-        assert sse_events[1]["data"]["message"] == "Internal server error. RuntimeError: something went wrong"
+        assert sse_events[1]["data"]["message"] == "Unexpected internal server error: 'RuntimeError: something went wrong'"
 
     async def test_persist_called_when_new_messages_empty(
         self, client: AsyncClient, mock_factory_override: Callable, agent_record: AgentRecord
