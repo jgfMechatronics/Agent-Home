@@ -2,8 +2,14 @@
 Pydantic request/response schemas for the API layer.
 """
 from datetime import datetime
+
 from pydantic import BaseModel, field_validator
+
 from agent.types import AgentConfig
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from db.models import AgentRecord
 
 
 # --- Request Schemas ---
@@ -34,6 +40,17 @@ class AgentMetadataResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @classmethod
+    def from_record(cls, record: "AgentRecord") -> "AgentMetadataResponse":
+        """Construct from an AgentRecord database model."""
+        return cls(
+            id=record.id,
+            name=record.name,
+            model=record.agent_config.model_name,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+        )
+
 
 class MemoryBlockResponse(BaseModel):
     label: str
@@ -58,7 +75,9 @@ class MessageItem(BaseModel):
 
 
 class MessagesResponse(BaseModel):
-    messages: list[MessageItem]
+    # list[Any]: display-layer parsing deferred until UI/CLI needs are known (see MessageItem TODO above)
+    # TODO: Constrain back to MessageItem once we have the format settled
+    messages: list
 
 
 class HealthResponse(BaseModel):

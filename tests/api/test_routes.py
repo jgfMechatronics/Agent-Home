@@ -36,7 +36,7 @@ from pydantic_ai.messages import (
 
 # Local
 from api.deps import get_agent_and_deps, get_session_dep
-from agent.crud import create_agent
+from agent.crud import create_agent_record
 from conftest import make_deps
 from db.models import AgentRecord, _utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
@@ -341,20 +341,23 @@ class TestCreateAgent:
 
     @pytest.fixture(autouse=True)
     def mock_create_agent_deps(self):
-        with (
-            patch("api.routes.create_agent", new_callable=AsyncMock, create=True) as mock_create,
-            patch("api.routes.get_agent", new_callable=AsyncMock, create=True) as mock_get,
-        ):
-            self.mock_create_agent = mock_create
-            self.mock_get_agent = mock_get
+        with patch("api.routes.create_agent_record", new_callable=AsyncMock, create=True) as mock_create:
+            self.mock_create_agent_record = mock_create
             yield
 
     async def test_creates_agent_and_returns_metadata(self, client: AsyncClient) -> None:
         """Creating an agent returns full metadata and 201 status."""
         expected_id = str(uuid4())
-        self.mock_create_agent.return_value = expected_id
-
         DATETIME_NOW = _utcnow()
+
+        mock_record = Mock()
+        mock_record.id = expected_id
+        mock_record.name = self._NAME
+        mock_record.agent_config.model_name = self._MODEL
+        mock_record.created_at = DATETIME_NOW
+        mock_record.updated_at = DATETIME_NOW
+        self.mock_create_agent_record.return_value = mock_record
+
         expected_metadata = AgentMetadataResponse(
             id=expected_id,
             name=self._NAME,
@@ -362,18 +365,16 @@ class TestCreateAgent:
             created_at=DATETIME_NOW,
             updated_at=DATETIME_NOW,
         )
-        self.mock_get_agent.return_value = expected_metadata
 
         response = await client.post("/agents/", json=self._VALID_BODY)
 
         assert response.status_code == 201
-        self.mock_create_agent.assert_called_once()
-        self.mock_get_agent.assert_called_once_with(expected_id)
+        self.mock_create_agent_record.assert_called_once()
         assert AgentMetadataResponse.model_validate(response.json()) == expected_metadata
 
     async def test_returns_500_when_create_agent_fails(self, client: AsyncClient):
         """Internal failure in create_agent returns 500 with exception details."""
-        self.mock_create_agent.side_effect = RuntimeError("DB failure")
+        self.mock_create_agent_record.side_effect = RuntimeError("DB failure")
         response = await client.post("/agents/", json=self._VALID_BODY)
         assert response.status_code == 500
         assert response.json()["detail"] == "Exception during agent creation: RuntimeError: DB failure"
@@ -495,6 +496,11 @@ class TestGetMessages:
         assert response.json()["messages"] == expected_messages
         self.mock_full.assert_called_once()
         self.mock_in_context.assert_not_called()
+
+    @pytest.mark.xfail(reason="TODO: Finalize MessageItemFormat")
+    async def test_returns_reasonable_format(self):
+        # TODO: finalize MessageItem format, constrain MessageResponse (or whatever it is) to be list[MessageItem]
+        pytest.fail()
 
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
