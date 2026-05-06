@@ -1,26 +1,29 @@
 """API routes — Section 4.1."""
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic_ai import Agent, AgentRunResultEvent
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.crud import agent_exists, create_agent_record, get_agent_record
 from agent.types import AgentDeps
-
 from api.deps import get_session_dep, get_agent_and_deps
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
     CreateAgentRequest,
+    MemoryBlockResponse,
     MessageRequest,
     MessagesResponse,
 )
-from messages.messages import load_in_context_messages, persist_messages
+from memory.block_crud import get_blocks
+from messages.messages import load_in_context_messages, load_message_history, persist_messages
 from agent.compaction import compact, is_compaction_needed
 
 router = APIRouter(prefix="/agents")
 
+# --- Helpers ---
 
 def map_to_sse(event: Any) -> ServerSentEvent:
     """Convert a Pydantic AI streaming event to a ServerSentEvent.
@@ -35,6 +38,14 @@ def map_to_sse(event: Any) -> ServerSentEvent:
         # Stream-end signal only — don't expose the result object
         return ServerSentEvent(data={}, event="AgentRunResultEvent")
     return ServerSentEvent(data=event, event=type(event).__name__)
+
+
+async def get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
+    """Load agent record, raising 404 if not found."""
+    record = await get_agent_record(session, agent_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id!r} not found")
+    return record
 
 
 # --- Routes ---
@@ -76,15 +87,25 @@ async def create_agent(
     body: CreateAgentRequest,
     session: AsyncSession = Depends(get_session_dep),
 ) -> AgentMetadataResponse:
-    raise NotImplementedError
+    """Create a new agent and return its metadata."""
+    try:
+        record = await create_agent_record(session, body.name, body.system_instructions, body.config)
+        return AgentMetadataResponse.from_record(record)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Exception during agent creation: {type(e).__name__}: {e}",
+        )
 
 
 @router.get("/{agent_id}")
-async def get_agent(
+async def get_agent_info(
     agent_id: str,
     session: AsyncSession = Depends(get_session_dep),
 ) -> AgentMetadataResponse:
-    raise NotImplementedError
+    """Return metadata for an existing agent."""
+    record = await get_agent_record_or_404(session, agent_id)
+    return AgentMetadataResponse.from_record(record)
 
 
 @router.get("/{agent_id}/core_memory")
@@ -92,7 +113,21 @@ async def get_core_memory(
     agent_id: str,
     session: AsyncSession = Depends(get_session_dep),
 ) -> CoreMemoryResponse:
-    raise NotImplementedError
+    """Return core memory blocks for an agent."""
+    blocks = await get_blocks(session, agent_id)
+    # get_blocks returns empty list if agent DNE OR if agent has no blocks
+    if not blocks and not (await agent_exists(session, agent_id)):
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id!r} not found")
+    return CoreMemoryResponse(blocks=[
+        MemoryBlockResponse(
+            label=b.label,
+            description=b.description,
+            content=b.content,
+            char_limit=b.char_limit,
+            updated_at=b.updated_at,
+        )
+        for b in blocks
+    ])
 
 
 @router.get("/{agent_id}/messages")
@@ -101,4 +136,10 @@ async def get_messages(
     full: bool = False,
     session: AsyncSession = Depends(get_session_dep),
 ) -> MessagesResponse:
-    raise NotImplementedError
+    """Return conversation history. Use ?full=true for complete history."""
+    await get_agent_record_or_404(session, agent_id)
+    if full:
+        messages = await load_message_history(session, agent_id, full=True)
+    else:
+        messages = await load_in_context_messages(session, agent_id)
+    return MessagesResponse(messages=messages)

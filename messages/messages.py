@@ -16,7 +16,7 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage], input_
     raise NotImplementedError
 
 
-async def load_in_context_messages(deps: AgentDeps) -> list[ModelMessage]:
+async def load_in_context_messages(session: "AsyncSession", agent_id: str) -> list[ModelMessage]:
     """Load messages from context_window_start, deserialized to list[ModelMessage]."""
     raise NotImplementedError
 
