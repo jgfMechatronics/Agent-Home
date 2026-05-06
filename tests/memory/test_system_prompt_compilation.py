@@ -52,6 +52,7 @@ def _extract_tag(text: str, tag: str) -> str | None:
     """Extract content between <tag> and </tag>. Returns None if not found."""
     start_tag = f"<{tag}>\n"
     end_tag = f"\n</{tag}>"
+    pytest.fail(reason="TODO: do we end up with a newline between adjacent memory blocks or naw? looks like no, but seems like there should be.")
     start = text.find(start_tag)
     end = text.find(end_tag)
     if start == -1 or end == -1:
