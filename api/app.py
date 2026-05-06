@@ -1,10 +1,19 @@
 """FastAPI application and lifespan"""
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from api.routes import router
 from api.schemas import HealthResponse
+from db.connection import create_sqlite_engine, init_db
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    raise NotImplementedError
+    yield
+
+app = FastAPI(lifespan=lifespan)
 app.include_router(router)
 
 
