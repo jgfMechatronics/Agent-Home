@@ -22,11 +22,18 @@ async def lifespan(app: FastAPI):
     finally:
         await engine.dispose()
 
-app = FastAPI(lifespan=lifespan)
-app.include_router(router)
+
+def _create_app() -> FastAPI:
+    """Factory function for creating the FastAPI app. Enables fresh instances per test."""
+    app = FastAPI(lifespan=lifespan)
+    app.include_router(router)
+    
+    @app.get("/health")
+    async def health() -> HealthResponse:
+        # TODO: Shallow check right now, add check that DB is reachable and impl the associated test 
+        return HealthResponse(status="ok")
+    
+    return app
 
 
-@app.get("/health")
-async def health() -> HealthResponse:
-    # TODO: Shallow check right now, add check that DB is reachable and impl the associated test 
-    return HealthResponse(status="ok")
+app = _create_app()

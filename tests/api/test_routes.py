@@ -64,9 +64,9 @@ TOOL_STREAM = lambda: [
 
 @pytest.fixture
 def app() -> FastAPI:
-    """FastAPI app instance. Import here to avoid module-level side effects."""
-    from main import app as _app
-    return _app
+    """Fresh app instance per test — avoids state contamination."""
+    from api.app import _create_app
+    return _create_app()
 
 
 @pytest_asyncio.fixture

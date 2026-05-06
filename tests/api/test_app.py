@@ -1,18 +1,29 @@
 import pytest
-import asyncio
-from contextlib import asynccontextmanager
-from collections.abc import AsyncIterator
 from asgi_lifespan import LifespanManager
-from httpx import AsyncClient, ASGITransport
 from unittest.mock import patch, AsyncMock, MagicMock
 
-from api.app import app # TODO: Are all the tests sharing the same app?
+from api.app import _create_app
+from api.routes import router
+
+
+def test_create_app_includes_router():
+    """Sanity check that _create_app() wires up the routes."""
+    app = _create_app()
+    
+    app_paths = {r.path for r in app.routes}
+    router_paths = {r.path for r in router.routes}
+    
+    assert router_paths.issubset(app_paths)
+    assert "/health" in app_paths
 
 
 class TestLifespan:
 
     @pytest.fixture(autouse=True)
     async def setup_and_teardown(self):
+        # Fresh app instance per test - no state contamination
+        self.app = _create_app()
+        
         # set up mocks and handle patching
         self.mock_db_engine = MagicMock()
         self.mock_db_engine.dispose = AsyncMock()
@@ -26,7 +37,7 @@ class TestLifespan:
     
     async def startup_and_shutdown_lifespan(self) -> None:
         try:
-            async with LifespanManager(app):  # Triggers ASGI lifespan startup/shutdown
+            async with LifespanManager(self.app):  # Triggers ASGI lifespan startup/shutdown
                 pass
         finally:
             # lifespan shutdown should have disposed engine
@@ -40,8 +51,8 @@ class TestLifespan:
         self.mock_create_engine.assert_called_once_with(expected_db_path)
         self.mock_init_db.assert_called_once_with(self.mock_db_engine)
 
-        assert app.state.engine is self.mock_db_engine
-        assert app.state.agent_lock_reg == {}
+        assert self.app.state.engine is self.mock_db_engine
+        assert self.app.state.agent_lock_reg == {}
         # teardown asserts cleanup activity
 
     async def test_init_db_failure_still_disposes(self):
