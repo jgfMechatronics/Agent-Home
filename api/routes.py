@@ -139,7 +139,7 @@ async def get_messages(
     """Return conversation history. Use ?full=true for complete history."""
     await get_agent_record_or_404(session, agent_id)
     if full:
-        messages = await load_message_history(session, agent_id, full=True)
+        messages = await load_message_history(session, agent_id)
     else:
         messages = await load_in_context_messages(session, agent_id)
     return MessagesResponse(messages=messages)

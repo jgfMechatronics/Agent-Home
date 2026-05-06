@@ -7,6 +7,7 @@ from agent.types import AgentDeps
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from datetime import datetime
     from sqlalchemy.ext.asyncio import AsyncSession
     from db.models import MessageRecord
 
@@ -24,11 +25,11 @@ async def load_in_context_messages(session: "AsyncSession", agent_id: str) -> li
 async def load_message_history(
     session: "AsyncSession",
     agent_id: str,
-    full: bool = False,
+    start_timestamp: "datetime | None" = None,
 ) -> list["MessageRecord"]:
     """Load message history as raw records.
     
-    If full=False, returns messages from context_window_start (active context).
-    If full=True, returns complete conversation history.
+    If start_timestamp is provided, returns only messages after that point.
+    Otherwise returns complete conversation history.
     """
     raise NotImplementedError
