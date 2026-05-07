@@ -3,6 +3,12 @@ Block CRUD operations — Section 2.1
 
 Read operations take (session, agent_id) — no lock required, allows concurrent reads.
 Write operations take (deps: AgentDeps) — requires deps, proving caller holds per-agent lock.
+
+TODO: Here we hit the DB directly, in other places we go through ORM. Question of if we should just have the mutating
+functions go through the agent record on deps (added after we implemented these originally) rather than hitting db directly.
+
+TODO: The "read only" design is flawed here. get_blocks don't take deps and therefore aren't associted with a lock and are *supposed*
+to be read only BUT they do still get a full session. Is there a such thing as a read only session?
 """
 from collections.abc import Sequence
 

@@ -3,8 +3,10 @@
 Handles context window management by advancing the message history pointer
 when token limits are exceeded.
 """
+from agent.crud import get_agent_record
 from agent.types import AgentConfig, AgentDeps
-from memory.system_prompt_compilation import compile_system_prompt, get_system_prompt
+from memory.system_prompt_compilation import compile_system_prompt
+from messages.messages import load_message_history
 
 
 def is_compaction_needed(input_tokens: int, config: AgentConfig) -> bool:
@@ -25,9 +27,29 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
     Guarantees:
     - Never evicts the most recent 4 messages
     - No-op if 4 or fewer messages in context
-    - Does NOT delete messages (pointer-only)
+    - Does NOT delete messages (pointer manipulation only)
     - Calls compile_system_prompt after advancing pointer
     """
-    # TODO: This is dependent on messages.py impl
-    # TODO: Consider an _advance_pointer helper fcn
-    raise NotImplementedError
+    agent = await get_agent_record(deps.session, deps.agent_id)
+    messages = await load_message_history(
+        deps.session, deps.agent_id, start_timestamp=agent.context_window_start
+    )
+
+    # small context guard/avoid div by 0
+    if len(messages) <= 4:
+        return
+
+    sys_tokens = len(agent.compiled_system_prompt or "") / 4
+    msg_tokens = input_tokens - sys_tokens
+    avg_tokens_per_msg = msg_tokens / len(messages)
+    if avg_tokens_per_msg <= 0:
+        return  # System prompt dominates token budget — can't estimate, skip this turn
+    target_tokens = deps.config.compaction_target_percentage * deps.config.soft_compaction_limit
+    keep = max(4, int((target_tokens - sys_tokens) / avg_tokens_per_msg))
+
+    if keep >= len(messages):
+        return
+
+    agent.context_window_start = messages[-keep].timestamp
+    await deps.session.flush()
+    await compile_system_prompt(deps)
