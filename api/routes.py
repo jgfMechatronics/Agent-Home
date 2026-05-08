@@ -71,15 +71,21 @@ async def send_message(
                 final_result = event.result
                 input_tokens = final_result.usage().input_tokens
                 await persist_messages(deps=deps,
-                                       messages=final_result.new_messages(),
-                                       input_tokens=input_tokens)
+                                        messages=final_result.new_messages(),
+                                        input_tokens=input_tokens)
+
+                # committing pre compaction as if compaction fails, the turn may still well have been valid
+                await deps.session.commit()
+
                 if is_compaction_needed(input_tokens, deps.config):
                     await compact(deps, input_tokens)
     except Exception as e:
+        await deps.session.rollback()
         yield ServerSentEvent(
             data={"message": f"Unexpected internal server error: '{type(e).__name__}: {str(e)}'"},
             event="Error",
         )
+        raise e
 
 
 @router.post("/", status_code=201)
