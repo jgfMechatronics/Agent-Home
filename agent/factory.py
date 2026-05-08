@@ -73,8 +73,7 @@ class AgentFactory:
             if agent_record is None:
                 raise AgentNotFoundError(f"Agent {agent_id!r} not found")
                         
-            config = agent_record.agent_config
-            deps = AgentDeps(self._session, agent_id, config, agent_record.name)
+            deps = AgentDeps(self._session, agent_record)
             yield deps
         finally:
             lock.release()

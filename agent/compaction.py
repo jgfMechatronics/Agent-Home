@@ -3,7 +3,6 @@
 Handles context window management by advancing the message history pointer
 when token limits are exceeded.
 """
-from agent.crud import get_agent_record
 from agent.types import AgentConfig, AgentDeps
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import load_message_history
@@ -30,16 +29,15 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
     - Does NOT delete messages (pointer manipulation only)
     - Calls compile_system_prompt after advancing pointer
     """
-    agent = await get_agent_record(deps.session, deps.agent_id)
     messages = await load_message_history(
-        deps.session, deps.agent_id, start_timestamp=agent.context_window_start
+        deps.session, deps.agent_id, start_timestamp=deps.context_window_start
     )
 
     # small context guard/avoid div by 0
     if len(messages) <= 4:
         return
 
-    sys_tokens = len(agent.compiled_system_prompt or "") / 4
+    sys_tokens = len(deps.compiled_system_prompt or "") / 4
     msg_tokens = input_tokens - sys_tokens
     avg_tokens_per_msg = msg_tokens / len(messages)
     if avg_tokens_per_msg <= 0:
@@ -50,6 +48,6 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
     if keep >= len(messages):
         return
 
-    agent.context_window_start = messages[-keep].timestamp
+    deps.context_window_start = messages[-keep].timestamp
     await deps.session.flush()
     await compile_system_prompt(deps)

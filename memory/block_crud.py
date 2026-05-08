@@ -21,14 +21,19 @@ from db.models import MemoryBlockRecord
 
 # --- Internal helpers ---
 
-async def _persist(session: AsyncSession, commit: bool, record: MemoryBlockRecord | None = None) -> None:
-    """Commit or flush the session, refreshing record if provided."""
+async def _persist(deps: AgentDeps, commit: bool, record: MemoryBlockRecord | None = None) -> None:
+    """Commit or flush the session, refreshing records if committing.
+
+    Always refreshes deps._agent_record on commit so that subsequent accesses to
+    deps.agent_id (and other ORM properties) don't trigger MissingGreenlet after expiry.
+    """
     if commit:
-        await session.commit()
+        await deps.session.commit()
         if record is not None:
-            await session.refresh(record)
+            await deps.session.refresh(record)
+        await deps.session.refresh(deps._agent_record)
     else:
-        await session.flush()
+        await deps.session.flush()
 
 
 # --- Read operations (no lock) ---
@@ -81,7 +86,7 @@ async def update_block(
         raise ValueError("new content exceeds char limit")
 
     block.content = content
-    await _persist(deps.session, commit, block)
+    await _persist(deps, commit, block)
     return block
 
 
@@ -123,7 +128,7 @@ async def create_block(
         position=position,
     )
     deps.session.add(block)
-    await _persist(deps.session, commit, block)
+    await _persist(deps, commit, block)
     return block
 
 
@@ -134,7 +139,7 @@ async def delete_block(deps: AgentDeps, label: str, commit: bool = True) -> None
         raise ValueError("block not found")
 
     await deps.session.delete(block)
-    await _persist(deps.session, commit)
+    await _persist(deps, commit)
 
 
 async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str], commit: bool = True) -> None:
@@ -170,4 +175,4 @@ async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str], commit: bo
     for position, label in enumerate(labels_in_order):
         blocks_by_label[label].position = position
 
-    await _persist(deps.session, commit)
+    await _persist(deps, commit)

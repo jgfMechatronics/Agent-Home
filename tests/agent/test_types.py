@@ -5,6 +5,7 @@ AgentConfig: Pydantic model for agent configuration
 AgentDeps: Dataclass holding request-scoped agent state
 """
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from conftest import SAMPLE_AGENT_CONFIG_DATA
@@ -135,43 +136,25 @@ def test_agentconfig_rejects_extra_fields(valid_config_data: dict):
 
 # --- AgentDeps ---
 
-@pytest.mark.parametrize("missing_field", ["session", "agent_id", "config", "name"])
-def test_agentdeps_requires_field(valid_config_data: dict, missing_field: str):
-    """AgentDeps should raise TypeError when required field is missing."""
-    config = AgentConfig(**valid_config_data)
-    mock_session = object()
-    
+@pytest.mark.parametrize("missing_field", ["session", "agent_record"])
+def test_agentdeps_requires_field(missing_field: str):
+    """AgentDeps should raise TypeError when a required constructor argument is missing."""
     all_fields = {
-        "session": mock_session,
-        "agent_id": "test-agent-id",
-        "config": config,
-        "name": "test-agent",
+        "session": object(),
+        "agent_record": MagicMock(),
     }
     del all_fields[missing_field]
-    
-    with pytest.raises(TypeError) as exc_info:
+
+    with pytest.raises(TypeError):
         AgentDeps(**all_fields)
-    
-    # Dataclass error message mentions the missing field
-    assert missing_field in str(exc_info.value)
 
 
-def test_agentdeps_holds_expected_fields(valid_config_data: dict):
-    """AgentDeps should hold agent_id, session, and config."""
-    config = AgentConfig(**valid_config_data)
-    
-    # Use a mock for session since we just need to verify field storage
-    mock_session = object()  # Placeholder, not a real AsyncSession
-    
-    deps = AgentDeps(
-        session=mock_session,
-        agent_id="test-agent-id",
-        config=config,
-        name="test-agent",
-    )
-    
-    assert deps.agent_id == "test-agent-id"
-    assert deps.session is mock_session
-    assert deps.config is config
-    assert deps.config.model_name == valid_config_data["model_name"]
-    assert deps.name == "test-agent"
+async def test_agentdeps_holds_expected_fields(session, agent_record):
+    """AgentDeps properties should delegate to the underlying AgentRecord."""
+    deps = AgentDeps(session=session, agent_record=agent_record)
+
+    assert deps.agent_id == agent_record.id
+    assert deps.session is session
+    assert deps.config is agent_record.agent_config
+    assert deps.name == agent_record.name
+    assert deps.system_instructions == agent_record.system_instructions

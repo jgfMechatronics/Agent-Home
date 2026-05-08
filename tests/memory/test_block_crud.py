@@ -153,7 +153,7 @@ async def test_update_block_modifies_content_and_updated_at(multi_tenant_with_de
     
     new_content = "Updated persona content."
     result = await update_block(deps, "persona", new_content)
-    
+
     assert result.content == new_content
     assert result.updated_at > original_updated_at
     assert (await get_block(deps.session, deps.agent_id, persona.label)) == result # sanity check
@@ -192,7 +192,7 @@ async def test_create_block_inserts_with_defaults(multi_tenant_with_deps: dict):
     deps = multi_tenant_with_deps["deps_a"]
     
     result = await create_block(deps, label="notes", content="Some notes")
-    
+
     assert result.label == "notes"
     assert result.content == "Some notes"
     assert result.description == ""  # default
@@ -260,7 +260,7 @@ async def test_delete_block_removes_block(multi_tenant_with_deps: dict):
     assert before is not None
     
     await delete_block(deps, "persona")
-    
+
     # Verify block is gone
     after = await get_block(deps.session, deps.agent_id, "persona")
     assert after is None
@@ -289,7 +289,7 @@ async def test_reorder_blocks_assigns_positions_by_list_order(multi_tenant_with_
     # Reverse the order
     intended_order = ["system", "human", "persona"]
     await reorder_blocks(deps, intended_order)
-    
+
     # Fetch fresh from DB to verify
     blocks = await get_blocks(deps.session, deps.agent_id)
     labels_in_order = [b.label for b in blocks]
@@ -335,7 +335,10 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     await create_block(deps_a, label="new_block", content="New for A")
     await delete_block(deps_a, "system")  # Agent A has system block
     await reorder_blocks(deps_a, ["human", "persona", "new_block"])
-    
+    # All writes commit via deps_a's session, which expires ALL records in the session (including deps_b's)
+    # In prod, seperate agents have seperate sessions
+    await deps_b.session.refresh(deps_b._agent_record)
+
     # Verify Agent B is completely unaffected
     b_blocks_after = await get_blocks(deps_b.session, deps_b.agent_id)
     b_snapshot_after = [(b.label, b.content, b.position) for b in b_blocks_after]

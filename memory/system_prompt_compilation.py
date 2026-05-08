@@ -7,7 +7,7 @@ get_system_prompt(ctx) — returns cached prompt for Pydantic AI instructions pa
 from datetime import datetime, UTC
 
 from agent.types import AgentDeps
-from db.models import AgentRecord, MemoryBlockRecord
+from db.models import MemoryBlockRecord
 from memory.block_crud import get_blocks
 from pydantic_ai import RunContext
 
@@ -36,28 +36,20 @@ async def compile_system_prompt(deps: AgentDeps) -> None:
     - Stores result in agent.compiled_system_prompt
     - Updates agent.sys_prompt_compiled_at
     """
-    session = deps.session
-    
-    # Load agent
-    agent = await session.get(AgentRecord, deps.agent_id)
-
-    if agent is None:
-        raise ValueError(f"Agent {deps.agent_id} not found in DB during system prompt compilation attempt")
-    
     # Load blocks in position order
-    blocks = await get_blocks(session, deps.agent_id)
-    
+    blocks = await get_blocks(deps.session, deps.agent_id)
+
     # Build prompt: system_instructions first, then blocks
-    parts = [f"<system_instructions>\n{agent.system_instructions}\n</system_instructions>"]
-    
+    parts = [f"<system_instructions>\n{deps.system_instructions}\n</system_instructions>"]
+
     for block in blocks:
         parts.append(_format_block(block))
-    
+
     # Store result
-    agent.compiled_system_prompt = "".join(parts)
-    agent.sys_prompt_compiled_at = datetime.now(UTC)
-    
-    await session.flush()
+    deps.compiled_system_prompt = "".join(parts)
+    deps.sys_prompt_compiled_at = datetime.now(UTC)
+
+    await deps.session.flush()
 
 
 async def get_system_prompt(ctx_or_deps : RunContext[AgentDeps] | AgentDeps) -> str:
@@ -76,7 +68,4 @@ async def get_system_prompt(ctx_or_deps : RunContext[AgentDeps] | AgentDeps) -> 
     else:
         raise TypeError("ctx_or_deps must be of type RunContext[AgentDeps] or AgentDeps")
 
-    session = deps.session
-    agent = await session.get(AgentRecord, deps.agent_id)
-    
-    return agent.compiled_system_prompt or ""
+    return deps.compiled_system_prompt or ""

@@ -67,7 +67,7 @@ async def deps_with_mutable_data(async_session: AsyncSession) -> AgentDeps:
     )
     async_session.add(agent)
     await async_session.flush()
-    return AgentDeps(session=async_session, agent=agent)
+    return AgentDeps(session=async_session, agent_record=agent)
 
 
 async def test_mutable_property_after_commit(deps_with_mutable_data: AgentDeps, async_session: AsyncSession):

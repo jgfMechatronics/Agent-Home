@@ -31,7 +31,7 @@ SAMPLE_AGENT_CONFIG = AgentConfig(**SAMPLE_AGENT_CONFIG_DATA)
 
 def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
     """Construct AgentDeps from a session and agent record."""
-    return AgentDeps(session=session, agent_id=agent.id, config=agent.agent_config, name=agent.name)
+    return AgentDeps(session=session, agent_record=agent)
 
 
 @pytest_asyncio.fixture
