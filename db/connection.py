@@ -31,6 +31,10 @@ async def get_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
     session = AsyncSession(engine)
     try:
         yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
     finally:
         await session.close()
 

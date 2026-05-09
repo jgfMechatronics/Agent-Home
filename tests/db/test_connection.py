@@ -92,6 +92,44 @@ async def test_get_session_bound_to_provided_engine(tmp_path):
         await engine_b.dispose()
 
 
+class TestGetSessionTransactionBehavior:
+    """get_session commit/rollback/close semantics on context exit."""
+
+    @pytest.fixture(autouse=True)
+    async def setup(self, initialized_engine):
+        self.engine = initialized_engine
+
+    async def _count_agents(self) -> int:
+        """Read agent count via raw connection — bypasses get_session to avoid masking bugs in it."""
+        async with self.engine.connect() as conn:
+            result = await conn.execute(text("SELECT COUNT(*) FROM agent"))
+            return result.scalar()
+
+    async def test_commits_on_clean_exit(self):
+        """Data written in the block persists after a clean exit (implicit commit)."""
+        async with get_session(self.engine) as session:
+            session.add(AgentRecord(name="test", agent_config=SAMPLE_AGENT_CONFIG))
+
+        assert await self._count_agents() == 1
+
+    async def test_rollbacks_and_reraises_on_exception(self):
+        """Unhandled exception rolls back writes and propagates."""
+        with pytest.raises(RuntimeError, match="boom"):
+            async with get_session(self.engine) as session:
+                session.add(AgentRecord(name="test", agent_config=SAMPLE_AGENT_CONFIG))
+                raise RuntimeError("boom")
+
+        assert await self._count_agents() == 0
+
+    async def test_close_always_called_on_exception(self):
+        """Session is closed even when an exception is raised."""
+        with pytest.raises(RuntimeError):
+            async with get_session(self.engine) as session:
+                await session.execute(text("SELECT 1"))  # triggers autobegin
+                raise RuntimeError("oops")
+        assert not session.in_transaction()
+
+
 async def test_get_session_closes_on_context_exit(initialized_engine):
     async with get_session(initialized_engine) as session:
         await session.execute(text("SELECT 1"))  # triggers autobegin
