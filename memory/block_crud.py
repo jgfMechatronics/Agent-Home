@@ -22,12 +22,7 @@ from db.models import MemoryBlockRecord
 # --- Internal helpers ---
 
 async def _persist(deps: AgentDeps, commit: bool, record: MemoryBlockRecord | None = None) -> None:
-    """Commit or flush the session, refreshing records if committing.
-
-    Uses commit_changes_refresh_agent_record() on commit to keep _agent_record live
-    post-expiry. If a specific block record is provided, it is refreshed separately
-    after the commit so callers get up-to-date DB-assigned values (e.g. timestamps).
-    """
+    """Commit or flush the session, refreshing records if committing."""
     if commit:
         await deps.commit_changes_refresh_agent_record()
         if record is not None:

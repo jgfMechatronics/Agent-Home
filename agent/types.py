@@ -129,13 +129,13 @@ class AgentDeps:
     async def commit_changes_refresh_agent_record(self) -> None:
         """Commit the session and immediately refresh _agent_record.
 
-        These two operations are always coupled: SQLAlchemy expires all ORM attributes
+        These two operations should always be coupled: SQLAlchemy expires all ORM attributes
         after a commit, so any subsequent read of a mutable property (compiled_system_prompt,
         context_window_start, etc.) would trigger a lazy reload — which raises MissingGreenlet
         outside SQLAlchemy's own async machinery. Refreshing immediately after the commit
         reloads the record while the async context is still active, keeping the object live.
 
-        Always use this instead of calling session.commit() directly.
+        Whenever possible, use this instead of calling session.commit() directly.
         """
         await self.session.commit()
         await self.session.refresh(self._agent_record)
