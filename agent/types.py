@@ -71,10 +71,11 @@ class AgentDeps:
 
     _agent_record is private by convention — access via properties.
 
-    All properties read through _agent_record. Callers that mutate the record must call
-    await session.refresh(deps._agent_record) after any session.commit() to avoid
-    MissingGreenlet on subsequent reads. Mutating tools always hold deps (proves lock),
-    so the refresh site is always well-defined.
+    All properties read through _agent_record. Whenever possible call
+    commit_changes_refresh_agent_record() rather than committing directly — it
+    commits and refreshes _agent_record, preventing MissingGreenlet on
+    subsequent reads. Mutating callers should always hold deps (proves lock), so the
+    commit site is always well-defined.
     """
     session: AsyncSession
     _agent_record: "AgentRecord" = field(repr=False)
@@ -124,3 +125,17 @@ class AgentDeps:
     @context_window_start.setter
     def context_window_start(self, value: datetime | None) -> None:
         self._agent_record.context_window_start = value
+
+    async def commit_changes_refresh_agent_record(self) -> None:
+        """Commit the session and immediately refresh _agent_record.
+
+        These two operations are always coupled: SQLAlchemy expires all ORM attributes
+        after a commit, so any subsequent read of a mutable property (compiled_system_prompt,
+        context_window_start, etc.) would trigger a lazy reload — which raises MissingGreenlet
+        outside SQLAlchemy's own async machinery. Refreshing immediately after the commit
+        reloads the record while the async context is still active, keeping the object live.
+
+        Always use this instead of calling session.commit() directly.
+        """
+        await self.session.commit()
+        await self.session.refresh(self._agent_record)

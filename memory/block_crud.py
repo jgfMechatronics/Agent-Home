@@ -24,14 +24,14 @@ from db.models import MemoryBlockRecord
 async def _persist(deps: AgentDeps, commit: bool, record: MemoryBlockRecord | None = None) -> None:
     """Commit or flush the session, refreshing records if committing.
 
-    Always refreshes deps._agent_record on commit so that subsequent accesses to
-    deps.agent_id (and other ORM properties) don't trigger MissingGreenlet after expiry.
+    Uses commit_changes_refresh_agent_record() on commit to keep _agent_record live
+    post-expiry. If a specific block record is provided, it is refreshed separately
+    after the commit so callers get up-to-date DB-assigned values (e.g. timestamps).
     """
     if commit:
-        await deps.session.commit()
+        await deps.commit_changes_refresh_agent_record()
         if record is not None:
             await deps.session.refresh(record)
-        await deps.session.refresh(deps._agent_record)
     else:
         await deps.session.flush()
 

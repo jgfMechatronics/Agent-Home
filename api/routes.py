@@ -1,4 +1,5 @@
 """API routes — Section 4.1."""
+import logging
 from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,6 +21,8 @@ from api.schemas import (
 from memory.block_crud import get_blocks
 from messages.messages import load_in_context_messages, load_message_history, persist_messages
 from agent.compaction import compact, is_compaction_needed
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agents")
 
@@ -71,21 +74,22 @@ async def send_message(
                 final_result = event.result
                 input_tokens = final_result.usage().input_tokens
                 await persist_messages(deps=deps,
-                                        messages=final_result.new_messages(),
-                                        input_tokens=input_tokens)
+                                       messages=final_result.new_messages(),
+                                       input_tokens=input_tokens)
 
-                # committing pre compaction as if compaction fails, the turn may still well have been valid
-                await deps.session.commit()
+                # commit before compaction — if compaction fails, the turn may still be valid
+                await deps.commit_changes_refresh_agent_record()
 
                 if is_compaction_needed(input_tokens, deps.config):
                     await compact(deps, input_tokens)
     except Exception as e:
+        # TODO (low priority): put more thought into logging strategy (log levels, handler chain, structured logging)
+        logger.exception("Unexpected error in send_message for agent %s", agent_id)
         await deps.session.rollback()
         yield ServerSentEvent(
             data={"message": f"Unexpected internal server error: '{type(e).__name__}: {str(e)}'"},
             event="Error",
         )
-        raise e
 
 
 @router.post("/", status_code=201)
