@@ -4,8 +4,12 @@ Block CRUD operations — Section 2.1
 Read operations take (session, agent_id) — no lock required, allows concurrent reads.
 Write operations take (deps: AgentDeps) — requires deps, proving caller holds per-agent lock.
 
-TODO: Here we hit the DB directly, in other places we go through ORM. Question of if we should just have the mutating
+TODO (Critical): Here we hit the DB directly, in other places we go through ORM. Question of if we should just have the mutating
 functions go through the agent record on deps (added after we implemented these originally) rather than hitting db directly.
+UPDATE: Yes, we should go thorugh the agent record on deps wherever it is avaiable. The current design will result in the memory blocks
+on deps going stale after update. We need a single source of truth. get_blocks is still maybe useful as is because you don't necessarily want to have to have
+deps just to *read* the blocks (admittedly, it does return a mutable object), but we need either some polymorphism or just a seperate helper that gets the blocks from deps
+and returns a ref or something.
 
 TODO: The "read only" design is flawed here. get_blocks don't take deps and therefore aren't associted with a lock and are *supposed*
 to be read only BUT they do still get a full session. Is there a such thing as a read only session?
@@ -28,6 +32,9 @@ async def _persist(deps: AgentDeps, commit: bool, record: MemoryBlockRecord | No
         if record is not None:
             await deps.session.refresh(record)
     else:
+        # TODO: flush does not refresh ORM objects with server-generated values (e.g. server_default
+        # timestamps). If we ever add such columns and a subsequent tool within the same turn reads
+        # them back, those reads will see stale data. Consider refresh-after-flush if that occurs.
         await deps.session.flush()
 
 
