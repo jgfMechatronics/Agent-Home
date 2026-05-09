@@ -144,8 +144,7 @@ async def collect_sse_events(response: Response) -> list[dict]:
 
 async def stream_and_collect(client: AsyncClient, agent_id, message: str = "test") -> list[dict]:
     """POST to messages endpoint, assert 200, return parsed SSE events.
-    
-    Reduces boilerplate in happy-path streaming tests.
+    Reduces boilerplate in streaming tests.
     """
     async with client.stream(
         "POST",
@@ -165,31 +164,38 @@ class TestSendMessage:
     """
 
     @pytest.fixture(autouse=True)
-    def mock_agent_dep(self, app: FastAPI, session: AsyncSession, agent_record: AgentRecord):
-        """Provides self.agent_record and self.configure_mock_get_agent_and_deps for all TestSendMessage tests.
+    def mock_agent_dep(self, app: FastAPI, agent_record: AgentRecord):
+        """Provides self.agent_record, self.mock_session, and self.configure_mock_get_agent_and_deps.
 
-        self.configure_mock_get_agent_and_deps(events, raise_exc, raises_mid_stream) installs a mock
-        get_agent_and_deps override. Must be called before the request is made.
+        self.mock_session is a Mock with commit/rollback/refresh as AsyncMocks. The route calls
+        session.commit() and session.rollback() — using the real AsyncSession inside httpx's
+        ASGITransport would trigger MissingGreenlet (SQLAlchemy's greenlet bridge isn't set up there).
+
+        A MINIMAL_STREAM() default is installed automatically. Tests that need specific events,
+        exceptions, or mid-stream failures call self.configure_mock_get_agent_and_deps() to override.
         """
         self.agent_record = agent_record
+        self.mock_session = Mock()
+        self.mock_session.commit = AsyncMock()
+        self.mock_session.rollback = AsyncMock()
+        self.mock_session.refresh = AsyncMock()
 
-        _configured = False
         def _configure(events=None, raise_exc=None, raises_mid_stream=None):
             async def _mock_dep():
                 if raise_exc is not None:
                     raise raise_exc
-                yield make_mock_agent(events, raises_mid_stream), make_deps(session, agent_record)
+                yield make_mock_agent(events, raises_mid_stream), make_deps(self.mock_session, agent_record)
 
             app.dependency_overrides[get_agent_and_deps] = _mock_dep
-            nonlocal _configured 
-            _configured = True
 
         self.configure_mock_get_agent_and_deps = _configure
+
+        # Default: most tests just need a minimal valid stream. Tests that require specific
+        # events, exceptions, or mid-stream failures call configure again to override.
+        _configure(events=MINIMAL_STREAM())
         yield
 
-        # nothing to pop if _configure wasn't called
-        if _configured:
-            app.dependency_overrides.pop(get_agent_and_deps)
+        app.dependency_overrides.pop(get_agent_and_deps)
 
     @pytest.fixture(autouse=True)
     def mock_route_side_effects(self):
@@ -250,8 +256,6 @@ class TestSendMessage:
     
     async def test_content_type_is_event_stream(self, client: AsyncClient):
         """Response Content-Type is text/event-stream for SSE."""
-        self.configure_mock_get_agent_and_deps(events=MINIMAL_STREAM())
-
         async with client.stream(
             "POST",
             f"/agents/{self.agent_record.id}/messages",
@@ -288,7 +292,6 @@ class TestSendMessage:
     ):
         """compact is called iff is_compaction_needed returns True."""
         self.mock_needs_compact.return_value = needs_compact
-        self.configure_mock_get_agent_and_deps(events=MINIMAL_STREAM())
 
         await stream_and_collect(client, self.agent_record.id)
 
@@ -322,6 +325,55 @@ class TestSendMessage:
         await stream_and_collect(client, self.agent_record.id)
 
         self.mock_persist.assert_called_once()
+
+    # --- Transaction behaviour ---
+
+    async def test_commits_session_on_happy_path(self, client: AsyncClient):
+        """Session is committed exactly once after a successful run. No rollback."""
+        await stream_and_collect(client, self.agent_record.id)
+
+        self.mock_session.commit.assert_called_once()
+        self.mock_session.rollback.assert_not_called()
+
+    async def test_rollback_and_error_sse_on_persist_failure(self, client: AsyncClient):
+        """persist_messages failure triggers rollback and yields Error SSE. Session is not committed."""
+        self.mock_persist.side_effect = RuntimeError("DB write failed")
+
+        sse_events = await stream_and_collect(client, self.agent_record.id)
+
+        self.mock_session.rollback.assert_called_once()
+        self.mock_session.commit.assert_not_called()
+        assert sse_events[-1]["event"] == "Error"
+
+    async def test_commits_before_compaction_failure_so_turn_is_preserved(self, client: AsyncClient):
+        """Session is committed before compaction is attempted.
+
+        If compaction fails, the turn's message writes survive — commit runs before
+        the compaction check. The outer except then rolls back only the empty
+        post-commit transaction, leaving the messages intact.
+        """
+        self.mock_needs_compact.return_value = True
+        self.mock_compact.side_effect = RuntimeError("compaction failed")
+
+        sse_events = await stream_and_collect(client, self.agent_record.id)
+
+        self.mock_session.commit.assert_called_once()
+        assert sse_events[-1]["event"] == "Error"
+
+    async def test_yields_error_sse_on_mid_stream_exception(self, client: AsyncClient):
+        """Error SSE is delivered to the client when an exception occurs mid-stream.
+
+        Verifies that partial events (e.g. a TextPart that started streaming) are followed
+        by an Error event — clients always receive an explicit signal that the request failed.
+        """
+        self.configure_mock_get_agent_and_deps(
+            events=[PartStartEvent(index=0, part=TextPart(content="Starting..."))],
+            raises_mid_stream=RuntimeError("mid-stream crash"),
+        )
+
+        sse_events = await stream_and_collect(client, self.agent_record.id)
+
+        assert sse_events[-1]["event"] == "Error"
 
 
 class TestCreateAgent:

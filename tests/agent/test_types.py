@@ -5,7 +5,7 @@ AgentConfig: Pydantic model for agent configuration
 AgentDeps: Dataclass holding request-scoped agent state
 """
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from conftest import SAMPLE_AGENT_CONFIG_DATA
@@ -147,6 +147,31 @@ def test_agentdeps_requires_field(missing_field: str):
 
     with pytest.raises(TypeError):
         AgentDeps(**all_fields)
+
+
+class TestAgentDepsCommitChangesRefreshAgentRecord:
+    """commit_changes_refresh_agent_record — commit+refresh ordering invariant."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.mock_record = MagicMock()
+        self.mock_session = AsyncMock()
+        self.deps = AgentDeps(session=self.mock_session, agent_record=self.mock_record)
+
+    async def test_commits_then_refreshes(self):
+        """Refresh must follow commit — refreshing first would reload stale data."""
+        await self.deps.commit_changes_refresh_agent_record()
+
+        assert self.mock_session.mock_calls == [call.commit(), call.refresh(self.mock_record)]
+
+    async def test_refresh_not_called_when_commit_raises(self):
+        """A failed commit leaves the DB unchanged — refresh must not be called."""
+        self.mock_session.commit.side_effect = RuntimeError("DB connection lost")
+
+        with pytest.raises(RuntimeError, match="DB connection lost"):
+            await self.deps.commit_changes_refresh_agent_record()
+
+        self.mock_session.refresh.assert_not_called()
 
 
 async def test_agentdeps_holds_expected_fields(session, agent_record):
