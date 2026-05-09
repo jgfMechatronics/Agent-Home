@@ -29,7 +29,7 @@ async def load_message_history(
 ) -> list["MessageRecord"]:
     """Load message history as raw records.
     
-    If start_timestamp is provided, returns only messages after that point.
+    If start_timestamp is provided, returns only messages equal to and after that point.
     Otherwise returns complete conversation history.
     """
     raise NotImplementedError

@@ -37,17 +37,19 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
     if len(messages) <= 4:
         return
 
+    # TODO (low priority): we may eventually want a more sophisticated way to estiamte tokens, and some sort of 
+    # check and loop on resulting in-context message token count to be more accurate if we find it necessary
     sys_tokens = len(deps.compiled_system_prompt or "") / 4
     msg_tokens = input_tokens - sys_tokens
     avg_tokens_per_msg = msg_tokens / len(messages)
     if avg_tokens_per_msg <= 0:
         return  # System prompt dominates token budget — can't estimate, skip this turn
     target_tokens = deps.config.compaction_target_percentage * deps.config.soft_compaction_limit
-    keep = max(4, int((target_tokens - sys_tokens) / avg_tokens_per_msg))
+    n_msg_to_keep = max(4, int((target_tokens - sys_tokens) / avg_tokens_per_msg))
 
-    if keep >= len(messages):
+    if n_msg_to_keep >= len(messages):
         return
 
-    deps.context_window_start = messages[-keep].timestamp
+    deps.context_window_start = messages[-n_msg_to_keep].timestamp
     await deps.session.flush()
     await compile_system_prompt(deps)
