@@ -5,7 +5,7 @@ when token limits are exceeded.
 """
 from agent.types import AgentConfig, AgentDeps
 from memory.system_prompt_compilation import compile_system_prompt
-from messages.messages import load_message_history
+from messages.messages import load_messages
 
 
 def is_compaction_needed(input_tokens: int, config: AgentConfig) -> bool:
@@ -29,7 +29,7 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
     - Does NOT delete messages (pointer manipulation only)
     - Calls compile_system_prompt after advancing pointer
     """
-    messages = await load_message_history(
+    messages = await load_messages(
         deps.session, deps.agent_id, start_timestamp=deps.context_window_start
     )
 

@@ -135,7 +135,6 @@ class CompactTestBase:
         self.deps = data["deps"]
         self.input_tokens = input_tokens
 
-@pytest.mark.xfail(reason="Compaction implementation pending messages.py")
 class TestCompactCommon(CompactTestBase):
     """Tests with standard config: 500 limit, 0.5 target, 10 messages, 1100 tokens."""
     
@@ -178,7 +177,6 @@ class TestCompactCommon(CompactTestBase):
         spy.assert_called_once_with(self.deps)
 
 
-@pytest.mark.xfail(reason="Compaction implementation pending messages.py")
 class TestCompactEdgeCases(CompactTestBase):
     """Tests for edge cases requiring per-test bespoke setup params"""
 

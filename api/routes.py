@@ -1,4 +1,10 @@
-"""API routes — Section 4.1."""
+"""API routes — Section 4.1.
+
+TODO: Our current "read-only" access pattern isn't truly read-only. Read operations
+take a full AsyncSession and may return mutable ORM objects still connected to the DB.
+This works but violates principle of least privilege — callers that only need to read
+have full write access. Worth revisiting when we have bandwidth.
+"""
 import logging
 from typing import Any, AsyncGenerator
 
@@ -19,7 +25,7 @@ from api.schemas import (
     MessagesResponse,
 )
 from memory.block_crud import get_blocks
-from messages.messages import load_in_context_messages, load_message_history, persist_messages
+from messages.messages import deserialize_messages, load_messages, persist_messages
 from agent.compaction import compact, is_compaction_needed
 
 logger = logging.getLogger(__name__)
@@ -63,7 +69,8 @@ async def send_message(
     # AgentNotFoundError / AgentLockedError are translated to HTTP 404/503 by get_agent_and_deps
     agent, deps = agent_and_deps
     try:
-        message_history = await load_in_context_messages(deps)
+        records = await load_messages(deps.session, deps.agent_id, start_timestamp=deps.context_window_start)
+        message_history = deserialize_messages(records)
 
         async for event in agent.run_stream_events(user_prompt=body.message,
                                                     message_history=message_history,
@@ -146,10 +153,12 @@ async def get_messages(
     full: bool = False,
     session: AsyncSession = Depends(get_session_dep),
 ) -> MessagesResponse:
-    """Return conversation history. Use ?full=true for complete history."""
-    await get_agent_record_or_404(session, agent_id)
-    if full:
-        messages = await load_message_history(session, agent_id)
-    else:
-        messages = await load_in_context_messages(session, agent_id)
+    """
+    Return conversation history. Use ?full=true for complete history.
+    TODO: Another instance of bad read-only control
+    """
+    record = await get_agent_record_or_404(session, agent_id)
+    # TODO: Don't need agent record if requesting full, but we're likely gonna rework this anyway
+    start_timestamp = None if full else record.context_window_start
+    messages = await load_messages(session, agent_id, start_timestamp=start_timestamp)
     return MessagesResponse(messages=messages)
