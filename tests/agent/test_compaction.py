@@ -6,7 +6,7 @@ compact(deps, input_tokens) receives the total input_tokens from the API respons
 It estimates system prompt tokens from char count, calculates message tokens,
 and advances context_window_start to hit the target percentage.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -16,14 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.compaction import compact, is_compaction_needed
 from agent.types import AgentConfig
 from conftest import make_deps, SAMPLE_AGENT_CONFIG
-from db.models import AgentRecord, MessageRecord
+from db.models import AgentRecord, MessageRecord, utcnow
 
 
 # --- Fixtures ---
-
-def _utcnow() -> datetime:
-    """Return current UTC time as naive datetime (matches DB convention)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _make_config(
@@ -69,7 +65,7 @@ async def _make_agent_with_messages(
     session.add(agent)
     await session.flush()
     
-    base_time = _utcnow() - timedelta(seconds=message_count)
+    base_time = utcnow() - timedelta(seconds=message_count)
     messages = []
     for i in range(message_count):
         msg = MessageRecord(

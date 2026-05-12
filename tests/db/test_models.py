@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig
 from conftest import SAMPLE_AGENT_CONFIG
-from db.models import AgentRecord, MemoryBlockRecord, MessageRecord
+from db.models import AgentRecord, MemoryBlockRecord, MessageRecord, utcnow
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -53,7 +53,7 @@ async def assert_round_trips(session: AsyncSession, record: Any, expected_fields
 async def assert_timestamps_auto_populated(session: AsyncSession, record: Any):
     """Verify created_at and updated_at are set automatically on creation and within 5 minutes of now (rough sanity check on accuracy)."""
     await session.refresh(record)
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = utcnow()
     five_minutes = timedelta(minutes=5)
     assert record.created_at is not None, "created_at should be auto-populated on creation"
     assert record.updated_at is not None, "updated_at should be auto-populated on creation"

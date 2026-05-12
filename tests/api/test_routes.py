@@ -38,7 +38,7 @@ from pydantic_ai.messages import (
 from api.deps import get_agent_and_deps, get_session_dep
 from agent.crud import create_agent_record
 from conftest import make_deps
-from db.models import AgentRecord, _utcnow
+from db.models import AgentRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 
 # --- Module-level test data ---
@@ -406,7 +406,7 @@ class TestCreateAgent:
     async def test_creates_agent_and_returns_metadata(self, client: AsyncClient) -> None:
         """Creating an agent returns full metadata and 201 status."""
         expected_id = str(uuid4())
-        DATETIME_NOW = _utcnow()
+        DATETIME_NOW = utcnow()
 
         mock_record = Mock()
         mock_record.id = expected_id
