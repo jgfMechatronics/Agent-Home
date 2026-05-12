@@ -173,6 +173,9 @@ class TestSendMessage:
 
         A MINIMAL_STREAM() default is installed automatically. Tests that need specific events,
         exceptions, or mid-stream failures call self.configure_mock_get_agent_and_deps() to override.
+        TODO: Test gap, we don't actually test that the pyddantic AI agent is contructed for the loop with the expected inputs
+        IE we could not pass the right deps, pass the wrong message history, etc. Pretty sure we also don't check that the right
+        method is called on the agent. We already have a mock agent so we can just use that.
         """
         self.agent_record = agent_record
         self.mock_session = Mock()
@@ -208,14 +211,17 @@ class TestSendMessage:
         for tests that assert on persistence/compaction behavior.
         """
         with (
-            patch("api.routes.load_in_context_messages", new_callable=AsyncMock, create=True) as mock_load,
+            patch("api.routes.load_messages", new_callable=AsyncMock, create=True) as mock_load,
+            patch("api.routes.deserialize_messages", create=True) as mock_deserialize,
             patch("api.routes.persist_messages", new_callable=AsyncMock, create=True) as mock_persist,
             patch("api.routes.is_compaction_needed", create=True) as mock_needs_compact,
             patch("api.routes.compact", new_callable=AsyncMock, create=True) as mock_compact,
         ):
             mock_load.return_value = []  # safe default — no prior history
+            mock_deserialize.return_value = []  # safe default — empty deserialized history
             mock_needs_compact.return_value = False  # safe default — no compaction unless overridden
-            self.mock_load_in_context = mock_load
+            self.mock_load_messages = mock_load
+            self.mock_deserialize = mock_deserialize
             self.mock_persist = mock_persist
             self.mock_needs_compact = mock_needs_compact
             self.mock_compact = mock_compact
@@ -513,41 +519,40 @@ class TestGetMessages:
 
         Uses create=True so tests stay green before routes.py imports these functions.
 
-        Provides self.mock_in_context and self.mock_full for loader-routing assertions.
+        Provides self.mock_load_messages for loader-routing assertions.
         """
         with (
-            patch("api.routes.load_in_context_messages", new_callable=AsyncMock, create=True) as mock_in_context,
-            patch("api.routes.load_message_history", new_callable=AsyncMock, create=True) as mock_full,
+            patch("api.routes.load_messages", new_callable=AsyncMock, create=True) as mock_load,
         ):
-            mock_in_context.return_value = []
-            mock_full.return_value = []
-            self.mock_in_context = mock_in_context
-            self.mock_full = mock_full
+            mock_load.return_value = []
+            self.mock_load_messages = mock_load
             yield
 
-    async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord):
-        """Without ?full=true: calls load_in_context_messages, returns its result."""
+    async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+        """Without ?full=true: calls load_messages with context_window_start as start_timestamp."""
         expected_messages = [{"role": "user", "content": "test"}]
-        self.mock_in_context.return_value = expected_messages
+        self.mock_load_messages.return_value = expected_messages
 
         response = await client.get(f"/agents/{agent_record.id}/messages")
 
         assert response.status_code == 200
         assert response.json()["messages"] == expected_messages
-        self.mock_in_context.assert_called_once()
-        self.mock_full.assert_not_called()
+        self.mock_load_messages.assert_called_once_with(
+            session, agent_record.id, start_timestamp=agent_record.context_window_start
+        )
 
-    async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord):
-        """With ?full=true: calls load_message_history, returns its result."""
+    async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+        """With ?full=true: calls load_messages with start_timestamp=None for full history."""
         expected_messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}]
-        self.mock_full.return_value = expected_messages
+        self.mock_load_messages.return_value = expected_messages
 
         response = await client.get(f"/agents/{agent_record.id}/messages?full=true")
 
         assert response.status_code == 200
         assert response.json()["messages"] == expected_messages
-        self.mock_full.assert_called_once()
-        self.mock_in_context.assert_not_called()
+        self.mock_load_messages.assert_called_once_with(
+            session, agent_record.id, start_timestamp=None
+        )
 
     @pytest.mark.xfail(reason="TODO: Finalize MessageItemFormat")
     async def test_returns_reasonable_format(self):
