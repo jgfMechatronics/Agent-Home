@@ -2,12 +2,14 @@
 Tests for messages/messages.py — persist_messages, load_messages, deserialize_messages.
 """
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pytest
 import pytest_asyncio
+from unittest.mock import patch
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     TextPart,
@@ -19,11 +21,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentDeps
-from db.models import AgentRecord, MessageRecord
+from db.models import AgentRecord, MessageRecord, utcnow
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
 # make_deps is a plain helper (not a pytest fixture) — import directly for use in test bodies
-from conftest import make_deps
+from conftest import SAMPLE_AGENT_CONFIG, make_deps
 
 
 # ---------------------------------------------------------------------------
@@ -40,17 +42,24 @@ def make_response(content: str = "hi") -> ModelResponse:
     return ModelResponse(parts=[TextPart(content=content)])
 
 
+# Fixed naive UTC timestamp for the ModelRequest in make_tool_pair — ModelRequest.timestamp
+# defaults to None (unlike ModelResponse which auto-assigns), so we set one explicitly to make
+# assertions about orphaned-return summary warnings predictable without bracketing.
+_TOOL_PAIR_REQUEST_TS = datetime(2026, 1, 1, 12, 0, 0)
+
+
 def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
     """A matched tool-call / tool-return pair.
 
     Returns (response_with_tool_call, request_with_tool_return).
     Use element [0] alone to simulate an orphaned tool call.
+    Use element [1] alone to simulate an orphaned tool return.
     """
     call_part = ToolCallPart(tool_name="mem_replace", args='{"label":"x"}', tool_call_id="tc1")
     return_part = ToolReturnPart(tool_name="mem_replace", content="ok", tool_call_id="tc1")
     return (
         ModelResponse(parts=[call_part]),
-        ModelRequest(parts=[return_part]),
+        ModelRequest(parts=[return_part], timestamp=_TOOL_PAIR_REQUEST_TS),
     )
 
 
@@ -77,11 +86,6 @@ async def fetch_all_records(session: AsyncSession, agent_id: str) -> list[Messag
     return list(result.scalars().all())
 
 
-def naive_now() -> datetime:
-    """Current UTC time as a naive datetime (matches MessageRecord.timestamp storage)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
 # ---------------------------------------------------------------------------
 # TestPersistMessages
 # ---------------------------------------------------------------------------
@@ -100,112 +104,189 @@ class TestPersistMessages:
         self.agent = agent_record
         self.deps = make_deps(session, agent_record)
 
+    async def _persist_and_fetch(self, messages, input_tokens=10) -> list[MessageRecord]:
+        await persist_messages(self.deps, messages, input_tokens=input_tokens)
+        return await fetch_all_records(self.session, self.agent.id)
+
     async def test_creates_one_record_per_message(self):
-        messages = [make_request(), make_response()]
-        await persist_messages(self.deps, messages, input_tokens=100)
-        records = await fetch_all_records(self.session, self.agent.id)
+        records = await self._persist_and_fetch([make_request(), make_response()], input_tokens=100)
         assert len(records) == 2
 
     async def test_sets_type_from_message_class(self):
-        messages = [make_request(), make_response()]
-        await persist_messages(self.deps, messages, input_tokens=100)
-        records = await fetch_all_records(self.session, self.agent.id)
+        records = await self._persist_and_fetch([make_request(), make_response()], input_tokens=100)
         assert records[0].type == "ModelRequest"
         assert records[1].type == "ModelResponse"
 
     async def test_serializes_content_as_json(self):
         req = make_request("round-trip content")
-        await persist_messages(self.deps, [req], input_tokens=10)
-        records = await fetch_all_records(self.session, self.agent.id)
+        records = await self._persist_and_fetch([req])
         # Content must be valid JSON that round-trips to the original message
-        from pydantic_ai.messages import ModelMessagesTypeAdapter
         restored = ModelMessagesTypeAdapter.validate_json(f"[{records[0].content}]")
         assert len(restored) == 1
-        assert isinstance(restored[0], ModelRequest)
+        assert restored[0] == req
 
     async def test_input_tokens_on_final_row_only(self):
-        messages = [make_request(), make_response(), make_request(), make_response()]
-        await persist_messages(self.deps, messages, input_tokens=42)
-        records = await fetch_all_records(self.session, self.agent.id)
+        records = await self._persist_and_fetch(
+            [make_request(), make_response(), make_request(), make_response()], input_tokens=42
+        )
         # Only the last record gets input_tokens
         for r in records[:-1]:
             assert r.input_tokens is None
         assert records[-1].input_tokens == 42
 
     async def test_timestamp_set_on_all_records(self):
-        messages = [make_request(), make_response()]
-        await persist_messages(self.deps, messages, input_tokens=10)
-        records = await fetch_all_records(self.session, self.agent.id)
+        before = utcnow()
+        records = await self._persist_and_fetch([make_request(), make_response()])
+        after = utcnow()
         for r in records:
-            assert r.timestamp is not None
-            assert isinstance(r.timestamp, datetime)
+            assert before <= r.timestamp <= after
 
     async def test_agent_id_set_on_all_records(self):
-        messages = [make_request(), make_response()]
-        await persist_messages(self.deps, messages, input_tokens=10)
-        records = await fetch_all_records(self.session, self.agent.id)
+        records = await self._persist_and_fetch([make_request(), make_response()])
         for r in records:
             assert r.agent_id == self.agent.id
 
     async def test_empty_messages_list_is_noop(self):
-        await persist_messages(self.deps, [], input_tokens=0)
-        records = await fetch_all_records(self.session, self.agent.id)
+        records = await self._persist_and_fetch([], input_tokens=0)
         assert records == []
 
     async def test_persists_tool_call_and_return(self):
         response_with_call, request_with_return = make_tool_pair()
-        await persist_messages(self.deps, [response_with_call, request_with_return], input_tokens=20)
-        records = await fetch_all_records(self.session, self.agent.id)
+        
+        records = await self._persist_and_fetch([response_with_call, request_with_return], input_tokens=20)
+        
         assert len(records) == 2
         assert records[0].type == "ModelResponse"
         assert records[1].type == "ModelRequest"
+        restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
+        assert restored[0] == response_with_call
+        assert restored[1] == request_with_return
 
+    async def test_records_isolated_per_agent(self):
+        """
+        Messages persisted for one agent must not affect another agent's records,
+        and _get_last_timestamp must not cross agent boundaries for ordering.
+        Here we also test that new messages for a given agent do not affect same agent's old msgs
+        """
+        other_agent = AgentRecord(
+            name="other-agent",
+            agent_config=SAMPLE_AGENT_CONFIG,
+            system_instructions="Other agent.",
+        )
+        self.session.add(other_agent)
+        await self.session.flush()
+        other_deps = make_deps(self.session, other_agent)
+
+        expected_other_msg = make_request("other msg")
+        my_first_expected_msg = make_request("my msg")
+        my_second_expected_msg = make_request("my second msg")
+        
+        await persist_messages(other_deps, [expected_other_msg], input_tokens=5)
+        await persist_messages(self.deps, [my_first_expected_msg], input_tokens=5)
+        await persist_messages(self.deps, [my_second_expected_msg], input_tokens=5)
+
+        my_records = await fetch_all_records(self.session, self.agent.id)
+        other_records = await fetch_all_records(self.session, other_agent.id)
+
+        assert len(my_records) == 2
+        my_restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in my_records]
+        assert my_restored[0] == my_first_expected_msg
+        assert my_restored[1] == my_second_expected_msg
+
+        assert len(other_records) == 1
+        assert ModelMessagesTypeAdapter.validate_json(f"[{other_records[0].content}]")[0] == expected_other_msg
+
+
+    # ------------Tests for handling non-persistable messages -----------------------
+    
+    # ------------ Helpers -------------------------
+    def _assert_summary_warning_appended(self, records, error_text, original_timestamp):
+        """Assert the last record in records is a summary warning matching the expected format."""
+        record = records[-1]
+        assert record.type == "ModelResponse"
+        restored = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
+
+        expected = (
+            f"WARNING: A problem was encountered while persisting messages from the last turn: "
+            f"'{error_text}'. A warning was injected in place of the problematic message, "
+            f"problematic message timestamp was {original_timestamp}"
+        )
+        assert restored[0].parts[0].content == expected
+
+    async def _assert_orphan_replaced(self, orphan_msg, orphaned_part_type, expected_error):
+        """Persist a single orphaned tool message and assert it was replaced with the expected
+        error record, with a summary warning appended at the end of the chain."""
+        records = await self._persist_and_fetch([orphan_msg], input_tokens=5)
+        assert len(records) == 2  # positional error + summary warning
+
+        # Positional error record
+        assert records[0].type == "ModelResponse"
+        restored = ModelMessagesTypeAdapter.validate_json(f"[{records[0].content}]")
+        assert not any(isinstance(p, orphaned_part_type) for p in restored[0].parts)
+        assert restored[0].parts[0].content == expected_error
+
+        # Summary warning appended at end
+        ts = orphan_msg.timestamp
+        original_timestamp = ts.replace(tzinfo=None) if (ts is not None and ts.tzinfo is not None) else ts
+        self._assert_summary_warning_appended(records, expected_error, original_timestamp)
+
+    # -------------- Tests -------------------
     async def test_orphaned_tool_call_replaced_with_error_response(self):
         """A ModelResponse with a ToolCallPart not followed by a matching ToolReturnPart
         should be replaced with an error ModelResponse (not stored as-is)."""
         orphan_response, _ = make_tool_pair()  # discard the matching return
-        await persist_messages(self.deps, [orphan_response], input_tokens=5)
-        records = await fetch_all_records(self.session, self.agent.id)
-        assert len(records) == 1
-        assert records[0].type == "ModelResponse"
-        # Stored content must not contain a ToolCallPart — it should be the error replacement
-        from pydantic_ai.messages import ModelMessagesTypeAdapter
-        restored = ModelMessagesTypeAdapter.validate_json(f"[{records[0].content}]")
-        assert not any(isinstance(p, ToolCallPart) for p in restored[0].parts)
+        await self._assert_orphan_replaced(
+            orphan_response, ToolCallPart, "[Orphaned tool call(s) dropped: mem_replace]"
+        )
 
-    async def test_serialization_failure_injects_error_response(self):
-        """If dump_json raises for a message, an error ModelResponse is stored and
-        remaining messages continue to be persisted."""
-        from unittest.mock import patch
-        from pydantic_ai.messages import ModelMessagesTypeAdapter as MTA
+    async def test_orphaned_tool_return_replaced_with_error_response(self):
+        """A ModelRequest with a ToolReturnPart not preceded by a matching ToolCallPart
+        should be replaced with an error ModelResponse (not stored as-is)."""
+        _, orphan_request = make_tool_pair()  # discard the matching call
+        await self._assert_orphan_replaced(
+            orphan_request, ToolReturnPart, "[Orphaned tool return(s) dropped: mem_replace]"
+        )
 
+    async def test_serialization_failure_injects_error_response(self, caplog):
+        """
+        If dump_json raises for a message, an error ModelResponse is stored in place of
+        the bad message, remaining messages continue to be persisted, and a summary warning
+        is appended at the end of the chain so the model/user can't miss it.
+        TODO: It would be nice to have an explicit error designator for model messages or responses.
+        Possibly we should add a subtype to ModelRecord for stuff like easy tracking of "Tool Call", "Tool Return", "Error"
+        """
         good = make_request("before")
         bad = make_response("problem")
         good2 = make_request("after")
 
         # Save original before patching — error path also calls dump_json to serialize the
         # injected error response, so we need to pass through for all but the targeted call.
-        original_dump = MTA.dump_json
-        call_count = 0
+        original_dump = ModelMessagesTypeAdapter.dump_json
 
         def controlled_dump(messages_arg):
-            nonlocal call_count
-            call_count += 1
-            # TODO: call_count == 2 assumes 'bad' is the second dump_json call in the loop.
-            # If persist_messages ever adds a pre-loop dump_json call, this ordinal shifts.
-            # Consider keying on messages_arg content instead.
-            if call_count == 2:  # the 'bad' message is the second call
+            if messages_arg[0] is bad:
                 raise ValueError("sim failure")
             return original_dump(messages_arg)
 
-        with patch.object(MTA, "dump_json", side_effect=controlled_dump):
+        with patch.object(ModelMessagesTypeAdapter, "dump_json", side_effect=controlled_dump):
             await persist_messages(self.deps, [good, bad, good2], input_tokens=10)
 
         records = await fetch_all_records(self.session, self.agent.id)
-        assert len(records) == 3
-        # Middle record should be an error ModelResponse
+        assert len(records) == 4  # good, positional error, good2, summary warning
+
+        error_text = "[persist_messages serialization error]: ValueError: sim failure"
+
+        # Positional error record replaces bad in-place
         assert records[1].type == "ModelResponse"
-        assert "sim failure" in records[1].content
+        positional = ModelMessagesTypeAdapter.validate_json(f"[{records[1].content}]")
+        assert positional[0].parts[0].content == error_text
+
+        # Summary warning appended at end, referencing the error and original timestamp
+        expected_ts = bad.timestamp.replace(tzinfo=None)
+        self._assert_summary_warning_appended(records, error_text, expected_ts)
+
+        # Exception logged
+        assert any("sim failure" in r.message for r in caplog.records)
 
     async def test_timestamp_ordering_preserved_when_new_messages_are_older(self):
         """If a new message's timestamp is older than the last DB record, it should be
@@ -317,7 +398,6 @@ class TestDeserializeMessages:
 
     def _make_record(self, message: ModelMessage, agent_id: str = "test-agent") -> MessageRecord:
         """Build a MessageRecord from a ModelMessage without touching the DB."""
-        from pydantic_ai.messages import ModelMessagesTypeAdapter
         serialized = ModelMessagesTypeAdapter.dump_json([message])
         # Extract the single-message JSON object (strip the outer array brackets)
         content = serialized.decode()[1:-1]
@@ -326,7 +406,7 @@ class TestDeserializeMessages:
             type=type(message).__name__,
             content=content,
             input_tokens=None,
-            timestamp=naive_now(),
+            timestamp=utcnow(),
         )
 
     def test_deserializes_request(self):
@@ -334,20 +414,22 @@ class TestDeserializeMessages:
         record = self._make_record(req)
         result = deserialize_messages([record])
         assert len(result) == 1
-        assert isinstance(result[0], ModelRequest)
+        assert result[0] == req
 
     def test_deserializes_response(self):
         resp = make_response("hi")
         record = self._make_record(resp)
         result = deserialize_messages([record])
         assert len(result) == 1
-        assert isinstance(result[0], ModelResponse)
+        assert result[0] == resp
 
     def test_deserializes_tool_pair(self):
         response_with_call, request_with_return = make_tool_pair()
         records = [self._make_record(response_with_call), self._make_record(request_with_return)]
         result = deserialize_messages(records)
         assert len(result) == 2
+        assert result[0] == response_with_call
+        assert result[1] == request_with_return
 
     def test_invalid_content_injects_error_response(self):
         """Invalid JSON content should produce an error ModelResponse, not raise."""
@@ -356,7 +438,7 @@ class TestDeserializeMessages:
             type="ModelRequest",
             content="not valid json at all",
             input_tokens=None,
-            timestamp=naive_now(),
+            timestamp=utcnow(),
         )
         result = deserialize_messages([bad_record])
         assert len(result) == 1
@@ -372,7 +454,7 @@ class TestDeserializeMessages:
         record.type = "Summary"
         result = deserialize_messages([record])
         assert len(result) == 1
-        assert isinstance(result[0], ModelRequest)
+        assert result[0] == summary_msg
 
     def test_performance_1000_messages(self):
         """Deserialization of 1000 messages should be fast (< 1s budget)."""
@@ -408,9 +490,7 @@ class TestRoundTrip:
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)
 
-        assert len(restored) == 2
-        assert isinstance(restored[0], ModelRequest)
-        assert isinstance(restored[1], ModelResponse)
+        assert restored == original
 
     async def test_tool_pair_round_trip(self):
         response_with_call, request_with_return = make_tool_pair()
@@ -418,9 +498,5 @@ class TestRoundTrip:
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)
 
-        assert len(restored) == 2
-        call_parts = [p for p in restored[0].parts if isinstance(p, ToolCallPart)]
-        return_parts = [p for p in restored[1].parts if isinstance(p, ToolReturnPart)]
-        assert len(call_parts) == 1
-        assert len(return_parts) == 1
-        assert call_parts[0].tool_call_id == return_parts[0].tool_call_id
+        assert restored[0] == response_with_call
+        assert restored[1] == request_with_return
