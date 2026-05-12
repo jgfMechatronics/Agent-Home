@@ -3,6 +3,7 @@ System prompt compilation — assembles memory blocks into the full system promp
 
 compile_system_prompt(deps) — builds prompt from blocks, stores in agent.compiled_system_prompt
 get_system_prompt(ctx) — returns cached prompt for Pydantic AI instructions param
+TODO: More instances of accessing db directly rather than going through the agent_record on deps.
 """
 from datetime import datetime, UTC
 
