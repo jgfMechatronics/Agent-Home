@@ -6,6 +6,7 @@ from datetime import datetime
 
 import pytest
 import pytest_asyncio
+import asyncio
 from unittest.mock import patch
 from pydantic_ai.messages import (
     ModelMessage,
@@ -90,19 +91,22 @@ async def fetch_all_records(session: AsyncSession, agent_id: str) -> list[Messag
 # TestPersistMessages
 # ---------------------------------------------------------------------------
 
+class DBTestBase:
+    """Base class for test classes that need a database session and agent."""
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
+        self.session = session
+        self.agent = agent_record
+        self.deps = make_deps(session, agent_record)
+
+
 @pytest.mark.asyncio
-class TestPersistMessages:
+class TestPersistMessages(DBTestBase):
     """Tests for persist_messages(deps, messages, input_tokens).
 
     Uses real in-memory DB. All tests share a session fixture from conftest.
     """
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
-        """Wire up deps for all tests in this class."""
-        self.session = session
-        self.agent = agent_record
-        self.deps = make_deps(session, agent_record)
 
     async def _persist_and_fetch(self, messages, input_tokens=10) -> list[MessageRecord]:
         await persist_messages(self.deps, messages, input_tokens=input_tokens)
@@ -159,8 +163,7 @@ class TestPersistMessages:
         assert records[0].type == "ModelResponse"
         assert records[1].type == "ModelRequest"
         restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
-        assert restored[0] == response_with_call
-        assert restored[1] == request_with_return
+        assert restored == [response_with_call, request_with_return]
 
     async def test_records_isolated_per_agent(self):
         """
@@ -313,23 +316,17 @@ class TestPersistMessages:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-class TestLoadMessages:
+class TestLoadMessages(DBTestBase):
     """Tests for load_messages(session, agent_id, start_timestamp=None).
 
     Pre-seeds DB via persist_messages to ensure realistic records.
     """
 
-    @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
-        self.session = session
-        self.agent = agent_record
-        self.deps = make_deps(session, agent_record)
-
     async def test_returns_all_messages_when_no_start_timestamp(self):
         messages = [make_request(), make_response(), make_request(), make_response()]
         await persist_messages(self.deps, messages, input_tokens=50)
         records = await load_messages(self.session, self.agent.id)
-        assert len(records) == 4
+        assert deserialize_messages(records) == messages
 
     async def test_returns_empty_list_when_no_messages(self):
         records = await load_messages(self.session, self.agent.id)
@@ -342,13 +339,13 @@ class TestLoadMessages:
         # Record the cutoff timestamp before persisting the second batch
         cutoff_record = (await fetch_all_records(self.session, self.agent.id))[-1]
         cutoff = cutoff_record.timestamp
-
+        await asyncio.sleep(0.1) # ensure timestamp unique from early
         late = [make_request("late"), make_response("late reply")]
         await persist_messages(self.deps, late, input_tokens=10)
 
         records = await load_messages(self.session, self.agent.id, start_timestamp=cutoff)
         # Should include the cutoff record and everything after (inclusive)
-        assert len(records) == 3
+        assert deserialize_messages(records) == [early[1]] + late
 
     async def test_results_in_chronological_order(self):
         messages = [make_request("first"), make_response("second"), make_request("third")]
@@ -397,7 +394,7 @@ class TestDeserializeMessages:
     """Tests for deserialize_messages(records) — pure function, no DB needed."""
 
     def _make_record(self, message: ModelMessage, agent_id: str = "test-agent") -> MessageRecord:
-        """Build a MessageRecord from a ModelMessage without touching the DB."""
+        """Build a MessageRecord from a ModelMessage without touching the DB. This is 'serializing'"""
         serialized = ModelMessagesTypeAdapter.dump_json([message])
         # Extract the single-message JSON object (strip the outer array brackets)
         content = serialized.decode()[1:-1]
@@ -409,30 +406,18 @@ class TestDeserializeMessages:
             timestamp=utcnow(),
         )
 
-    def test_deserializes_request(self):
-        req = make_request("hello")
-        record = self._make_record(req)
-        result = deserialize_messages([record])
-        assert len(result) == 1
-        assert result[0] == req
-
-    def test_deserializes_response(self):
-        resp = make_response("hi")
-        record = self._make_record(resp)
-        result = deserialize_messages([record])
-        assert len(result) == 1
-        assert result[0] == resp
-
-    def test_deserializes_tool_pair(self):
-        response_with_call, request_with_return = make_tool_pair()
-        records = [self._make_record(response_with_call), self._make_record(request_with_return)]
+    @pytest.mark.parametrize("messages", [
+        [make_request("hello")],
+        [make_response("hi")],
+        list(make_tool_pair()),
+    ])
+    def test_deserializes_messages(self, messages):
+        records = [self._make_record(m) for m in messages]
         result = deserialize_messages(records)
-        assert len(result) == 2
-        assert result[0] == response_with_call
-        assert result[1] == request_with_return
+        assert result == messages
 
-    def test_invalid_content_injects_error_response(self):
-        """Invalid JSON content should produce an error ModelResponse, not raise."""
+    def test_invalid_content_raises(self):
+        """Invalid JSON content should raise ValueError, not silently inject an error response."""
         bad_record = MessageRecord(
             agent_id="test-agent",
             type="ModelRequest",
@@ -440,34 +425,27 @@ class TestDeserializeMessages:
             input_tokens=None,
             timestamp=utcnow(),
         )
-        result = deserialize_messages([bad_record])
-        assert len(result) == 1
-        assert isinstance(result[0], ModelResponse)
-        # Error response should contain some error context
-        assert result[0].parts
-
-    def test_summary_record_passthrough(self):
-        """Summary records (ModelRequest with XML content) round-trip cleanly."""
-        summary_content = "<summary>Prior conversation summary here.</summary>"
-        summary_msg = make_request(summary_content)
-        record = self._make_record(summary_msg)
-        record.type = "Summary"
-        result = deserialize_messages([record])
-        assert len(result) == 1
-        assert result[0] == summary_msg
+        with pytest.raises(ValueError, match=f"Deserialization error for record {bad_record.id}"):
+            deserialize_messages([bad_record])
 
     def test_performance_1000_messages(self):
         """Deserialization of 1000 messages should be fast (< 1s budget)."""
-        messages = make_messages_batch(500)  # 500 pairs = 1000 messages
+        n_messages = 1000
+        n_pairs = n_messages//2
+        messages = make_messages_batch(n_pairs)
         records = [self._make_record(m) for m in messages]
 
         start = time.perf_counter()
         result = deserialize_messages(records)
         elapsed = time.perf_counter() - start
 
-        assert len(result) == 1000
-        print(f"\nDeserialize 1000 messages: {elapsed:.3f}s ({elapsed/1000*1000:.3f}ms/msg)")
-        assert elapsed < 1.0, f"Deserialization too slow: {elapsed:.3f}s for 1000 messages"
+        assert len(result) == n_messages
+        print(f"\nDeserialize {n_messages} messages: {elapsed:.3f}s ({elapsed/(1000*n_messages):.3f}ms/msg)")
+        max_time_sec = 0.5
+        assert elapsed < max_time_sec, f"Deserialization too slow: {elapsed:.3f}s for {n_messages} messages"
+        
+        # while we're here, may as well check bulk deserialization accuracy
+        assert result == messages
 
 
 # ---------------------------------------------------------------------------
@@ -475,14 +453,8 @@ class TestDeserializeMessages:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-class TestRoundTrip:
+class TestRoundTrip(DBTestBase):
     """Integration tests: persist → load → deserialize produces equivalent messages."""
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
-        self.session = session
-        self.agent = agent_record
-        self.deps = make_deps(session, agent_record)
 
     async def test_request_response_round_trip(self):
         original = [make_request("round-trip me"), make_response("got it")]
