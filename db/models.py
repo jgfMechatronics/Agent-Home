@@ -105,6 +105,8 @@ class MessageRecord(Base):
 
     id: Mapped[str] = mapped_column(primary_key=True, default=lambda: str(uuid.uuid4()))
     agent_id: Mapped[str] = mapped_column(ForeignKey("agent.id", ondelete="CASCADE"))
+    # NOTE: Currently type is either "ModelResponse" or "ModelRequst" IE the union types of ModelMessage.
+    # We may later want to make this more custom/useful, stuff like "Summary", "ToolCall", "ToolResponse"
     type: Mapped[str]
     content: Mapped[str]  # TEXT storing serialized ModelMessage JSON — not deserialized by SQLAlchemy
     input_tokens: Mapped[int | None]
