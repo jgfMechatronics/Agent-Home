@@ -4,6 +4,8 @@ TODO: Our current "read-only" access pattern isn't truly read-only. Read operati
 take a full AsyncSession and may return mutable ORM objects still connected to the DB.
 This works but violates principle of least privilege — callers that only need to read
 have full write access. Worth revisiting when we have bandwidth.
+
+TODO: We have some exception catching and mapping that doesn't use "raise ... from e", probably some places we want to add the chaining.
 """
 import logging
 from typing import Any, AsyncGenerator
