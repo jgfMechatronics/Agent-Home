@@ -11,8 +11,8 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.crud import get_agent_record
 from agent.types import AgentDeps
-from db.models import AgentRecord
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
 
@@ -69,7 +69,7 @@ class AgentFactory:
             raise AgentLockedError(f"Agent {agent_id!r} did not become available within {self.LOCK_TIMEOUT_SECONDS}s")
 
         try:
-            agent_record = await self._session.get(AgentRecord, agent_id)
+            agent_record = await get_agent_record(self._session, agent_id)
             if agent_record is None:
                 raise AgentNotFoundError(f"Agent {agent_id!r} not found")
                         
