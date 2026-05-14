@@ -35,7 +35,7 @@ from pydantic_ai.messages import (
 )
 
 # Local
-from api.deps import get_agent_and_deps, get_session_dep
+from api.fastapi_deps import get_agent_and_deps, get_session_dep
 from agent.crud import create_agent_record
 from conftest import make_deps
 from db.models import AgentRecord, utcnow

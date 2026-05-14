@@ -26,7 +26,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError
-from api.deps import get_agent_and_deps, get_lock_reg, get_session_dep
+from api.fastapi_deps import get_agent_and_deps, get_lock_reg, get_session_dep
 
 
 # --- Fixtures ---

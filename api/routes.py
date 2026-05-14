@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record
 from agent.types import AgentDeps
-from api.deps import get_session_dep, get_agent_and_deps
+from api.fastapi_deps import get_session_dep, get_agent_and_deps
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
