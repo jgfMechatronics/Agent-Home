@@ -38,6 +38,33 @@ async def _get_last_timestamp(session: AsyncSession, agent_id: str) -> datetime 
     return result.scalar_one_or_none()
 
 
+def _make_orphan_replacement(
+    msg: ModelMessage, part_type: type
+) -> tuple[tuple[datetime, str], ModelResponse]:
+    """Build the error entry and replacement ModelResponse for an orphaned tool message.
+
+    Returns (error_entry, error_response) ready to append to errors and sanitized_msgs.
+    """
+    label = "call" if part_type is ToolCallPart else "return"
+    tool_names = [p.tool_name for p in msg.parts if isinstance(p, part_type)]
+    error_text = f"[Orphaned tool {label}(s) dropped: {', '.join(tool_names)}]"
+    return (_message_timestamp(msg), error_text), ModelResponse(parts=[TextPart(content=error_text)])
+
+
+def _is_valid_tool_pair(call_msg: ModelMessage | None, return_msg: ModelMessage | None) -> bool:
+    """True if call_msg/return_msg form a matched tool call/return pair.
+
+    Requires call_msg to be a ModelResponse with ToolCallPart(s) and return_msg to be a
+    ModelRequest with ToolReturnPart(s) sharing at least one tool_call_id.
+
+    """
+    if not isinstance(call_msg, ModelResponse) or not isinstance(return_msg, ModelRequest):
+        return False
+    call_ids = {p.tool_call_id for p in call_msg.parts if isinstance(p, ToolCallPart)}
+    return_ids = {p.tool_call_id for p in return_msg.parts if isinstance(p, ToolReturnPart)}
+    return call_ids == return_ids  # every call must have a return and vice versa
+
+
 def _replace_orphaned_tool_messages(
     messages: list[ModelMessage],
 ) -> tuple[list[ModelMessage], list[tuple[datetime, str]]]:
@@ -49,51 +76,36 @@ def _replace_orphaned_tool_messages(
       a ModelResponse with matching ToolCallPart(s).
 
     Returns (processed_messages, errors) where errors is a list of (original_ts, error_text)
-    pairs suitable for summary warning appending in persist_messages.
+    pairs suitable for summary warning appending at end of message chain in persist_messages.
+
+    TODO: This algorithm is inefficient and a bit confusing
+    The two cases could probably be commonized further but that doesn't solve touching every element on the list
+    It also checks that every tool call has a return and every tool return has a call which is redundant. Def a better way to do this.
     """
-    result: list[ModelMessage] = []
+    sanitized_msgs: list[ModelMessage] = []
     errors: list[tuple[datetime, str]] = []
     for i, msg in enumerate(messages):
         if isinstance(msg, ModelResponse) and any(isinstance(p, ToolCallPart) for p in msg.parts):
             next_msg = messages[i + 1] if i + 1 < len(messages) else None
-            if not _is_matching_tool_return(next_msg, msg):
-                tool_names = [p.tool_name for p in msg.parts if isinstance(p, ToolCallPart)]
-                error_text = f"[Orphaned tool call(s) dropped: {', '.join(tool_names)}]"
-                errors.append((_message_timestamp(msg), error_text))
-                result.append(ModelResponse(parts=[TextPart(content=error_text)]))
-                continue
+            if not _is_valid_tool_pair(msg, next_msg):
+                error_entry, error_response = _make_orphan_replacement(msg, ToolCallPart)
+                errors.append(error_entry)
+                sanitized_msgs.append(error_response)
+                continue # Skips below append of original msg
         elif isinstance(msg, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in msg.parts):
-            prev_msg = result[-1] if result else None
-            if not _has_matching_tool_call(prev_msg, msg):
-                tool_names = [p.tool_name for p in msg.parts if isinstance(p, ToolReturnPart)]
-                error_text = f"[Orphaned tool return(s) dropped: {', '.join(tool_names)}]"
-                errors.append((_message_timestamp(msg), error_text))
-                result.append(ModelResponse(parts=[TextPart(content=error_text)]))
+            prev_msg = sanitized_msgs[-1] if sanitized_msgs else None
+            if not _is_valid_tool_pair(prev_msg, msg):
+                error_entry, error_response = _make_orphan_replacement(msg, ToolReturnPart)
+                errors.append(error_entry)
+                sanitized_msgs.append(error_response)
                 continue
-        result.append(msg)
-    return result, errors
+        sanitized_msgs.append(msg)
+    return sanitized_msgs, errors
 
 
-def _has_matching_tool_call(prev_msg: ModelMessage | None, return_msg: ModelRequest) -> bool:
-    """True if prev_msg is a ModelResponse with ToolCallPart(s) matching return_msg's returns."""
-    if not isinstance(prev_msg, ModelResponse):
-        return False
-    call_ids = {p.tool_call_id for p in prev_msg.parts if isinstance(p, ToolCallPart)}
-    return_ids = {p.tool_call_id for p in return_msg.parts if isinstance(p, ToolReturnPart)}
-    return bool(call_ids & return_ids)
-
-
-def _is_matching_tool_return(next_msg: ModelMessage | None, call_msg: ModelResponse) -> bool:
-    """True if next_msg is a ModelRequest containing ToolReturnPart(s) matching call_msg's calls.
-
-    TODO: Currently uses set intersection — if call_msg has calls A and B but next_msg only
-    returns A, this returns True (partial match). Consider requiring ALL call_ids to be matched.
-    """
-    if not isinstance(next_msg, ModelRequest):
-        return False
-    call_ids = {p.tool_call_id for p in call_msg.parts if isinstance(p, ToolCallPart)}
-    return_ids = {p.tool_call_id for p in next_msg.parts if isinstance(p, ToolReturnPart)}
-    return bool(call_ids & return_ids)
+def _dump_msg_json(msg: ModelMessage) -> str:
+    """Serialize a single ModelMessage to a JSON string (without outer array brackets)."""
+    return ModelMessagesTypeAdapter.dump_json([msg]).decode()[1:-1]
 
 
 def _message_timestamp(msg: ModelMessage) -> datetime:
@@ -118,6 +130,44 @@ def _message_timestamp(msg: ModelMessage) -> datetime:
     return ts.replace(tzinfo=None) if ts.tzinfo is not None else ts
 
 
+def _bump_timestamp_if_needed(ts: datetime, last_timestamp: datetime | None, agent_id: str) -> datetime:
+    """Return ts, bumped forward by 1µs if it is not strictly newer than last_timestamp.
+
+    Logs a warning if a bump is needed — indicates a timekeeping problem upstream.
+    """
+    if last_timestamp is not None and ts <= last_timestamp:
+        log.warning(
+            "persist_messages: timestamp ordering violation for agent %s "
+            "(msg ts=%s <= last_timestamp=%s); bumping forward by 1µs",
+            agent_id, ts, last_timestamp,
+        )
+        return last_timestamp + timedelta(microseconds=1)
+    return ts
+
+
+def _handle_serialization_error(
+    msg: ModelMessage,
+    e: Exception,
+    agent_id: str,
+) -> tuple[str, str, ModelMessage, tuple[datetime, str]]:
+    """Build an error ModelResponse in place of a message that failed to serialize.
+
+    Logs the failure and returns (content, msg_type, error_msg, error_entry) where
+    error_entry is (original_ts, error_text) for the caller to append to its errors list.
+    Must be called from within the except block so log.exception captures the active traceback.
+    """
+    original_ts = _message_timestamp(msg)
+    log.exception(
+        "persist_messages: unexpected serialization failure for agent %s (%s); injecting error record",
+        agent_id, e,
+    )
+    error_text = f"[persist_messages serialization error]: {type(e).__name__}: {e}"
+    error_msg = ModelResponse(parts=[TextPart(content=error_text)])
+    content = _dump_msg_json(error_msg)
+    error_to_append = (original_ts, error_text) # return this for caller to append to avoid sneakily mutating list
+    return content, "ModelResponse", error_msg, error_to_append
+
+
 # ---------------------------------------------------------------------------
 # Functions
 # ---------------------------------------------------------------------------
@@ -137,57 +187,43 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage], input_
         return
 
     messages, errors = _replace_orphaned_tool_messages(messages)
-    last_ts = await _get_last_timestamp(deps.session, deps.agent_id)
+    last_timestamp = await _get_last_timestamp(deps.session, deps.agent_id)
     last_idx = len(messages) - 1
 
     for i, msg in enumerate(messages):
         try:
-            content_bytes = ModelMessagesTypeAdapter.dump_json([msg])
-            # Strip outer array brackets — store one message object per row
-            content = content_bytes.decode()[1:-1]
+            # NOTE: The per msg serialization allows us to eliminate specific messages which have serialization failures,
+            # but likely costs us some performance. This is an optimization opportunity: could have happy path try serializing the whole
+            # list then on failure go message by message
+            content = _dump_msg_json(msg)
             msg_type = type(msg).__name__
         except Exception as e:
-            original_ts = _message_timestamp(msg)  # capture before replacing msg
-            log.exception("persist_messages: unexpected serialization failure for agent %s (%s); injecting error record", deps.agent_id, e)
-            error_text = f"[persist_messages serialization error]: {type(e).__name__}: {e}"
-            error_msg = ModelResponse(parts=[TextPart(content=error_text)])
-            content_bytes = ModelMessagesTypeAdapter.dump_json([error_msg])
-            content = content_bytes.decode()[1:-1]
-            msg_type = "ModelResponse"
-            msg = error_msg
-            errors.append((original_ts, error_text))
+            content, msg_type, msg, error_to_append = _handle_serialization_error(msg, e, deps.agent_id)
+            errors.append(error_to_append)
 
-        ts = _message_timestamp(msg)
-        if last_ts is not None and ts <= last_ts:
-            log.warning(
-                "persist_messages: timestamp ordering violation for agent %s "
-                "(msg ts=%s <= last_ts=%s); bumping forward by 1µs",
-                deps.agent_id, ts, last_ts,
-            )
-            ts = last_ts + timedelta(microseconds=1)
-        last_ts = ts
+        curr_timestamp = _bump_timestamp_if_needed(_message_timestamp(msg), last_timestamp, deps.agent_id)
+        last_timestamp = curr_timestamp
 
         record = MessageRecord(
             agent_id=deps.agent_id,
             type=msg_type,
             content=content,
             input_tokens=input_tokens if i == last_idx else None,
-            timestamp=ts,
+            timestamp=curr_timestamp,
         )
         deps.session.add(record)
 
-    for original_ts, error_text in errors:
+    # Append notification of any errors that were encountered to the end of the message string
+    for original_timestamp, error_text in errors:
         warning = (
             f"WARNING: A problem was encountered while persisting messages from the last turn: "
             f"'{error_text}'. A warning was injected in place of the problematic message, "
-            f"problematic message timestamp was {original_ts}"
+            f"problematic message timestamp was {original_timestamp}"
         )
         warning_msg = ModelResponse(parts=[TextPart(content=warning)])
-        warning_content = ModelMessagesTypeAdapter.dump_json([warning_msg]).decode()[1:-1]
-        warn_ts = _message_timestamp(warning_msg)
-        if last_ts is not None and warn_ts <= last_ts:
-            warn_ts = last_ts + timedelta(microseconds=1)
-        last_ts = warn_ts
+        warning_content = _dump_msg_json(warning_msg)
+        warn_ts = _bump_timestamp_if_needed(_message_timestamp(warning_msg), last_timestamp, deps.agent_id)
+        last_timestamp = warn_ts
         deps.session.add(MessageRecord(
             agent_id=deps.agent_id,
             type="ModelResponse",

@@ -241,6 +241,9 @@ class TestPersistMessages(DBTestBase):
         self._assert_summary_warning_appended(records, expected_error, original_timestamp)
 
     # -------------- Tests -------------------
+    # TODO: Check for multiple orphaned tool messages in a single list of msgs,
+    # and check for behavior around multiple tool call/return parts in a single req/resp (after verifying that is even a sensical situation
+    # , parallel tool calls perhaps?)
     async def test_orphaned_tool_call_replaced_with_error_response(self):
         """A ModelResponse with a ToolCallPart not followed by a matching ToolReturnPart
         should be replaced with an error ModelResponse (not stored as-is)."""
