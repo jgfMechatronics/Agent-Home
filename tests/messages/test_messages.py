@@ -225,10 +225,14 @@ class TestPersistMessages(DBTestBase):
         records = await self._persist_and_fetch([orphan_msg], input_tokens=5)
         assert len(records) == 2  # positional error + summary warning
 
-        # Positional error record
+        # Original orphaned message was dropped — no record should contain the orphaned part type
+        for record in records:
+            deserialized = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
+            assert not any(isinstance(p, orphaned_part_type) for p in deserialized[0].parts)
+
+        # Positional error record has the expected error text
         assert records[0].type == "ModelResponse"
         restored = ModelMessagesTypeAdapter.validate_json(f"[{records[0].content}]")
-        assert not any(isinstance(p, orphaned_part_type) for p in restored[0].parts)
         assert restored[0].parts[0].content == expected_error
 
         # Summary warning appended at end
