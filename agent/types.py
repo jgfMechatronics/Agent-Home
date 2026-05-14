@@ -28,7 +28,7 @@ class AgentConfig(BaseModel):
     - compaction_target_percentage: Target context size after compaction as fraction of soft_compaction_limit
     - is_deletable: Whether agent can be deleted (default False)
     """
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid") # TODO: What is this?
     
     model_name: str
     tool_names: list[str]
