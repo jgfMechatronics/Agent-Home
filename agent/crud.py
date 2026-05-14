@@ -9,13 +9,8 @@ from db.models import AgentRecord
 
 
 async def get_agent_record(session: AsyncSession, agent_id: str) -> AgentRecord | None:
-    """
-    Load agent by ID. Returns None if not found.
-    # TODO: Review and maybe unit test as needed
-    """
-    stmt = select(AgentRecord).where(AgentRecord.id == agent_id)
-    result = await session.execute(stmt)
-    return result.scalars().one_or_none()
+    """Load agent by ID. Returns None if not found."""
+    return await session.get(AgentRecord, agent_id)
 
 
 async def agent_exists(session: AsyncSession, agent_id: str) -> bool:
@@ -31,5 +26,8 @@ async def create_agent_record(
     system_instructions: str,
     config: AgentConfig,
 ) -> AgentRecord:
-    """Create a new agent and return the AgentRecord."""
-    raise NotImplementedError
+    """Create a new agent, persist it, and return the AgentRecord."""
+    record = AgentRecord(name=name, system_instructions=system_instructions, agent_config=config)
+    session.add(record)
+    await session.flush() # TODO: Should commit here?
+    return record
