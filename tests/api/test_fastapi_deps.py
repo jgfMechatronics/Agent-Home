@@ -1,5 +1,5 @@
 """
-Tests for api/deps.py — FastAPI dependency functions.
+Tests for api/fastapi_deps.py — FastAPI dependency functions.
 
 Uses a minimal test app with a single route to exercise the full
 dependency injection chain, including exception→HTTP status translation.
@@ -151,3 +151,54 @@ class TestGetAgentAndDeps:
 
         assert response.status_code == expected_status
         assert response.json()["detail"] == str(error)
+
+
+# These two test classes are a little disjointed with above as they were written later, but it lets us be more unit-testey
+class TestGetLockReg:
+    """get_lock_reg: returns the app-wide lock registry from request.app.state."""
+
+    def test_returns_app_state_lock_reg(self):
+        """Returns exactly the lock registry stored on app.state."""
+        mock_request = MagicMock()
+        registry = {"agent-1": MagicMock()}
+        mock_request.app.state.agent_lock_reg = registry
+        assert get_lock_reg(mock_request) is registry
+
+
+class TestGetSessionDep:
+    """get_session_dep: yields a session from get_session(app.state.engine), one per call."""
+
+    @pytest.fixture
+    def mock_request(self) -> MagicMock:
+        req = MagicMock()
+        req.app.state.engine = MagicMock()
+        return req
+
+    async def test_yields_session_from_engine(self, mock_request: MagicMock):
+        """Yields the session returned by get_session, called with app.state.engine."""
+        mock_session = MagicMock(spec=AsyncSession)
+        captured_engine = None
+
+        @asynccontextmanager
+        async def mock_get_session(engine):
+            nonlocal captured_engine
+            captured_engine = engine
+            yield mock_session
+
+        with patch("api.fastapi_deps.get_session", mock_get_session, create=True):
+            session = await get_session_dep(mock_request).__anext__()
+
+        assert session is mock_session
+        assert captured_engine is mock_request.app.state.engine
+
+    async def test_new_session_per_call(self, mock_request: MagicMock):
+        """Each invocation of get_session_dep yields a distinct session object."""
+        @asynccontextmanager
+        async def mock_get_session(engine):
+            yield MagicMock(spec=AsyncSession)
+
+        with patch("api.fastapi_deps.get_session", mock_get_session, create=True):
+            session1 = await get_session_dep(mock_request).__anext__()
+            session2 = await get_session_dep(mock_request).__anext__()
+
+        assert session1 is not session2

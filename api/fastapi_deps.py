@@ -12,24 +12,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Pre-placed for get_agent_and_deps implementation — used when James implements this module
 from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError
 from agent.types import AgentDeps
+from db.connection import get_session
 from pydantic_ai import Agent
 
 
 def get_lock_reg(request: Request) -> dict[str, asyncio.Lock]:
-    """FastAPI dependency: returns the app-wide agent lock registry from app.state.
-
-    Stub — implementation will return request.app.state.agent_lock_reg.
-    """
-    raise NotImplementedError("get_lock_reg not implemented")
+    """FastAPI dependency: returns the app-wide agent lock registry from app.state."""
+    return request.app.state.agent_lock_reg
 
 
 async def get_session_dep(request: Request) -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency: yields a session bound to app.state.engine.
-
-    Stub — implementation will use get_session(request.app.state.engine).
-    """
-    raise NotImplementedError("get_session_dep not implemented")
-    yield  # type: ignore — makes this a generator for type checking
+    """FastAPI dependency: yields a session bound to app.state.engine."""
+    async with get_session(request.app.state.engine) as session:
+        yield session
 
 
 async def get_agent_and_deps(
