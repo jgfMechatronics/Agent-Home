@@ -1,6 +1,7 @@
 """
 Tests for messages/messages.py — persist_messages, load_messages, deserialize_messages.
 """
+import logging
 import time
 from datetime import datetime
 
@@ -139,11 +140,13 @@ class TestPersistMessages(DBTestBase):
         assert records[-1].input_tokens == 42
 
     async def test_timestamp_set_on_all_records(self):
-        before = utcnow()
-        records = await self._persist_and_fetch([make_request(), make_response()])
-        after = utcnow()
-        for r in records:
-            assert before <= r.timestamp <= after
+        request = make_request()
+        response = make_response()
+        records = await self._persist_and_fetch([request, response])
+        
+        # Pydantic-AI's handling of timestamps across ModelRequests and ModelResponses is inconsistent
+        assert records[0].timestamp == request.parts[0].timestamp.replace(tzinfo=None)
+        assert records[1].timestamp == response.timestamp.replace(tzinfo=None)
 
     async def test_agent_id_set_on_all_records(self):
         records = await self._persist_and_fetch([make_request(), make_response()])
@@ -279,6 +282,10 @@ class TestPersistMessages(DBTestBase):
 
         error_text = "[persist_messages serialization error]: ValueError: sim failure"
 
+        # Good messages before and after the bad one are stored intact
+        assert ModelMessagesTypeAdapter.validate_json(f"[{records[0].content}]")[0] == good
+        assert ModelMessagesTypeAdapter.validate_json(f"[{records[2].content}]")[0] == good2
+
         # Positional error record replaces bad in-place
         assert records[1].type == "ModelResponse"
         positional = ModelMessagesTypeAdapter.validate_json(f"[{records[1].content}]")
@@ -291,9 +298,9 @@ class TestPersistMessages(DBTestBase):
         # Exception logged
         assert any("sim failure" in r.message for r in caplog.records)
 
-    async def test_timestamp_ordering_preserved_when_new_messages_are_older(self):
+    async def test_timestamp_ordering_preserved_when_new_messages_are_older(self, caplog):
         """If a new message's timestamp is older than the last DB record, it should be
-        bumped forward to preserve chronological order."""
+        bumped forward to preserve chronological order, and a warning should be logged."""
         # Persist a first message normally
         await persist_messages(self.deps, [make_request("first")], input_tokens=5)
 
@@ -304,11 +311,13 @@ class TestPersistMessages(DBTestBase):
         await self.session.flush()
 
         # Persist a second message — its natural timestamp will be far older
-        await persist_messages(self.deps, [make_response("second")], input_tokens=5)
+        with caplog.at_level(logging.WARNING):
+            await persist_messages(self.deps, [make_response("second")], input_tokens=5)
 
         records = await fetch_all_records(self.session, self.agent.id)
         assert len(records) == 2
         assert records[1].timestamp > records[0].timestamp
+        assert any("timestamp ordering violation" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +357,12 @@ class TestLoadMessages(DBTestBase):
         assert deserialize_messages(records) == [early[1]] + late
 
     async def test_results_in_chronological_order(self):
-        messages = [make_request("first"), make_response("second"), make_request("third")]
+        msg1 = make_request("first")
+        await asyncio.sleep(0.005) # Ensure distinct timestamps
+        msg2 = make_response("second")
+        await asyncio.sleep(0.005)
+        msg3 = make_request("third")
+        messages = [msg1, msg2, msg3]
         await persist_messages(self.deps, messages, input_tokens=10)
         records = await load_messages(self.session, self.agent.id)
         timestamps = [r.timestamp for r in records]
@@ -415,6 +429,9 @@ class TestDeserializeMessages:
         records = [self._make_record(m) for m in messages]
         result = deserialize_messages(records)
         assert result == messages
+
+    def test_empty_list_returns_empty(self):
+        assert deserialize_messages([]) == []
 
     def test_invalid_content_raises(self):
         """Invalid JSON content should raise ValueError, not silently inject an error response."""
