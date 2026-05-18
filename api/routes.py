@@ -163,4 +163,6 @@ async def get_messages(
     # TODO: Don't need agent record if requesting full, but we're likely gonna rework this anyway
     start_timestamp = None if full else record.context_window_start
     messages = await load_messages(session, agent_id, start_timestamp=start_timestamp)
-    return MessagesResponse(messages=messages)
+    # Parse stored JSON and return — format TBD, this is throwaway (TODO)
+    import json
+    return MessagesResponse(messages=[json.loads(m.content) for m in messages])
