@@ -29,7 +29,7 @@ import httpx
 # --- Configuration ---
 
 DEFAULT_SERVER_URL = "http://localhost:8000"
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_SOFT_COMPACTION_LIMIT = 80000
 
 
@@ -106,7 +106,7 @@ async def cmd_create(state: CLIState, client: httpx.AsyncClient, args: list[str]
             output(state, f"Created agent: {data['name']}")
             output(state, f"  ID: {data['id']}")
             output(state, f"  Model: {data['model']}")
-            output(state, f"\nUse 'use {data['id']}' to start chatting.")
+            output(state, f"\nUse '/use {data['id']}' to start chatting.")
     except httpx.HTTPStatusError as e:
         output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
     except httpx.RequestError as e:
@@ -144,7 +144,7 @@ async def cmd_use(state: CLIState, client: httpx.AsyncClient, args: list[str]) -
 async def cmd_chat(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """Send a message and stream the response."""
     if not state.active_agent_id:
-        output_error(state, "No active agent. Use 'use <agent_id>' first.")
+        output_error(state, "No active agent. Use '/use <agent_id>' first.")
         return
     
     if not args:
@@ -237,7 +237,7 @@ async def process_sse_event(state: CLIState, event_type: str, data_str: str) -> 
 async def cmd_history(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """View message history."""
     if not state.active_agent_id:
-        output_error(state, "No active agent. Use 'use <agent_id>' first.")
+        output_error(state, "No active agent. Use '/use <agent_id>' first.")
         return
     
     try:
@@ -290,7 +290,7 @@ async def cmd_history(state: CLIState, client: httpx.AsyncClient, args: list[str
 async def cmd_info(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """View agent info."""
     if not state.active_agent_id:
-        output_error(state, "No active agent. Use 'use <agent_id>' first.")
+        output_error(state, "No active agent. Use '/use <agent_id>' first.")
         return
     
     try:
@@ -317,7 +317,7 @@ async def cmd_info(state: CLIState, client: httpx.AsyncClient, args: list[str]) 
 async def cmd_memory(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """View core memory blocks."""
     if not state.active_agent_id:
-        output_error(state, "No active agent. Use 'use <agent_id>' first.")
+        output_error(state, "No active agent. Use '/use <agent_id>' first.")
         return
     
     try:
@@ -352,20 +352,21 @@ async def cmd_memory(state: CLIState, client: httpx.AsyncClient, args: list[str]
 def cmd_help(state: CLIState) -> None:
     """Show help."""
     help_text = """
-Commands:
-    create <name>    Create a new agent
-    use <agent_id>   Set active agent for subsequent commands
-    chat <message>   Send message to active agent (streaming)
-    history          View message history for active agent
-    info             View agent info
-    memory           View core memory blocks (read-only)
-    help             Show this help
-    quit / exit      Exit CLI
+Commands (prefix with /):
+    /create <name>   Create a new agent
+    /use <agent_id>  Set active agent for subsequent commands
+    /history         View message history for active agent
+    /info            View agent info
+    /memory          View core memory blocks (read-only)
+    /help            Show this help
+    /quit or /exit   Exit CLI
+
+Default: Any text without / prefix is sent as a chat message.
 
 Example:
-    create my-test-agent
-    use <paste-agent-id-here>
-    chat Hello, how are you?
+    /create my-test-agent
+    /use <paste-agent-id-here>
+    Hello, how are you?
 """
     output(state, help_text)
 
@@ -375,7 +376,6 @@ Example:
 COMMANDS = {
     "create": cmd_create,
     "use": cmd_use,
-    "chat": cmd_chat,
     "history": cmd_history,
     "info": cmd_info,
     "memory": cmd_memory,
@@ -388,25 +388,27 @@ async def run_command(state: CLIState, client: httpx.AsyncClient, line: str) -> 
     if not line:
         return True
     
-    parts = line.split(maxsplit=1)
-    cmd = parts[0].lower()
-    args = parts[1].split() if len(parts) > 1 else []
-    # For chat, preserve the full message
-    if cmd == "chat" and len(parts) > 1:
-        args = [parts[1]]
-    
-    if cmd in ("quit", "exit"):
-        return False
-    
-    if cmd == "help":
-        cmd_help(state)
-        return True
-    
-    handler = COMMANDS.get(cmd)
-    if handler:
-        await handler(state, client, args)
+    # Commands start with /
+    if line.startswith("/"):
+        parts = line[1:].split(maxsplit=1)  # Strip the /
+        cmd = parts[0].lower()
+        args = parts[1].split() if len(parts) > 1 else []
+        
+        if cmd in ("quit", "exit"):
+            return False
+        
+        if cmd == "help":
+            cmd_help(state)
+            return True
+        
+        handler = COMMANDS.get(cmd)
+        if handler:
+            await handler(state, client, args)
+        else:
+            output_error(state, f"Unknown command: /{cmd}. Type '/help' for available commands.")
     else:
-        output_error(state, f"Unknown command: {cmd}. Type 'help' for available commands.")
+        # Default: treat entire line as chat message
+        await cmd_chat(state, client, [line])
     
     return True
 
@@ -426,7 +428,7 @@ async def main() -> None:
     if not state.headless:
         output(state, "Agent Home CLI")
         output(state, f"Server: {state.server_url}")
-        output(state, "Type 'help' for commands, 'quit' to exit.\n")
+        output(state, "Type '/help' for commands, '/quit' to exit.\n")
     
     async with httpx.AsyncClient() as client:
         while True:
