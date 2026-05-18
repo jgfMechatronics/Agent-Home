@@ -22,6 +22,7 @@ def create_sqlite_engine(db_path: str) -> AsyncEngine:
 
 
 async def init_db(engine: AsyncEngine) -> None:
+    # TODO: Do we need to pass checkfirst or whatever = True or otherwise check if db already init? This is init_db's responsibility
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
