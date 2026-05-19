@@ -63,10 +63,10 @@ class AgentConfig(BaseModel):
 @dataclass(init=False)
 class AgentDeps:
     """
-    Dependency bundle for agent operations. Outside tests, should only be constructed by get_deps.
-    This enforces the connection between AgentDeps and the lock that get_deps holds,
+    Dependency bundle for agent operations. Outside tests, should only be constructed by build_deps.
+    This enforces the connection between AgentDeps and the lock that build_deps holds,
     making it so deps proves caller holds the per-agent lock.
-    TODO: consider having AgentDeps validate it came from get_deps, or associate the lock with AgentDeps
+    TODO: consider having AgentDeps validate it came from build_deps, or associate the lock with AgentDeps
     Best move here is probably have AgentDeps take the lock at construction or something and enforce locked. Unsure if it should live in deps (probably not to reduce unnecessary refs and access)
 
     _agent_record is private by convention — access via properties.

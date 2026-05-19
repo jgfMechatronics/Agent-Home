@@ -37,7 +37,7 @@ class AgentFactory:
     Routes call agent_factory.build_agent_and_deps(agent_id) for clean interface.
     
     Read-only operations can use session directly without factory.
-    Write operations require get_deps() or build_agent_and_deps(),
+    Write operations require build_deps() or build_agent_and_deps(),
     which proves the caller holds the lock.
     """
 
@@ -56,7 +56,7 @@ class AgentFactory:
         return self._lock_reg[agent_id]
     
     @asynccontextmanager
-    async def get_deps(self, agent_id: str) -> AsyncIterator[AgentDeps]:
+    async def build_deps(self, agent_id: str) -> AsyncIterator[AgentDeps]:
         """Async context manager that acquires the agent lock and yields AgentDeps.
         
         Lock-then-fetch: acquires lock BEFORE fetching from DB to prevent stale state.
@@ -83,12 +83,12 @@ class AgentFactory:
     async def build_agent_and_deps(self, agent_id: str) -> AsyncIterator[tuple[Agent[AgentDeps, DeferredToolRequests | str], AgentDeps]]:
         """Async context manager that yields a configured (Agent, AgentDeps) tuple.
         
-        Wraps get_deps and constructs the Pydantic AI Agent with correct model and tools.
+        Wraps build_deps and constructs the Pydantic AI Agent with correct model and tools.
         TODO: Sanity check the DeferredToolRequests thing, JF doesn't really understand whats going on there anymore
         TODO: This doesn't actually manage context properly. It might release the lock but that seems to be pretty much ALL
         it does, it doesn't null out the resources actually associated with the lock!!!! Oops.
         """
-        async with self.get_deps(agent_id) as deps:
+        async with self.build_deps(agent_id) as deps:
             model = get_model(deps.config.model_name)
             agent = Agent(model,
                           instructions=get_system_prompt,

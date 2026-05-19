@@ -4,7 +4,7 @@ Tests for agent/factory.py
 Agent factory and dependency management:
 - AgentFactory: Per-request factory with session + lock_reg bound
   - _get_lock: Per-agent lock registry management
-  - get_deps: Async context manager yielding AgentDeps with lock acquisition
+  - build_deps: Async context manager yielding AgentDeps with lock acquisition
   - build_agent_and_deps: Async context manager yielding (Agent, AgentDeps)
 - get_model: Module-level function mapping model name strings to Pydantic AI model instances
 """
@@ -106,15 +106,15 @@ def test_get_lock_returns_different_locks_for_different_ids(agent_factory: Agent
     assert isinstance(lock_b, asyncio.Lock)
 
 
-# --- AgentFactory.get_deps tests ---
+# --- AgentFactory.build_deps tests ---
 
 @pytest.mark.asyncio
-async def test_get_deps_yields_deps_with_expected_fields(
+async def test_build_deps_yields_deps_with_expected_fields(
     agent_factory: AgentFactory,
     agent_record: AgentRecord,
 ):
-    """get_deps should yield AgentDeps with agent_id, session, and config populated."""
-    async with agent_factory.get_deps(agent_record.id) as deps:
+    """build_deps should yield AgentDeps with agent_id, session, and config populated."""
+    async with agent_factory.build_deps(agent_record.id) as deps:
         assert isinstance(deps, AgentDeps)
         assert deps.agent_id == agent_record.id
         assert deps.session is agent_factory._session
@@ -123,16 +123,16 @@ async def test_get_deps_yields_deps_with_expected_fields(
 
 
 @pytest.mark.asyncio
-async def test_get_deps_creates_acquires_and_releases_lock(
+async def test_build_deps_creates_acquires_and_releases_lock(
     agent_factory: AgentFactory,
     agent_record: AgentRecord,
     lock_reg: dict,
 ):
-    """get_deps should create lock if needed, acquire before yield, release after exit."""
+    """build_deps should create lock if needed, acquire before yield, release after exit."""
     # Verify lock doesn't exist yet
     assert agent_record.id not in lock_reg
     
-    async with agent_factory.get_deps(agent_record.id) as deps:
+    async with agent_factory.build_deps(agent_record.id) as deps:
         # Lock should have been created and held
         assert agent_record.id in lock_reg
         lock = lock_reg[agent_record.id]
@@ -143,45 +143,45 @@ async def test_get_deps_creates_acquires_and_releases_lock(
 
 
 @pytest.mark.asyncio
-async def test_get_deps_acquires_and_releases_existing_lock(
+async def test_build_deps_acquires_and_releases_existing_lock(
     agent_factory: AgentFactory,
     agent_record: AgentRecord,
     lock_reg: dict,
     mocker: MockerFixture,
 ):
-    """get_deps should acquire and release an existing lock (verified via spy)."""
+    """build_deps should acquire and release an existing lock (verified via spy)."""
     lock = create_spied_lock(agent_record.id, lock_reg, mocker)
 
-    async with agent_factory.get_deps(agent_record.id) as deps:
+    async with agent_factory.build_deps(agent_record.id) as deps:
         assert lock.locked()
 
     assert_lock_acquired_and_released(lock)
 
 
 @pytest.mark.asyncio
-async def test_get_deps_releases_lock_on_exception(
+async def test_build_deps_releases_lock_on_exception(
     agent_factory: AgentFactory,
     agent_record: AgentRecord,
     lock_reg: dict,
     mocker: MockerFixture,
 ):
-    """get_deps should release the lock even if an exception is raised inside the context."""
+    """build_deps should release the lock even if an exception is raised inside the context."""
     lock = create_spied_lock(agent_record.id, lock_reg, mocker)
 
     with pytest.raises(RuntimeError):
-        async with agent_factory.get_deps(agent_record.id) as deps:
+        async with agent_factory.build_deps(agent_record.id) as deps:
             raise RuntimeError("Intentional test error")
 
     assert_lock_acquired_and_released(lock)
 
 
 @pytest.mark.asyncio
-async def test_get_deps_raises_and_releases_lock_on_fetch_failure(
+async def test_build_deps_raises_and_releases_lock_on_fetch_failure(
     agent_factory: AgentFactory,
     lock_reg: dict,
     mocker: MockerFixture,
 ):
-    """get_deps should raise for unknown agent_id AND release lock on failure.
+    """build_deps should raise for unknown agent_id AND release lock on failure.
 
     Design decision: lock-then-fetch. The lock must be acquired BEFORE the DB fetch
     to prevent concurrent runs from seeing stale state. This means if the fetch fails,
@@ -190,16 +190,16 @@ async def test_get_deps_raises_and_releases_lock_on_fetch_failure(
     lock = create_spied_lock(NONEXISTENT_AGENT_ID, lock_reg, mocker)
 
     with pytest.raises(AgentNotFoundError):
-        async with agent_factory.get_deps(NONEXISTENT_AGENT_ID) as deps:
+        async with agent_factory.build_deps(NONEXISTENT_AGENT_ID) as deps:
             pass
 
     assert_lock_acquired_and_released(lock)
 
 
-# --- get_deps concurrency tests ---
+# --- build_deps concurrency tests ---
 
 @pytest.mark.asyncio
-async def test_get_deps_concurrent_same_agent_blocks(
+async def test_build_deps_concurrent_same_agent_blocks(
     agent_factory: AgentFactory,
     agent_record: AgentRecord,
 ):
@@ -207,14 +207,14 @@ async def test_get_deps_concurrent_same_agent_blocks(
     execution_order = []
     
     async def first_caller():
-        async with agent_factory.get_deps(agent_record.id):
+        async with agent_factory.build_deps(agent_record.id):
             execution_order.append("first_entered")
             await asyncio.sleep(0.05)  # Hold lock briefly
             execution_order.append("first_exiting")
     
     async def second_caller():
         await asyncio.sleep(0.01)  # Ensure first_caller enters first
-        async with agent_factory.get_deps(agent_record.id):
+        async with agent_factory.build_deps(agent_record.id):
             execution_order.append("second_entered")
     
     await asyncio.gather(first_caller(), second_caller())
@@ -224,7 +224,7 @@ async def test_get_deps_concurrent_same_agent_blocks(
 
 
 @pytest.mark.asyncio
-async def test_get_deps_concurrent_different_agents_no_block(
+async def test_build_deps_concurrent_different_agents_no_block(
     agent_factory: AgentFactory,
     session: AsyncSession,
 ):
@@ -250,14 +250,14 @@ async def test_get_deps_concurrent_different_agents_no_block(
     execution_order = []
     
     async def caller_a():
-        async with agent_factory.get_deps(agent_a.id):
+        async with agent_factory.build_deps(agent_a.id):
             execution_order.append("a_entered")
             await asyncio.sleep(0.05)
             execution_order.append("a_exiting")
     
     async def caller_b():
         await asyncio.sleep(0.01)  # Small delay so A enters first
-        async with agent_factory.get_deps(agent_b.id):
+        async with agent_factory.build_deps(agent_b.id):
             execution_order.append("b_entered")
             await asyncio.sleep(0.01)
             execution_order.append("b_exiting")
