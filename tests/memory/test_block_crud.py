@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from conftest import make_deps, SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord
+from memory.block_crud import DuplicateBlockError
 
 from memory import block_crud
 from memory.block_crud import (
@@ -209,7 +210,7 @@ async def test_create_block_with_duplicate_label_raises(multi_tenant_with_deps: 
     deps = multi_tenant_with_deps["deps_a"]
     
     # "persona" already exists from fixture
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(DuplicateBlockError, match="already exists"):
         await create_block(deps, label="persona", content="Duplicate!")
 
 

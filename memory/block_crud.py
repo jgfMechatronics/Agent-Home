@@ -23,6 +23,12 @@ from agent.types import AgentDeps
 from db.models import MemoryBlockRecord
 
 
+# --- Exceptions ---
+
+class DuplicateBlockError(Exception):
+    """Raised when attempting to create a block with a label that already exists for the agent."""
+
+
 # --- Internal helpers ---
 
 async def _persist(deps: AgentDeps, commit: bool, record: MemoryBlockRecord | None = None) -> None:
@@ -110,7 +116,7 @@ async def create_block(
     # Check for duplicate label
     existing = await get_block(deps.session, deps.agent_id, label)
     if existing is not None:
-        raise ValueError(f"block with label '{label}' already exists")
+        raise DuplicateBlockError(f"block with label '{label}' already exists")
 
     # Auto-assign position if not specified
     if position is None:
