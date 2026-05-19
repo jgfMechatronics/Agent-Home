@@ -2,16 +2,13 @@
 Tests for api/fastapi_deps.py — FastAPI dependency functions.
 
 Uses a minimal test app with a single route to exercise the full
-dependency injection chain, including exception→HTTP status translation.
+dependency injection chain.
 
-Tests are currently red (TDD) — get_agent_and_deps is a stub pending James's implementation.
-
-Fixtures from conftest used here:
-- session: Test DB session
-
-Strategy: mock AgentFactory.build_agent_and_deps at the boundary.
+Strategy: mock AgentFactory.build_agent_and_deps / build_deps at the boundary.
   - get_agent_and_deps is responsible for: calling build_agent_and_deps, yielding
-    the result, and translating domain exceptions to HTTP. Nothing more.
+    the result, and propagating exceptions. Nothing more.
+  - get_deps_dep mirrors get_agent_and_deps but yields AgentDeps only (no Agent).
+  - Exception → HTTP mapping is the app's concern, tested in tests/api/test_app.py.
   - Lock management, DB lookups, agent construction → build_agent_and_deps's concern,
     covered in tests/agent/test_factory.py.
 """
@@ -26,7 +23,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError
-from api.fastapi_deps import get_agent_and_deps, get_lock_reg, get_session_dep
+from agent.types import AgentDeps
+from api.fastapi_deps import get_agent_and_deps, get_deps_dep, get_lock_reg, get_session_dep
 
 
 # --- Fixtures ---
@@ -41,34 +39,29 @@ def lock_reg() -> dict:
 def captured() -> dict:
     """Shared dict between tests and the test route.
 
-    The route populates "agent" and "dep" on each request.
+    The route populates "agent" and/or "deps" on each request.
     Tests can set "route_raises" to an exception before the request to make
-    the route raise after deps are resolved (used for sad-path CM lifecycle tests).
+    the route raise after deps are resolved (used for route propagation tests).
     """
     return {}
 
 
-@pytest_asyncio.fixture
-async def test_client(
+@asynccontextmanager
+async def _build_test_client(
+    route,
     session: AsyncSession,
     lock_reg: dict,
-    captured: dict,
 ) -> AsyncGenerator[AsyncClient, None]:
-    """Minimal FastAPI app wired to get_agent_and_deps, with real DB session and lock registry.
+    """Minimal FastAPI test app with session and lock registry overridden, as an AsyncClient.
 
-    Overrides get_session_dep and get_lock_reg so tests control the infrastructure
-    without a running server. Route captures resolved objects into `captured` for inspection.
+    No exception handlers registered — exceptions propagate uncaught.
+    Accepts any route handler so each fixture can define its own dep and capture logic.
+
+    The fixtures for testing get_deps_dep and get_agent_and_deps both share app setup, only the specifics of
+    the route differ
     """
     app = FastAPI()
-
-    @app.get("/test/{agent_id}")
-    async def _route(agent_and_deps: tuple = Depends(get_agent_and_deps)):
-        agent, deps = agent_and_deps
-        captured["agent"] = agent
-        captured["deps"] = deps
-        if exc := captured.get("route_raises"):
-            raise exc
-        return {}
+    app.get("/test/{agent_id}")(route)
 
     async def _override_session():
         yield session
@@ -82,75 +75,184 @@ async def test_client(
         yield client
 
 
+@pytest_asyncio.fixture
+async def agent_and_deps_client(
+    session: AsyncSession,
+    lock_reg: dict,
+    captured: dict,
+) -> AsyncGenerator[AsyncClient, None]:
+    """Test client wired to get_agent_and_deps — route captures both Agent and AgentDeps."""
+    async def _route(agent_and_deps: tuple = Depends(get_agent_and_deps)):
+        agent, deps = agent_and_deps
+        captured["agent"] = agent
+        captured["deps"] = deps
+        if exc := captured.get("route_raises"):
+            raise exc
+        return {}
+
+    async with _build_test_client(_route, session, lock_reg) as client:
+        yield client
+
+
+@pytest_asyncio.fixture
+async def deps_only_client(
+    session: AsyncSession,
+    lock_reg: dict,
+    captured: dict,
+) -> AsyncGenerator[AsyncClient, None]:
+    """Test client wired to get_deps_dep — route captures AgentDeps only (no Agent)."""
+    async def _route(deps: AgentDeps = Depends(get_deps_dep)):
+        captured["deps"] = deps
+        if exc := captured.get("route_raises"):
+            raise exc
+        return {}
+
+    async with _build_test_client(_route, session, lock_reg) as client:
+        yield client
+
+
 # --- Tests ---
 
 class TestGetAgentAndDeps:
-    """get_agent_and_deps: yields (Agent, AgentDeps) and translates domain exceptions to HTTP."""
+    """get_agent_and_deps: yields (Agent, AgentDeps) and propagates all exceptions uncaught."""
 
     @pytest.fixture(autouse=True)
     def mock_build_success(self):
         """Patches build_agent_and_deps with a success CM for all tests.
 
-        Provides self.mock_agent and self.mock_deps (the yielded objects) and
-        self.cm_state ({"entered": bool, "exited": bool}) for CM lifecycle assertions.
-        Error tests override this locally with a second patch.object call.
+        Provides self.mock_agent, self.mock_deps, and self.contextman_state for assertions.
+        Error tests override locally with a second patch.object call.
         """
         self.mock_agent = MagicMock()
         self.mock_deps = MagicMock()
-        self.cm_state = {"entered": False, "exited": False}
+        self.contextman_state = {"entered": False, "exited": False}
 
         @asynccontextmanager
         async def _build(*args, **kwargs):
-            self.cm_state["entered"] = True
+            self.contextman_state["entered"] = True
             try:
                 yield self.mock_agent, self.mock_deps
             finally:
-                self.cm_state["exited"] = True
+                self.contextman_state["exited"] = True
 
         with patch.object(AgentFactory, "build_agent_and_deps", _build):
             yield
 
     async def test_yields_correct_agent_and_deps(
-        self, test_client: AsyncClient, captured: dict
+        self, agent_and_deps_client: AsyncClient, captured: dict
     ):
         """Happy path: passes through exactly the (agent, deps) returned by build_agent_and_deps."""
-        response = await test_client.get("/test/any-id")
+        response = await agent_and_deps_client.get("/test/any-id")
         assert response.status_code == 200
         assert captured["agent"] is self.mock_agent
         assert captured["deps"] is self.mock_deps
 
-    @pytest.mark.parametrize("route_raises", [
-        pytest.param(None, id="happy_path"),
-        pytest.param(RuntimeError("route exploded"), id="route_raises"),
-    ])
-    async def test_enters_and_exits_build_cm(
-        self, test_client: AsyncClient, captured: dict, route_raises: Exception | None
-    ):
-        """build_agent_and_deps CM is entered and exited after request, whether or not the route raised."""
-        if route_raises:
-            captured["route_raises"] = route_raises
-        await test_client.get("/test/any-id")
-        assert self.cm_state["entered"], "build_agent_and_deps should have been entered as a CM"
-        assert self.cm_state["exited"], "build_agent_and_deps CM should be exited after request completes"
+    async def test_enters_and_exits_build_cm(self, agent_and_deps_client: AsyncClient):
+        """build_agent_and_deps CM is entered and exited after a successful request.
 
-    @pytest.mark.parametrize("error,expected_status", [
-        (AgentNotFoundError("Agent 'any-id' not found"), 404),
-        (AgentLockedError(f"Agent 'any-id' did not become available within {AgentFactory.LOCK_TIMEOUT_SECONDS}s"), 503),
-    ])
-    async def test_translates_domain_exceptions_to_http(
-        self, test_client: AsyncClient, error: Exception, expected_status: int
+        Exception-path teardown is tested at the factory level (test_factory.py).
+        """
+        await agent_and_deps_client.get("/test/any-id")
+        assert self.contextman_state["entered"], "build_agent_and_deps should have been entered as a CM"
+        assert self.contextman_state["exited"], "build_agent_and_deps CM should be exited after request completes"
+
+    # Below are two exceptions we know we want to propagate, followed by a generic exception
+    @pytest.mark.parametrize("error", [
+        AgentNotFoundError("agent not found"),
+        AgentLockedError("agent locked"),
+        RuntimeError("unexpected error"),
+    ], ids=["not_found", "locked", "runtime"])
+    async def test_propagates_construction_exception(
+        self, agent_and_deps_client: AsyncClient, error: Exception
     ):
-        """AgentNotFoundError → 404, AgentLockedError → 503."""
+        """Exceptions raised during dep construction propagate uncaught to the caller."""
         @asynccontextmanager
-        async def mock_error_during_build_agent_and_deps(*args, **kwargs):
+        async def _raise(*args, **kwargs):
             raise error
             yield  # unreachable — makes this an async generator function
 
-        with patch.object(AgentFactory, "build_agent_and_deps", mock_error_during_build_agent_and_deps):
-            response = await test_client.get("/test/any-id")
+        with patch.object(AgentFactory, "build_agent_and_deps", _raise):
+            with pytest.raises(type(error)):
+                await agent_and_deps_client.get("/test/any-id")
 
-        assert response.status_code == expected_status
-        assert response.json()["detail"] == str(error)
+    async def test_propagates_route_exception(
+        self, agent_and_deps_client: AsyncClient, captured: dict
+    ):
+        """Exceptions raised inside the route after deps resolve propagate uncaught."""
+        # route will inspect this dict entry and throw any exception present
+        captured["route_raises"] = RuntimeError("route exploded")
+        with pytest.raises(RuntimeError, match="route exploded"):
+            await agent_and_deps_client.get("/test/any-id")
+
+
+class TestGetDepsDep:
+    """get_deps_dep: yields AgentDeps (no Agent) and propagates all exceptions uncaught."""
+
+    @pytest.fixture(autouse=True)
+    def mock_build_success(self):
+        """Patches build_deps with a success CM for all tests.
+
+        Provides self.mock_deps and self.contextman_state for assertions.
+        Error tests override locally with a second patch.object call.
+
+        NOTE: this could probably be deduplicated with TestGetAgentAndDeps but the exercise is of questionable value
+        """
+        self.mock_deps = MagicMock()
+        self.contextman_state = {"entered": False, "exited": False}
+
+        @asynccontextmanager
+        async def _build(*args, **kwargs):
+            self.contextman_state["entered"] = True
+            try:
+                yield self.mock_deps
+            finally:
+                self.contextman_state["exited"] = True
+
+        with patch.object(AgentFactory, "build_deps", _build):
+            yield
+
+    async def test_yields_correct_deps(
+        self, deps_only_client: AsyncClient, captured: dict
+    ):
+        """Happy path: passes through exactly the AgentDeps returned by build_deps."""
+        response = await deps_only_client.get("/test/any-id")
+        assert response.status_code == 200
+        assert captured["deps"] is self.mock_deps
+
+    async def test_enters_and_exits_build_cm(self, deps_only_client: AsyncClient):
+        """build_deps CM is entered and exited after a successful request.
+
+        Exception-path teardown is tested at the factory level (test_factory.py).
+        """
+        await deps_only_client.get("/test/any-id")
+        assert self.contextman_state["entered"], "build_deps should have been entered as a CM"
+        assert self.contextman_state["exited"], "build_deps CM should be exited after request completes"
+
+    @pytest.mark.parametrize("error", [
+        AgentNotFoundError("agent not found"),
+        AgentLockedError("agent locked"),
+        RuntimeError("unexpected error"),
+    ], ids=["not_found", "locked", "runtime"])
+    async def test_propagates_construction_exception(
+        self, deps_only_client: AsyncClient, error: Exception
+    ):
+        """Exceptions raised during dep construction propagate uncaught to the caller."""
+        @asynccontextmanager
+        async def _raise(*args, **kwargs):
+            raise error
+            yield  # unreachable — makes this an async generator function
+
+        with patch.object(AgentFactory, "build_deps", _raise):
+            with pytest.raises(type(error)):
+                await deps_only_client.get("/test/any-id")
+
+    async def test_propagates_route_exception(
+        self, deps_only_client: AsyncClient, captured: dict
+    ):
+        """Exceptions raised inside the route after deps resolve propagate uncaught."""
+        captured["route_raises"] = RuntimeError("route exploded")
+        with pytest.raises(RuntimeError, match="route exploded"):
+            await deps_only_client.get("/test/any-id")
 
 
 # These two test classes are a little disjointed with above as they were written later, but it lets us be more unit-testey

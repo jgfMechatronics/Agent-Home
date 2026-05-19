@@ -1,7 +1,11 @@
 import pytest
 from asgi_lifespan import LifespanManager
+from collections.abc import AsyncGenerator
 from unittest.mock import patch, AsyncMock, MagicMock
 
+from httpx import ASGITransport, AsyncClient
+
+from agent.factory import AgentLockedError, AgentNotFoundError
 from api.app import _create_app
 from api.routes import router
 
@@ -62,3 +66,38 @@ class TestLifespan:
         with pytest.raises(RuntimeError, match="DB init failed"):
             await self.startup_and_shutdown_lifespan()
         # dispose assertion happens in startup_and_shutdown_lifespan's finally block
+
+
+class TestExceptionHandlers:
+    """App-level exception handlers map domain exceptions to HTTP responses."""
+
+    @pytest.fixture(autouse=True)
+    async def client(self) -> AsyncGenerator[None, None]:
+        """Real _create_app() instance with test routes that raise domain exceptions."""
+        self.app = _create_app()
+
+        @self.app.get("/test-not-found")
+        async def _raise_not_found():
+            raise AgentNotFoundError("agent 'x' not found")
+
+        @self.app.get("/test-locked")
+        async def _raise_locked():
+            raise AgentLockedError("agent 'x' is locked")
+
+        async with AsyncClient(
+            transport=ASGITransport(app=self.app), base_url="http://test"
+        ) as client:
+            self.client = client
+            yield
+
+    @pytest.mark.parametrize("path,expected_status,error_msg", [
+        ("/test-not-found", 404, "agent 'x' not found"),
+        ("/test-locked", 503, "agent 'x' is locked"),
+    ])
+    async def test_maps_domain_exception_to_http(
+        self, path: str, expected_status: int, error_msg: str
+    ):
+        """AgentNotFoundError → 404, AgentLockedError → 503 with detail string."""
+        response = await self.client.get(path)
+        assert response.status_code == expected_status
+        assert response.json()["detail"] == error_msg
