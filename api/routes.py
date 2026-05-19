@@ -17,16 +17,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record
 from agent.types import AgentDeps
-from api.fastapi_deps import get_session_dep, get_agent_and_deps
+from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_deps_dep
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
     CreateAgentRequest,
+    CreateMemoryBlockRequest,
     MemoryBlockResponse,
     MessageRequest,
     MessagesResponse,
 )
-from memory.block_crud import get_blocks
+from memory.block_crud import DuplicateBlockError, create_block, get_blocks
 from messages.messages import deserialize_messages, load_messages, persist_messages
 from agent.compaction import compact, is_compaction_needed
 
@@ -107,14 +108,8 @@ async def create_agent(
     session: AsyncSession = Depends(get_session_dep),
 ) -> AgentMetadataResponse:
     """Create a new agent and return its metadata."""
-    try:
-        record = await create_agent_record(session, body.name, body.system_instructions, body.config)
-        return AgentMetadataResponse.from_record(record)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Exception during agent creation: {type(e).__name__}: {e}",
-        )
+    record = await create_agent_record(session, body.name, body.system_instructions, body.config)
+    return AgentMetadataResponse.from_record(record)
 
 
 @router.get("/{agent_id}")
@@ -127,8 +122,8 @@ async def get_agent_info(
     return AgentMetadataResponse.from_record(record)
 
 
-@router.get("/{agent_id}/core_memory")
-async def get_core_memory(
+@router.get("/{agent_id}/memory/blocks")
+async def get_memory_blocks(
     agent_id: str,
     session: AsyncSession = Depends(get_session_dep),
 ) -> CoreMemoryResponse:
@@ -137,16 +132,21 @@ async def get_core_memory(
     # get_blocks returns empty list if agent DNE OR if agent has no blocks
     if not blocks and not (await agent_exists(session, agent_id)):
         raise HTTPException(status_code=404, detail=f"Agent {agent_id!r} not found")
-    return CoreMemoryResponse(blocks=[
-        MemoryBlockResponse(
-            label=b.label,
-            description=b.description,
-            content=b.content,
-            char_limit=b.char_limit,
-            updated_at=b.updated_at,
-        )
-        for b in blocks
-    ])
+    return CoreMemoryResponse(blocks=[MemoryBlockResponse.from_record(b) for b in blocks])
+
+
+@router.post("/{agent_id}/memory/blocks", status_code=201)
+async def create_memory_block(
+    agent_id: str,
+    body: CreateMemoryBlockRequest,
+    deps: AgentDeps = Depends(get_deps_dep),
+) -> MemoryBlockResponse:
+    """Create a new memory block for an agent."""
+    try:
+        block = await create_block(deps, body.label, body.content, body.description, body.char_limit)
+    except DuplicateBlockError as e:
+        raise HTTPException(status_code=400, detail=f"Duplicate block: {e}") from e
+    return MemoryBlockResponse.from_record(block)
 
 
 @router.get("/{agent_id}/messages")

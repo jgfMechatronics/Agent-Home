@@ -9,7 +9,7 @@ from agent.types import AgentConfig
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from db.models import AgentRecord
+    from db.models import AgentRecord, MemoryBlockRecord
 
 
 # --- Request Schemas ---
@@ -29,6 +29,13 @@ class CreateAgentRequest(BaseModel):
     name: str
     system_instructions: str
     config: AgentConfig
+
+
+class CreateMemoryBlockRequest(BaseModel):
+    label: str
+    content: str = ""
+    description: str = ""
+    char_limit: int = 20000
 
 
 # --- Response Schemas ---
@@ -53,6 +60,16 @@ class AgentMetadataResponse(BaseModel):
 
 
 class MemoryBlockResponse(BaseModel):
+    @classmethod
+    def from_record(cls, block: "MemoryBlockRecord") -> "MemoryBlockResponse":
+        return cls(
+            label=block.label,
+            description=block.description,
+            content=block.content,
+            char_limit=block.char_limit,
+            updated_at=block.updated_at,
+        )
+
     label: str
     description: str
     content: str

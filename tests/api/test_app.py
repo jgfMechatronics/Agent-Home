@@ -84,15 +84,20 @@ class TestExceptionHandlers:
         async def _raise_locked():
             raise AgentLockedError("agent 'x' is locked")
 
+        @self.app.get("/test-unexpected")
+        async def _raise_unexpected():
+            raise RuntimeError("something broke")
+
         async with AsyncClient(
-            transport=ASGITransport(app=self.app), base_url="http://test"
+            transport=ASGITransport(app=self.app, raise_app_exceptions=False), base_url="http://test"
         ) as client:
             self.client = client
             yield
 
     @pytest.mark.parametrize("path,expected_status,error_msg", [
-        ("/test-not-found", 404, "agent 'x' not found"),
-        ("/test-locked", 503, "agent 'x' is locked"),
+        ("/test-not-found", 404, "AgentNotFoundError: agent 'x' not found"),
+        ("/test-locked", 503, "AgentLockedError: agent 'x' is locked"),
+        ("/test-unexpected", 500, "RuntimeError: something broke"),
     ])
     async def test_maps_domain_exception_to_http(
         self, path: str, expected_status: int, error_msg: str

@@ -20,7 +20,7 @@ Simple async input loop, not `cmd` module. Simpler for this throwaway use case.
 - `chat <message>` — POST /agents/{id}/messages (SSE)
 - `history` — GET /agents/{id}/messages?full=true
 - `info` — GET /agents/{id}
-- `memory` — GET /agents/{id}/core_memory (bonus, read-only)
+- `memory` — GET /agents/{id}/memory/blocks (bonus, read-only)
 - `help` — show commands
 
 ### State

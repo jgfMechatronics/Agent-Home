@@ -321,7 +321,7 @@ async def cmd_memory(state: CLIState, client: httpx.AsyncClient, args: list[str]
         return
     
     try:
-        response = await client.get(f"{state.server_url}/agents/{state.active_agent_id}/core_memory")
+        response = await client.get(f"{state.server_url}/agents/{state.active_agent_id}/memory/blocks")
         response.raise_for_status()
         data = response.json()
         

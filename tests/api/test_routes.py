@@ -13,6 +13,7 @@ Fixtures from conftest used here:
 # Standard library
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
 
@@ -35,11 +36,13 @@ from pydantic_ai.messages import (
 )
 
 # Local
-from api.fastapi_deps import get_agent_and_deps, get_session_dep
+from agent.factory import AgentNotFoundError
+from api.fastapi_deps import get_agent_and_deps, get_deps_dep, get_session_dep
 from agent.crud import create_agent_record
 from conftest import make_deps
-from db.models import AgentRecord, utcnow
+from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
+from memory.block_crud import DuplicateBlockError
 
 # --- Module-level test data ---
 
@@ -71,9 +74,13 @@ def app() -> FastAPI:
 
 @pytest_asyncio.fixture
 async def client(app: FastAPI) -> AsyncClient:
-    """Async HTTP client bound to the test app."""
+    """Async HTTP client bound to the test app.
+
+    raise_app_exceptions=False so that app-level Exception handlers (ServerErrorMiddleware)
+    just return the 500 response rather than re-raising into the test.
+    """
     async with AsyncClient(
-        transport=ASGITransport(app=app),
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
         base_url="http://test"
     ) as c:
         yield c
@@ -431,11 +438,11 @@ class TestCreateAgent:
         assert AgentMetadataResponse.model_validate(response.json()) == expected_metadata
 
     async def test_returns_500_when_create_agent_fails(self, client: AsyncClient):
-        """Internal failure in create_agent returns 500 with exception details."""
+        """Route propagates unexpected exceptions to the app-level handler, returning 500."""
         self.mock_create_agent_record.side_effect = RuntimeError("DB failure")
         response = await client.post("/agents/", json=self._VALID_BODY)
         assert response.status_code == 500
-        assert response.json()["detail"] == "Exception during agent creation: RuntimeError: DB failure"
+        assert response.json()["detail"] == "RuntimeError: DB failure"
 
     async def test_returns_400_for_invalid_config(self, client: AsyncClient):
         """Missing required fields result in 400 before route logic is reached."""
@@ -472,15 +479,15 @@ class TestGetAgent:
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
 
-class TestGetCoreMemory:
-    """GET /agents/{agent_id}/core_memory — memory blocks."""
+class TestGetMemoryBlocks:
+    """GET /agents/{agent_id}/memory/blocks — memory blocks."""
     
     async def test_returns_memory_blocks(self, client: AsyncClient, agent_with_blocks: dict):
         """Returns blocks in position order with all schema fields present."""
         agent = agent_with_blocks["agent"]
         blocks = agent_with_blocks["blocks"]
 
-        response = await client.get(f"/agents/{agent.id}/core_memory")
+        response = await client.get(f"/agents/{agent.id}/memory/blocks")
 
         assert response.status_code == 200
         actual = CoreMemoryResponse.model_validate(response.json())
@@ -498,7 +505,7 @@ class TestGetCoreMemory:
 
     async def test_returns_empty_blocks_list_when_no_blocks(self, client: AsyncClient, agent_record: AgentRecord):
         """Returns empty blocks list when agent has no memory blocks."""
-        response = await client.get(f"/agents/{agent_record.id}/core_memory")
+        response = await client.get(f"/agents/{agent_record.id}/memory/blocks")
 
         assert response.status_code == 200
         data = response.json()
@@ -584,7 +591,7 @@ class TestNotFound:
 
     @pytest.mark.parametrize("path", [
         "/agents/{agent_id}",
-        "/agents/{agent_id}/core_memory",
+        "/agents/{agent_id}/memory/blocks",
         "/agents/{agent_id}/messages",
     ])
     async def test_get_endpoints_return_404_for_unknown_agent(self, client: AsyncClient, path: str):
@@ -592,3 +599,106 @@ class TestNotFound:
         url = path.format(agent_id=uuid4())
         response = await client.get(url)
         assert response.status_code == 404
+
+
+class TestCreateMemoryBlock:
+    """POST /agents/{agent_id}/memory/blocks — create a memory block."""
+
+    _VALID_BODY = {
+        "label": "notes",
+        "content": "Some content.",
+        "description": "A scratch pad.",
+        "char_limit": 5000,
+    }
+    _MOCK_UPDATED_AT = datetime(2026, 1, 1, 12, 0, 0)
+
+    @pytest.fixture(autouse=True)
+    def mock_create_block_dep(self, app: FastAPI, agent_record: AgentRecord):
+        """Overrides get_deps_dep and patches create_block for all tests.
+
+        Provides self.configure_mock_get_deps_dep() to change dep behavior (e.g. raise
+        AgentNotFoundError for 404 tests). Default: yields a valid AgentDeps.
+        """
+        self.agent_record = agent_record
+        self.mock_session = Mock()
+
+        def _configure(raise_exc=None):
+            async def _mock_dep():
+                if raise_exc is not None:
+                    raise raise_exc
+                yield make_deps(self.mock_session, agent_record)
+                
+            app.dependency_overrides[get_deps_dep] = _mock_dep
+
+        self.configure_mock_get_deps_dep = _configure
+        _configure()  # default: happy path
+
+        with patch("api.routes.create_block", new_callable=AsyncMock, create=True) as mock:
+            self.mock_create_block = mock
+            yield
+
+        app.dependency_overrides.pop(get_deps_dep)
+
+    async def test_calls_create_block_and_returns_201(self, client: AsyncClient):
+        """Successful creation calls create_block and returns 201 with block data."""
+        mock_block_record = MemoryBlockRecord(
+            agent_id="dummy", position=0, updated_at=self._MOCK_UPDATED_AT, **self._VALID_BODY
+        )
+        self.mock_create_block.return_value = mock_block_record
+
+        response = await client.post(
+            f"/agents/{self.agent_record.id}/memory/blocks",
+            json=self._VALID_BODY,
+        )
+
+        assert response.status_code == 201
+        self.mock_create_block.assert_called_once()
+        assert MemoryBlockResponse.model_validate(response.json()) == MemoryBlockResponse.from_record(mock_block_record)
+
+    async def test_returns_404_for_unknown_agent(self, client: AsyncClient):
+        """
+        Returns 404 before calling create_block when agent does not exist.
+        Exception is propagated by the route and caught by app level handler
+        """
+        self.configure_mock_get_deps_dep(raise_exc=AgentNotFoundError(f"Agent not found"))
+
+        response = await client.post(
+            f"/agents/{uuid4()}/memory/blocks",
+            json=self._VALID_BODY,
+        )
+
+        assert response.status_code == 404
+        self.mock_create_block.assert_not_called()
+
+    async def test_returns_400_for_duplicate_block(self, client: AsyncClient):
+        """
+        Returns 400 with label in detail when block label already exists.
+        This one is mapped internally by the route since this is the only place we expect it to occur....
+        
+        TODO: The above could be wrong, what if the agent tries to make a duplicate block with a tool call (future intended tool)?
+        Then send_messages could raise this exception! Consider moving to an app level handler like some of the others
+        """
+        self.mock_create_block.side_effect = DuplicateBlockError("block with label 'notes' already exists")
+
+        response = await client.post(
+            f"/agents/{self.agent_record.id}/memory/blocks",
+            json=self._VALID_BODY,
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Duplicate block: block with label 'notes' already exists"
+
+    async def test_returns_500_for_unexpected_error(self, client: AsyncClient):
+        """
+        Route propagates unexpected exceptions to the app-level handler, returning 500.
+        Caught by an app level exception handler
+        """
+        self.mock_create_block.side_effect = RuntimeError("DB failure")
+
+        response = await client.post(
+            f"/agents/{self.agent_record.id}/memory/blocks",
+            json=self._VALID_BODY,
+        )
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == "RuntimeError: DB failure"
