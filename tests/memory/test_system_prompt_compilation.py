@@ -53,7 +53,6 @@ def _extract_tag(text: str, tag: str) -> str | None:
     """Extract content between <tag> and </tag>. Returns None if not found."""
     start_tag = f"<{tag}>\n"
     end_tag = f"\n</{tag}>"
-    pytest.fail(reason="TODO: do we end up with a newline between adjacent memory blocks or naw? looks like no, but seems like there should be.")
     start = text.find(start_tag)
     end = text.find(end_tag)
     if start == -1 or end == -1:
@@ -165,7 +164,54 @@ class TestCompileSystemPrompt:
         assert "Updated persona content after first compile." in self.agent.compiled_system_prompt
 
 
-# --- compile_system_prompt tests (standalone, different fixtures) ---
+# --- compile_system_prompt formatting test (standalone, different fixtures). Was written to enable easy inspection of format ---
+
+async def test_exact_compiled_format(session: AsyncSession, agent_record: AgentRecord):
+    """
+    Compiled prompt exact XML format — newlines between every section and block.
+    Bespoke simple memory structure to enable easy format inspection
+    """
+    _BLOCK_A_LABEL = "persona"
+    _BLOCK_A_DESC = "The agent's identity."
+    _BLOCK_A_CONTENT = "I am helpful."
+    _BLOCK_A_LIMIT = 100
+
+    _BLOCK_B_LABEL = "notes"
+    _BLOCK_B_DESC = "Scratch space."
+    _BLOCK_B_CONTENT = "Remember things."
+    _BLOCK_B_LIMIT = 500
+
+    block_a = MemoryBlockRecord(
+        agent_id=agent_record.id, label=_BLOCK_A_LABEL, description=_BLOCK_A_DESC,
+        content=_BLOCK_A_CONTENT, char_limit=_BLOCK_A_LIMIT, position=0,
+    )
+    block_b = MemoryBlockRecord(
+        agent_id=agent_record.id, label=_BLOCK_B_LABEL, description=_BLOCK_B_DESC,
+        content=_BLOCK_B_CONTENT, char_limit=_BLOCK_B_LIMIT, position=1,
+    )
+    session.add_all([block_a, block_b])
+    await session.flush()
+
+    deps = make_deps(session, agent_record)
+    await compile_system_prompt(deps)
+
+    expected = (
+        f"<system_instructions>\n"
+        f"{agent_record.system_instructions}\n"
+        f"</system_instructions>\n"
+        f"<{_BLOCK_A_LABEL}>\n"
+        f"<description>\n{_BLOCK_A_DESC}\n</description>\n"
+        f"<metadata>\n- chars_current={len(_BLOCK_A_CONTENT)}\n- chars_limit={_BLOCK_A_LIMIT}\n</metadata>\n"
+        f"<content>\n{_BLOCK_A_CONTENT}\n</content>\n"
+        f"</{_BLOCK_A_LABEL}>\n"
+        f"<{_BLOCK_B_LABEL}>\n"
+        f"<description>\n{_BLOCK_B_DESC}\n</description>\n"
+        f"<metadata>\n- chars_current={len(_BLOCK_B_CONTENT)}\n- chars_limit={_BLOCK_B_LIMIT}\n</metadata>\n"
+        f"<content>\n{_BLOCK_B_CONTENT}\n</content>\n"
+        f"</{_BLOCK_B_LABEL}>"
+    )
+    assert agent_record.compiled_system_prompt == expected
+
 
 async def test_compile_handles_agent_with_no_blocks(agent_no_blocks_with_deps: dict):
     """Agent with no blocks should compile to just system_instructions."""

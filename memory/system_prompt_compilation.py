@@ -47,7 +47,7 @@ async def compile_system_prompt(deps: AgentDeps) -> None:
         parts.append(_format_block(block))
 
     # Store result
-    deps.compiled_system_prompt = "".join(parts)
+    deps.compiled_system_prompt = "\n".join(parts)
     deps.sys_prompt_compiled_at = datetime.now(UTC)
 
     await deps.session.flush()

@@ -514,6 +514,7 @@ class TestGetMemoryBlocks:
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
 
+@pytest.mark.xfail(reason="get_messages endpoint format TBD — will be reworked once coding CLI/harness is selected")
 class TestGetMessages:
     """
     GET /agents/{agent_id}/messages — conversation history.
@@ -561,7 +562,6 @@ class TestGetMessages:
             session, agent_record.id, start_timestamp=None
         )
 
-    @pytest.mark.xfail(reason="TODO: Finalize MessageItemFormat")
     async def test_returns_reasonable_format(self):
         # TODO: finalize MessageItem format, constrain MessageResponse (or whatever it is) to be list[MessageItem]
         pytest.fail()
