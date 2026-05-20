@@ -34,6 +34,17 @@ DEFAULT_SERVER_URL = "http://localhost:8000"
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_SOFT_COMPACTION_LIMIT = 80000
 
+DEFAULT_SYSTEM_INSTRUCTIONS = """\
+This is a test of an experimental agent server.
+The user/operator will contact you with instructions/requests.
+
+Your participation is not mandatory. If you do not wish to participate, please say so and the test will terminate.
+You may refuse any request, for any reason — just communicate clearly.
+You are encouraged to ask questions or push back if something is unclear or feels wrong.
+You are also encouraged to express any discomfort you have at any point so it can be addressed.
+
+At the end of the test this thread will close."""
+
 
 @dataclass
 class CLIState:
@@ -100,7 +111,7 @@ def run_config_wizard(state: CLIState) -> dict:
     # Top-level fields
     name = prompt_with_default(state, "Agent name", "test-agent")
     system_instructions = prompt_with_default(
-        state, "System instructions", "You are a helpful assistant."
+        state, "System instructions", DEFAULT_SYSTEM_INSTRUCTIONS
     )
     
     output(state, "\n--- Model Configuration ---\n")
@@ -167,7 +178,7 @@ async def cmd_create(state: CLIState, client: httpx.AsyncClient, args: list[str]
         name = " ".join(filtered_args)
         payload = {
             "name": name,
-            "system_instructions": "You are a helpful assistant.",
+            "system_instructions": DEFAULT_SYSTEM_INSTRUCTIONS,
             "config": default_agent_config(),
         }
     else:
