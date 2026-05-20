@@ -306,8 +306,16 @@ async def process_sse_event(state: CLIState, event_type: str, data_str: str) -> 
     
     # Interactive mode - format nicely
     # Event types from pydantic-ai (verified via test_routes.py)
-    if event_type == "PartDeltaEvent":
-        # Typewriter effect - print text as it arrives
+    if event_type == "PartStartEvent":
+        # First chunk of a part - contains initial content
+        # Structure: {"part": {"part_kind": "text", "content": "text"}, ...}
+        part = data.get("part", {})
+        if part.get("part_kind") == "text":
+            content = part.get("content", "")
+            if content:
+                output(state, content, end="")
+    elif event_type == "PartDeltaEvent":
+        # Subsequent chunks - incremental content
         # Structure: {"delta": {"content_delta": "text"}}
         delta = data.get("delta", {})
         content = delta.get("content_delta", "")
