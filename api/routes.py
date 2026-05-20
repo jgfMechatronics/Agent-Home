@@ -28,8 +28,10 @@ from api.schemas import (
     MessagesResponse,
 )
 from memory.block_crud import DuplicateBlockError, create_block, get_blocks
+from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import deserialize_messages, load_messages, persist_messages
 from agent.compaction import compact, is_compaction_needed
+
 
 logger = logging.getLogger(__name__)
 
@@ -102,12 +104,33 @@ async def send_message(
         )
 
 
+@router.post("/{agent_id}/recompile_system_prompt")
+async def recompile_system_prompt_route_handler(
+    agent_id: str,
+    deps: AgentDeps = Depends(get_deps_dep)
+) -> bool: # We may or may not want this to return a bool
+    """
+    TODO: This is temp just to be able to test out memory system functionality, we may not actually want this
+    if we do, need to design proper and unit test
+    """
+
+    await compile_system_prompt(deps)
+    return True
+
+
 @router.post("/", status_code=201)
 async def create_agent(
     body: CreateAgentRequest,
     session: AsyncSession = Depends(get_session_dep),
 ) -> AgentMetadataResponse:
-    """Create a new agent and return its metadata."""
+    """Create a new agent and return its metadata.
+
+    TODO: Compile the system prompt immediately after creation so the agent's memory blocks
+    are visible from the first turn. Currently the agent starts without a compiled system
+    prompt and won't see its blocks until an explicit recompile or first compaction.
+    This should call compile_system_prompt (or equivalent) before returning, and the
+    behaviour should be covered by tests in test_routes.py::TestCreateAgent.
+    """
     record = await create_agent_record(session, body.name, body.system_instructions, body.config)
     return AgentMetadataResponse.from_record(record)
 

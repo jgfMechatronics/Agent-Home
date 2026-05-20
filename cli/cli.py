@@ -7,12 +7,14 @@ Usage:
     python cli.py --headless         # Headless mode (for agent use)
     
 Commands:
-    create <name>    Create a new agent
+    create [name]    Create a new agent (interactive config wizard)
+    create -q <name> Create agent with defaults (skip wizard)
     use <agent_id>   Set active agent for subsequent commands
     chat <message>   Send message to active agent (streaming)
     history          View message history for active agent
     info             View agent info
     memory           View core memory blocks (read-only)
+    recompile        Trigger system prompt recompilation
     help             Show this help
     quit / exit      Exit CLI
 """
@@ -82,18 +84,98 @@ def prompt(state: CLIState) -> str:
 
 # --- Commands ---
 
-async def cmd_create(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
-    """Create a new agent."""
-    if not args:
-        output_error(state, "Usage: create <name>")
-        return
+def prompt_with_default(state: CLIState, prompt_text: str, default: str) -> str:
+    """Prompt for input with a default value. Empty input returns default."""
+    if state.headless:
+        return default
+    display = f"{prompt_text} [{default}]: "
+    user_input = input(display).strip()
+    return user_input if user_input else default
+
+
+def run_config_wizard(state: CLIState) -> dict:
+    """Interactive configuration wizard. Returns full payload for create endpoint."""
+    output(state, "\n--- Agent Configuration ---\n")
     
-    name = " ".join(args)
-    payload = {
+    # Top-level fields
+    name = prompt_with_default(state, "Agent name", "test-agent")
+    system_instructions = prompt_with_default(
+        state, "System instructions", "You are a helpful assistant."
+    )
+    
+    output(state, "\n--- Model Configuration ---\n")
+    
+    # AgentConfig fields
+    model_name = prompt_with_default(state, "Model name", DEFAULT_MODEL)
+    
+    soft_limit_str = prompt_with_default(
+        state, "Soft compaction limit (tokens)", str(DEFAULT_SOFT_COMPACTION_LIMIT)
+    )
+    try:
+        soft_compaction_limit = int(soft_limit_str)
+    except ValueError:
+        output(state, f"  Invalid number, using default: {DEFAULT_SOFT_COMPACTION_LIMIT}")
+        soft_compaction_limit = DEFAULT_SOFT_COMPACTION_LIMIT
+    
+    target_pct_str = prompt_with_default(
+        state, "Compaction target percentage (0-1)", "0.25"
+    )
+    try:
+        compaction_target_percentage = float(target_pct_str)
+    except ValueError:
+        output(state, "  Invalid number, using default: 0.25")
+        compaction_target_percentage = 0.25
+    
+    is_deletable_str = prompt_with_default(state, "Is deletable (true/false)", "false")
+    is_deletable = is_deletable_str.lower() in ("true", "yes", "1")
+    
+    # tool_names - keep simple for now
+    tools_str = prompt_with_default(state, "Tool names (comma-separated, or empty)", "")
+    tool_names = [t.strip() for t in tools_str.split(",") if t.strip()] if tools_str else []
+    
+    output(state, "")
+    
+    return {
         "name": name,
-        "system_instructions": "You are a helpful assistant.",
-        "config": default_agent_config(),
+        "system_instructions": system_instructions,
+        "config": {
+            "model_name": model_name,
+            "tool_names": tool_names,
+            "soft_compaction_limit": soft_compaction_limit,
+            "compaction_target_percentage": compaction_target_percentage,
+            "is_deletable": is_deletable,
+        },
     }
+
+
+async def cmd_create(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
+    """Create a new agent. Use -q/--quick for defaults, otherwise runs config wizard."""
+    # Check for quick mode flag
+    quick_mode = False
+    filtered_args = []
+    for arg in args:
+        if arg in ("-q", "--quick"):
+            quick_mode = True
+        else:
+            filtered_args.append(arg)
+    
+    if quick_mode:
+        # Quick mode: require name, use defaults
+        if not filtered_args:
+            output_error(state, "Usage: /create -q <name>")
+            return
+        name = " ".join(filtered_args)
+        payload = {
+            "name": name,
+            "system_instructions": "You are a helpful assistant.",
+            "config": default_agent_config(),
+        }
+    else:
+        # Interactive wizard
+        if state.headless:
+            output_error(state, "Config wizard not available in headless mode. Use -q flag.")
+            return
+        payload = run_config_wizard(state)
     
     try:
         response = await client.post(f"{state.server_url}/agents/", json=payload)
@@ -349,22 +431,97 @@ async def cmd_memory(state: CLIState, client: httpx.AsyncClient, args: list[str]
         output_error(state, f"Request failed: {e}")
 
 
+async def cmd_recompile(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
+    """Trigger system prompt recompilation for the active agent."""
+    if not state.active_agent_id:
+        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        return
+    
+    try:
+        response = await client.post(f"{state.server_url}/agents/{state.active_agent_id}/recompile_system_prompt")
+        response.raise_for_status()
+        
+        if state.headless:
+            output_json(state, {"status": "ok", "agent_id": state.active_agent_id})
+        else:
+            output(state, "System prompt recompiled successfully.")
+    except httpx.HTTPStatusError as e:
+        output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
+    except httpx.RequestError as e:
+        output_error(state, f"Request failed: {e}")
+
+
+async def cmd_newblock(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
+    """Create a new memory block for the active agent."""
+    if not state.active_agent_id:
+        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        return
+    
+    if state.headless:
+        output_error(state, "Block creation wizard not available in headless mode.")
+        return
+    
+    output(state, "\n--- New Memory Block ---\n")
+    
+    label = prompt_with_default(state, "Label (required)", "")
+    if not label:
+        output_error(state, "Label is required.")
+        return
+    
+    description = prompt_with_default(state, "Description", "")
+    content = prompt_with_default(state, "Initial content", "")
+    
+    char_limit_str = prompt_with_default(state, "Character limit", "20000")
+    try:
+        char_limit = int(char_limit_str)
+    except ValueError:
+        output(state, "  Invalid number, using default: 20000")
+        char_limit = 20000
+    
+    payload = {
+        "label": label,
+        "description": description,
+        "content": content,
+        "char_limit": char_limit,
+    }
+    
+    try:
+        response = await client.post(
+            f"{state.server_url}/agents/{state.active_agent_id}/memory/blocks",
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        output(state, f"\nCreated block: [{data['label']}]")
+        output(state, f"  Description: {data['description']}")
+        output(state, f"  Char limit: {data['char_limit']}")
+        output(state, "")
+    except httpx.HTTPStatusError as e:
+        output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
+    except httpx.RequestError as e:
+        output_error(state, f"Request failed: {e}")
+
+
 def cmd_help(state: CLIState) -> None:
     """Show help."""
     help_text = """
 Commands (prefix with /):
-    /create <name>   Create a new agent
+    /create          Create a new agent (interactive config wizard)
+    /create -q <n>   Create agent with defaults (quick mode)
     /use <agent_id>  Set active agent for subsequent commands
     /history         View message history for active agent
     /info            View agent info
     /memory          View core memory blocks (read-only)
+    /newblock        Create a new memory block (interactive)
+    /recompile       Trigger system prompt recompilation
     /help            Show this help
     /quit or /exit   Exit CLI
 
 Default: Any text without / prefix is sent as a chat message.
 
 Example:
-    /create my-test-agent
+    /create -q my-test-agent
     /use <paste-agent-id-here>
     Hello, how are you?
 """
@@ -379,6 +536,8 @@ COMMANDS = {
     "history": cmd_history,
     "info": cmd_info,
     "memory": cmd_memory,
+    "recompile": cmd_recompile,
+    "newblock": cmd_newblock,
 }
 
 
