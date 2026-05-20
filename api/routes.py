@@ -77,6 +77,8 @@ async def send_message(
         records = await load_messages(deps.session, deps.agent_id, start_timestamp=deps.context_window_start)
         message_history = deserialize_messages(records)
 
+        # TODO: Exceptions raised during run_stream_events result in entire turn being discarded.
+        # this was discovered with "UnexpectedModelBehavior" due to excess retries
         async for event in agent.run_stream_events(user_prompt=body.message,
                                                     message_history=message_history,
                                                     deps=deps):

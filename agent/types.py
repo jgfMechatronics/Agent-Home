@@ -35,6 +35,7 @@ class AgentConfig(BaseModel):
     soft_compaction_limit: int
     compaction_target_percentage: float = 0.25
     is_deletable: bool = False
+    retries: int = 4
     
     @field_validator("model_name")
     @classmethod

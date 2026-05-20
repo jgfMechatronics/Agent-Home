@@ -95,6 +95,7 @@ class AgentFactory:
                           deps_type=AgentDeps,
                           name=deps.name,
                           tools=get_tools_for_agent(deps.config.tool_names),
+                          retries=deps.config.retries,
                           output_type=[str, DeferredToolRequests],
                           model_settings=AnthropicModelSettings(
                               anthropic_cache_instructions=True,

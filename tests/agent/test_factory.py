@@ -324,6 +324,11 @@ class TestBuildAgentAndDeps:
             assert settings.get("anthropic_cache_tool_definitions") == True, "Tool definition caching should be enabled with default TTL (5m)"
             assert settings.get("anthropic_cache_messages") == True, "Message caching should be enabled with default TTL (5m)"
 
+    async def test_retries_set_from_config(self):
+        """Constructed agent should use retries from agent_config.retries."""
+        async with self.factory.build_agent_and_deps(self.agent_record.id) as (agent, deps):
+            assert agent._max_tool_retries == deps.config.retries
+
     async def test_misc_agent_settings(self):
         """Constructed agent should have name, deps_type, instructions, and output_type correctly set.
 
