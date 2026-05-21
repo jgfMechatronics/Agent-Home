@@ -132,6 +132,8 @@ async def create_agent(
     prompt and won't see its blocks until an explicit recompile or first compaction.
     This should call compile_system_prompt (or equivalent) before returning, and the
     behaviour should be covered by tests in test_routes.py::TestCreateAgent.
+    
+    TODO: I was able to get an invalid model name through to the DB. Errored out when trying to do a model request but did persist
     """
     record = await create_agent_record(session, body.name, body.system_instructions, body.config)
     return AgentMetadataResponse.from_record(record)
