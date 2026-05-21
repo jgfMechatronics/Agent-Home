@@ -85,11 +85,22 @@ class AgentFactory:
         
         Wraps build_deps and constructs the Pydantic AI Agent with correct model and tools.
         TODO: Sanity check the DeferredToolRequests thing, JF doesn't really understand whats going on there anymore
+        Could be useful for client side tool execution.
         TODO: This doesn't actually manage context properly. It might release the lock but that seems to be pretty much ALL
         it does, it doesn't null out the resources actually associated with the lock!!!! Oops.
         """
         async with self.build_deps(agent_id) as deps:
             model = get_model(deps.config.model_name)
+            
+            model_settings = AnthropicModelSettings(
+                anthropic_cache_instructions=True,
+                anthropic_cache_tool_definitions=True,
+                anthropic_cache_messages=True,
+                # Anthropic requires max_tokens > budget_tokens when thinking is enabled
+                **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
+                    "max_tokens": 16000}
+                   if deps.config.thinking_enabled else {}),
+            )
             agent = Agent(model,
                           instructions=get_system_prompt,
                           deps_type=AgentDeps,
@@ -97,11 +108,7 @@ class AgentFactory:
                           tools=get_tools_for_agent(deps.config.tool_names),
                           retries=deps.config.retries,
                           output_type=[str, DeferredToolRequests],
-                          model_settings=AnthropicModelSettings(
-                              anthropic_cache_instructions=True,
-                              anthropic_cache_tool_definitions=True,
-                              anthropic_cache_messages=True,
-                          ))
+                          model_settings=model_settings)
             
             yield (agent, deps)
 

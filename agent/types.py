@@ -20,7 +20,7 @@ class AgentConfig(BaseModel):
     Agent configuration stored as JSON in AgentRecord.agent_config.
     
     Required fields:
-    - model_name: The LLM model to use (e.g., "claude-sonnet-4-20250514")
+    - model_name: The LLM model to use (e.g., "claude-haiku-4-5")
     - tool_names: List of tool names the agent can use
     - soft_compaction_limit: Token threshold for triggering compaction
     
@@ -36,6 +36,7 @@ class AgentConfig(BaseModel):
     compaction_target_percentage: float = 0.25
     is_deletable: bool = False
     retries: int = 4
+    thinking_enabled: bool = False
     
     @field_validator("model_name")
     @classmethod

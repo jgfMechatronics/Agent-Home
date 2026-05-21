@@ -342,6 +342,29 @@ class TestBuildAgentAndDeps:
             assert get_system_prompt in agent._instructions, "get_system_prompt must be registered as the instructions function"
             assert agent._output_schema.allows_deferred_tools, "output_type must include DeferredToolRequests for the tool approval flow"
 
+    async def test_thinking_disabled_by_default(self):
+        """When thinking_enabled=False (default), no anthropic_thinking setting and deferred tools allowed."""
+        assert self.agent_record.agent_config.thinking_enabled is False
+        async with self.factory.build_agent_and_deps(self.agent_record.id) as (agent, deps):
+            assert "anthropic_thinking" not in agent.model_settings
+            assert agent._output_schema.allows_deferred_tools is True
+
+    async def test_thinking_enabled_sets_anthropic_thinking(self):
+        """When thinking_enabled=True, anthropic_thinking and max_tokens are set.
+
+        DeferredToolRequests is kept regardless of thinking mode — with str also in the output_type union,
+        pydantic-ai uses tool_choice='auto' (not 'required'), which Anthropic accepts with thinking.
+        Also requires max_tokens > budget_tokens.
+        """
+        self.agent_record.agent_config.thinking_enabled = True
+        async with self.factory.build_agent_and_deps(self.agent_record.id) as (agent, deps):
+            assert agent.model_settings.get("anthropic_thinking") == {
+                "type": "enabled",
+                "budget_tokens": 10000,
+            }
+            assert agent.model_settings.get("max_tokens") == 16000
+            assert agent._output_schema.allows_deferred_tools is True
+
 
 @pytest.mark.asyncio
 async def test_build_agent_and_deps_agent_has_correct_tools(

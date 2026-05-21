@@ -93,6 +93,19 @@ def test_agentconfig_is_deletable_can_be_set_true(valid_config_data: dict):
     assert config.is_deletable is True
 
 
+def test_agentconfig_thinking_enabled_defaults_to_false(valid_config_data: dict):
+    """thinking_enabled should default to False when not provided."""
+    config = AgentConfig(**valid_config_data)
+    assert config.thinking_enabled is False
+
+
+def test_agentconfig_thinking_enabled_can_be_set_true(valid_config_data: dict):
+    """thinking_enabled can be explicitly set to True."""
+    valid_config_data["thinking_enabled"] = True
+    config = AgentConfig(**valid_config_data)
+    assert config.thinking_enabled is True
+
+
 # --- AgentConfig JSON round-trip ---
 
 def test_agentconfig_json_roundtrip(valid_config_data: dict):
