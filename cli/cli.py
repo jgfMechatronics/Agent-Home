@@ -22,8 +22,10 @@ Commands:
 import argparse
 import asyncio
 import json
+import os
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
@@ -33,6 +35,31 @@ import httpx
 DEFAULT_SERVER_URL = "http://localhost:8000"
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_SOFT_COMPACTION_LIMIT = 80000
+
+_AGENTS_JSON = Path(__file__).parent.parent.parent / "LettaTelegramLocal" / "agents.json"
+
+
+def _resolve_invoker_from_env() -> str | None:
+    """If running inside an LC agent session, return the agent's name (or shortened ID).
+
+    Checks the AGENT_ID env var set by the LC runtime, then looks it up in agents.json
+    to find a human-readable name. Falls back to the first 8 chars of the raw ID.
+    Returns None when not running inside an agent session.
+    """
+    raw_id = os.environ.get("AGENT_ID")
+    if not raw_id:
+        return None
+
+    try:
+        registry = json.loads(_AGENTS_JSON.read_text())
+        for name, entry in registry.items():
+            if entry.get("agent_id") == raw_id:
+                return name.capitalize()
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+
+    # Not in registry — use shortened ID so the receiver still knows it's automated
+    return raw_id[:8]
 
 DEFAULT_SYSTEM_INSTRUCTIONS = """\
 This is a test of an experimental agent server.
@@ -52,6 +79,7 @@ class CLIState:
     active_agent_id: str | None = None
     server_url: str = DEFAULT_SERVER_URL
     headless: bool = False
+    invoker: str | None = None  # Set via --invoker; prepends agent header to chat messages
 
 
 # --- Default Agent Config ---
@@ -245,6 +273,8 @@ async def cmd_chat(state: CLIState, client: httpx.AsyncClient, args: list[str]) 
         return
     
     message = " ".join(args)
+    if state.invoker:
+        message = f"[Automated invocation from: {state.invoker}]\n\n{message}"
     payload = {"message": message}
     
     try:
@@ -270,13 +300,11 @@ async def handle_sse_stream(state: CLIState, response: httpx.Response) -> None:
     """Parse and display SSE events from the response stream."""
     current_event_type = None
     current_data_lines: list[str] = []
-    
-    if not state.headless:
-        output(state, "\nAssistant: ", end="")
-    
+    stream_state = _StreamState()
+
     async for line in response.aiter_lines():
         line = line.strip()
-        
+
         if line.startswith("event:"):
             current_event_type = line[6:].strip()
         elif line.startswith("data:"):
@@ -284,40 +312,62 @@ async def handle_sse_stream(state: CLIState, response: httpx.Response) -> None:
         elif line == "" and current_event_type:
             # End of event - process it
             data_str = "\n".join(current_data_lines)
-            await process_sse_event(state, current_event_type, data_str)
+            await process_sse_event(state, stream_state, current_event_type, data_str)
             current_event_type = None
             current_data_lines = []
-    
+
     if not state.headless:
         output(state, "")  # Final newline
 
 
-async def process_sse_event(state: CLIState, event_type: str, data_str: str) -> None:
+@dataclass
+class _StreamState:
+    """Tracks state across SSE events within a single response stream."""
+    in_thinking: bool = False
+    had_thinking: bool = False
+    response_started: bool = False
+
+
+async def process_sse_event(
+    state: CLIState, stream_state: _StreamState, event_type: str, data_str: str
+) -> None:
     """Process a single SSE event."""
     try:
         data = json.loads(data_str) if data_str else {}
     except json.JSONDecodeError:
         data = {"raw": data_str}
-    
+
     if state.headless:
         # In headless mode, output all events as JSON
         output_json(state, {"event": event_type, "data": data})
         return
-    
+
     # Interactive mode - format nicely
     # Event types from pydantic-ai (verified via test_routes.py)
     if event_type == "PartStartEvent":
-        # First chunk of a part - contains initial content
-        # Structure: {"part": {"part_kind": "text", "content": "text"}, ...}
         part = data.get("part", {})
-        if part.get("part_kind") == "text":
+        part_kind = part.get("part_kind")
+        if part_kind == "thinking":
+            stream_state.in_thinking = True
+            stream_state.had_thinking = True
+            output(state, "\n[Thinking]\n", end="")
+            content = part.get("content", "")
+            if content:
+                output(state, content, end="")
+        elif part_kind == "text":
+            if stream_state.in_thinking or stream_state.had_thinking:
+                # Transition from thinking to response — print separator
+                stream_state.in_thinking = False
+                output(state, "\n\n" + "─" * 40 + "\n", end="")
+            if not stream_state.response_started:
+                output(state, "Assistant: ", end="")
+                stream_state.response_started = True
             content = part.get("content", "")
             if content:
                 output(state, content, end="")
     elif event_type == "PartDeltaEvent":
-        # Subsequent chunks - incremental content
-        # Structure: {"delta": {"content_delta": "text"}}
         delta = data.get("delta", {})
+        # Both ThinkingPartDelta and TextPartDelta use "content_delta"
         content = delta.get("content_delta", "")
         if content:
             output(state, content, end="")
@@ -329,8 +379,9 @@ async def process_sse_event(state: CLIState, event_type: str, data_str: str) -> 
     elif event_type == "FunctionToolResultEvent":
         output(state, " ✓", end="")
     elif event_type == "AgentRunResultEvent":
-        # Stream complete
-        pass
+        # Stream complete — print response header if no events produced one
+        if not stream_state.response_started:
+            output(state, "\nAssistant: ", end="")
     elif event_type == "Error":
         output(state, f"\n[Error: {data.get('message', 'Unknown error')}]")
 
@@ -360,26 +411,36 @@ async def cmd_history(state: CLIState, client: httpx.AsyncClient, args: list[str
                 for msg in messages:
                     kind = msg.get("kind", "unknown")
                     parts = msg.get("parts", [])
-                    
-                    # Extract text content from parts
-                    content = ""
+                    role = "User" if kind == "request" else "Assistant"
+                    output(state, f"**{role}:**")
+
+                    has_thinking = any(p.get("part_kind") == "thinking" for p in parts)
                     for part in parts:
                         part_kind = part.get("part_kind", "")
-                        if part_kind in ("user-prompt", "text"):
+                        if part_kind == "thinking":
+                            output(state, "[Thinking]")
+                            output(state, part.get("content", ""))
+                            output(state, "─" * 40)
+                        elif part_kind == "text":
+                            if has_thinking:
+                                output(state, "")  # breathing room after separator
+                            output(state, part.get("content", ""))
+                        elif part_kind == "user-prompt":
                             text = part.get("content", "")
                             # User prompt content might be JSON-quoted
                             if text.startswith('"') and text.endswith('"'):
                                 try:
-                                    import json
                                     text = json.loads(text)
-                                except:
+                                except (json.JSONDecodeError, ValueError):
                                     pass
-                            content += text
-                    
-                    # Format nicely
-                    role = "User" if kind == "request" else "Assistant"
-                    output(state, f"**{role}:**")
-                    output(state, content)
+                            output(state, text)
+                        elif part_kind == "tool-call":
+                            output(state, f"[Tool call: {part.get('tool_name', '?')}]")
+                        elif part_kind == "tool-return":
+                            output(state, f"[Tool result: {part.get('tool_name', '?')}]")
+                        elif part_kind == "retry-prompt":
+                            output(state, f"[Retry: {part.get('tool_name', '?')}]")
+
                     output(state, "")  # blank line between messages
                 output(state, "--- End ---\n")
     except httpx.HTTPStatusError as e:
@@ -596,11 +657,15 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Agent Home CLI")
     parser.add_argument("--headless", action="store_true", help="Headless mode (no prompts, structured output)")
     parser.add_argument("--server", default=DEFAULT_SERVER_URL, help=f"Server URL (default: {DEFAULT_SERVER_URL})")
+    parser.add_argument("--invoker", default=None, help="Invoker identity prepended to chat messages (e.g. 'Sonnet')")
     args = parser.parse_args()
-    
+
+    invoker = args.invoker or _resolve_invoker_from_env()
+
     state = CLIState(
         server_url=args.server,
         headless=args.headless,
+        invoker=invoker,
     )
     
     if not state.headless:
