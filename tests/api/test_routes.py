@@ -211,18 +211,15 @@ class TestSendMessage:
     def mock_route_side_effects(self):
         """Patch route-level side effects for all TestSendMessage tests.
 
-        Uses create=True so existing tests stay green before routes.py imports these
-        functions. Once implementation adds the imports, create=True is a harmless no-op.
-
         Provides self.mock_persist, self.mock_needs_compact, self.mock_compact
         for tests that assert on persistence/compaction behavior.
         """
         with (
-            patch("api.routes.load_messages", new_callable=AsyncMock, create=True) as mock_load,
-            patch("api.routes.deserialize_messages", create=True) as mock_deserialize,
-            patch("api.routes.persist_messages", new_callable=AsyncMock, create=True) as mock_persist,
-            patch("api.routes.is_compaction_needed", create=True) as mock_needs_compact,
-            patch("api.routes.compact", new_callable=AsyncMock, create=True) as mock_compact,
+            patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load,
+            patch("api.routes.deserialize_messages") as mock_deserialize,
+            patch("api.routes.persist_messages", new_callable=AsyncMock) as mock_persist,
+            patch("api.routes.is_compaction_needed") as mock_needs_compact,
+            patch("api.routes.compact", new_callable=AsyncMock) as mock_compact,
         ):
             mock_load.return_value = []  # safe default — no prior history
             mock_deserialize.return_value = []  # safe default — empty deserialized history
@@ -406,7 +403,7 @@ class TestCreateAgent:
 
     @pytest.fixture(autouse=True)
     def mock_create_agent_deps(self):
-        with patch("api.routes.create_agent_record", new_callable=AsyncMock, create=True) as mock_create:
+        with patch("api.routes.create_agent_record", new_callable=AsyncMock) as mock_create:
             self.mock_create_agent_record = mock_create
             yield
 
@@ -525,12 +522,10 @@ class TestGetMessages:
     def mock_message_loaders(self):
         """Patch message-loading functions for all TestGetMessages tests.
 
-        Uses create=True so tests stay green before routes.py imports these functions.
-
         Provides self.mock_load_messages for loader-routing assertions.
         """
         with (
-            patch("api.routes.load_messages", new_callable=AsyncMock, create=True) as mock_load,
+            patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load,
         ):
             mock_load.return_value = []
             self.mock_load_messages = mock_load
@@ -633,7 +628,7 @@ class TestCreateMemoryBlock:
         self.configure_mock_get_deps_dep = _configure
         _configure()  # default: happy path
 
-        with patch("api.routes.create_block", new_callable=AsyncMock, create=True) as mock:
+        with patch("api.routes.create_block", new_callable=AsyncMock) as mock:
             self.mock_create_block = mock
             yield
 

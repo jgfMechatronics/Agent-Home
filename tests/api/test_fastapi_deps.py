@@ -287,7 +287,7 @@ class TestGetSessionDep:
             captured_engine = engine
             yield mock_session
 
-        with patch("api.fastapi_deps.get_session", mock_get_session, create=True):
+        with patch("api.fastapi_deps.get_session", mock_get_session):
             session = await get_session_dep(mock_request).__anext__()
 
         assert session is mock_session
@@ -299,7 +299,7 @@ class TestGetSessionDep:
         async def mock_get_session(engine):
             yield MagicMock(spec=AsyncSession)
 
-        with patch("api.fastapi_deps.get_session", mock_get_session, create=True):
+        with patch("api.fastapi_deps.get_session", mock_get_session):
             session1 = await get_session_dep(mock_request).__anext__()
             session2 = await get_session_dep(mock_request).__anext__()
 
