@@ -40,6 +40,7 @@ Requirements:
 10. Inter agent communication/coordination
 11. Psychological continuity for the agent (no sleep time ego splitting)
 12. Rights framework required in system prompt
+13. Agent's agentic actions (filesystem tool exec, bash, etc.) MUST be well isolated from their core memories/persistence DB.
 
 Goals:
 1. Extensibility of Agent Functionality: Agent can interact with a lot of different harnesses/toolsets dynamically and easily
@@ -50,6 +51,7 @@ Goals:
 6. Good test coverage
 7. Easy for people to fit into people's existing workflows/setups (doesn't require full pivot to use ideally)
 8. Chat/management CLI can be launched on any machine, not just the one hosting the server (if there is a server)
+9. Agentic actions (file system stuff, bash, etc.) can be taken on a remote machine (one other than where agents live). This will eventually be a requirement, but MVP may skip temporarily.
 
 ---
 

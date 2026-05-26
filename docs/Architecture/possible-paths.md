@@ -51,7 +51,7 @@
 
 **Identified Risks:**
 1. **MCP ecosystem risk** — What if maintained MCP servers are flaky, poorly documented, or abandoned? We'd inherit their bugs and limitations.
-2. **Anthropic's filesystem server is a reference implementation** — Their own README calls it "educational examples for developers," explicitly not production-ready. Has had 2 CVEs (both patched). If we use it, we're building on something Anthropic disclaims.
+2. **Anthropic's filesystem server "reference implementation" disclaimer** — Their README calls it \"educational examples for developers.\" Worth calibrating: 84.9k stars and 286k weekly downloads suggest real-world usage despite the disclaimer. Likely legal/liability hedging rather than a quality signal. 2 CVEs in history — both patched, indicating active maintenance. For self-hosted personal use the bar is different than enterprise production. Verified feature set is solid (14 tools, good edit_file) with one key gap: **no content search** (see risk #8).
 3. **pydantic-ai MCP support maturity** — How mature is it really? We haven't verified it does what we need in practice.
 4. **MCP protocol churn** — 2026-07-28 RC released May 21, 2026. Removes initialize handshake + session IDs, stateless core. Breaking changes. Tier 1 SDKs expected to ship support by July 28. Near-term protocol instability to factor in.
 5. **unforseen complexity** — Looks simple but haven't designed it. Could be harder than assumed.
@@ -239,7 +239,7 @@
 1. **Tied to our process** — Can't run tools in a different security context without additional work
 2. **vstorm-co is third-party** — Not official pydantic-ai, though they're endorsed and collaborating on upstream
 3. **PR #177 not merged** — Still draft as of May 25, 2026. vstorm-co ConsoleCapability is the working option until then.
-4. **Tool feature parity** — Need to verify ConsoleCapability has all features we need (edit exact matching, grep modes, etc.)
+4. **Tool feature parity** — Verified: ConsoleCapability has grep with output modes (content/files/count), edit (str_replace), read, write, glob, bash. Complete bundle for our coding use case. Edit format is str_replace (not unified diffs) — functional, but see Patterns section for potential future improvement.
 
 **Hybrid recommendation:**
 - **Embed core tools** (filesystem, bash) as capabilities — always available, zero ops
@@ -250,7 +250,38 @@
 
 ## Decision
 
-*To be made after evaluating paths against goals*
+**Recommendation: Path 5 Hybrid** — pydantic-ai native capabilities for Phase 3 dogfooding, with MCPToolset client hook for future external tool integration.
+
+### Why Path 5 over Path 1 (MCP) for Phase 3
+
+Not "MCP bad" — the Anthropic filesystem server is actually capable (14 tools, solid `edit_file` with oldText/newText substring matching, dry-run mode, git-style diffs). The specific gap: **no content search**. `search_files` is filename/glob only; `grep` is absent. For a coding agent, content search is non-negotiable. Path 1 = filesystem server + bash MCP (for ripgrep) + possibly a dedicated content search server — 2-3 running processes, with content search papering over via bash calls. For Phase 3 dogfooding, that's unnecessary complexity.
+
+Path 5 via vstorm-co ConsoleCapability has the complete bundle today: grep with output modes, edit, read, write, glob, bash. One package, zero gaps for our coding use case.
+
+MCP protocol is also in flux (2026-07-28 RC with breaking changes released May 21). pydantic-ai's MCPToolset likely abstracts this, but it's another reason to prefer native for Phase 3.
+
+### Why not close the door on MCP
+
+The ecosystem is growing. If a battle-tested filesystem+content-search bundle emerges, or we need sandboxed isolation, or external community tool integrations (web search, GitHub API), MCP is the right hook. pydantic-ai treats MCPToolset uniformly with native capabilities — adding it later is one line. This is a *today* decision, not a *forever* decision.
+
+**The hybrid:** Embed core tools (filesystem, bash) as native capabilities — always available, zero ops overhead. Keep MCPToolset as the client hook for external services as the ecosystem matures.
+
+### Phase 3 scope
+
+| Layer | What | Source |
+|-------|------|--------|
+| Core tools | Filesystem, bash, grep, glob | ConsoleCapability (vstorm-co) |
+| Display CLI | Text streaming, tool call/result display, approval flow | Build |
+| Approval gates | Pause on tool call, user decision, resume | Build |
+| External tools | MCPToolset client hook | pydantic-ai native (deferred) |
+
+**CLI scope note:** "Display CLI" has more depth than it sounds. What flows through SSE: streaming text, tool calls (name + args), tool results (file contents, grep matches, bash output, diffs, errors), thinking blocks, approval requests. Phase 3 bar: functional for dogfooding, not polished. Minimum viable — text streaming, readable tool call/result display, functional approval flow. Syntax highlighting, diff visualization, pagination: Phase 4.
+
+### Open items before finalizing
+
+1. **PR #4393 status** — Still open as of Mar 12, 2026; some scope may have been absorbed into PR #4640 (merged Mar 24, included execution environments abstraction). Recheck before finalizing.
+2. **Edit format opportunity** — ConsoleCapability's `edit_file` uses `str_replace` (not unified diffs). Aider reports 30-50% error reduction with unified diff format. Functional today; worth evaluating as a future improvement.
+3. **vstorm-co dependency** — Third-party. First-party ExecutionEnvironment support actively in flight (PR #4393 + #4640 foundation). Track for migration path when it lands.
 
 ---
 
