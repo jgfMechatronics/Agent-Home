@@ -116,5 +116,5 @@ The tool registration question is the interesting one: do Pi's tools live in Age
 - `pi-agent-core/src/agent-loop.ts` — `runLoop()`, `executeToolCalls()`
 - `pi-agent-core/src/agent.ts` — `Agent` class, state ownership
 - `pi-coding-agent/src/core/agent-session.ts` — `AgentSession`, bash exec, compaction
-- `E-LLM_Agent_Server/src/routes.py` — current `POST /agents/{id}/messages` implementation
+- `Agent-Home/src/routes.py` — current `POST /agents/{id}/messages` implementation
 - `letta-tool-architecture.md` — Letta's `ClientToolSchema` pause/resume pattern (Path B blueprint)
