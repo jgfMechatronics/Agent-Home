@@ -231,7 +231,8 @@ All connection decisions made. Memory and Self-Wake are internal modules; FS Too
                                     └────────┬────────────────────▲───────────┘
                                              │                    │
                                             MCP              Case-by-case
-                                    (JSON-RPC, portable)    (HTTP, webhooks, MCP, etc.)
+                                       (SSE, HTTP, etc.      (HTTP, webhooks, MCP, etc.)
+                                    Seperate isolated proc.)      |    
                                              │                    │
                                     ┌────────▼────────┐  ┌────────▼────────┐
                                     │    FS Tools     │  │      Misc       │
@@ -252,7 +253,7 @@ All connection decisions made. Memory and Self-Wake are internal modules; FS Too
 
 **Phase 3 deployment:**
 - Core + Memory + Self-Wake = single process (uvicorn)
-- FS Tools = MCP server (can be local subprocess or remote via Tailscale)
+- FS Tools = MCP server
 - TUI = client application (CLI/TUI connects to Core over HTTP)
 
 ---
