@@ -11,7 +11,7 @@ dependencies = [
     "uvicorn[standard]",
     "sqlalchemy[asyncio]",
     "aiosqlite",
-    "pydantic-ai",
+    "pydantic-ai>=1.97.0",
     "python-dotenv",
     "asgi-lifespan>=2.1.0",
     "httpx",

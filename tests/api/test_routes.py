@@ -58,7 +58,7 @@ TEXT_STREAM = lambda: [
 ]
 TOOL_STREAM = lambda: [
     FunctionToolCallEvent(part=TOOL_CALL_PART),
-    FunctionToolResultEvent(result=TOOL_RETURN_PART),
+    FunctionToolResultEvent(part=TOOL_RETURN_PART),
     AgentRunResultEvent(result=Mock()),
 ]
 
