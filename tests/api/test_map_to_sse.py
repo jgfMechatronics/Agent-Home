@@ -61,7 +61,7 @@ ALL_EVENTS = [
     pytest.param(PartDeltaEvent(index=0, delta=TEXT_DELTA), "PartDeltaEvent", id="PartDeltaEvent"),
     pytest.param(PartEndEvent(index=0, part=TEXT_PART), "PartEndEvent", id="PartEndEvent"),
     pytest.param(FunctionToolCallEvent(part=TOOL_CALL_PART), "FunctionToolCallEvent", id="FunctionToolCallEvent"),
-    pytest.param(FunctionToolResultEvent(result=TOOL_RETURN_PART), "FunctionToolResultEvent", id="FunctionToolResultEvent"),
+    pytest.param(FunctionToolResultEvent(part=TOOL_RETURN_PART), "FunctionToolResultEvent", id="FunctionToolResultEvent"),
     pytest.param(FinalResultEvent(tool_name=None, tool_call_id=None), "FinalResultEvent", id="FinalResultEvent"),
     pytest.param(AgentRunResultEvent(result=Mock()), "AgentRunResultEvent", id="AgentRunResultEvent"),
 ]
@@ -127,14 +127,14 @@ class TestFunctionToolCallEvent:
 class TestFunctionToolResultEvent:
     @pytest.fixture(autouse=True)
     def setup(self):
-        self.data = serialize_sse_data(map_to_sse(FunctionToolResultEvent(result=TOOL_RETURN_PART)))
+        self.data = serialize_sse_data(map_to_sse(FunctionToolResultEvent(part=TOOL_RETURN_PART)))
 
     def test_includes_tool_call_id(self):
-        assert self.data["result"]["tool_call_id"] == "call-1"
+        assert self.data["part"]["tool_call_id"] == "call-1"
 
     def test_result_contains_tool_name_and_content(self):
-        assert self.data["result"]["tool_name"] == "memory_replace"
-        assert self.data["result"]["content"] == "Updated."
+        assert self.data["part"]["tool_name"] == "memory_replace"
+        assert self.data["part"]["content"] == "Updated."
 
 
 class TestFinalResultEvent:
