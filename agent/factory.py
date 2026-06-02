@@ -15,7 +15,8 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from pydantic_ai import Agent, DeferredToolRequests
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
@@ -112,11 +113,17 @@ class AgentFactory:
                    if deps.config.thinking_enabled else {}),
                 parallel_tool_calls=False, # our current orphan remover isn't compatible with parallel tool calls
             )
+            # MCP filesystem tools via Streamable HTTP (requires fs_proxy running)
+            # TODO: Make URL configurable via deps.config or env
+            # TODO: Consider moving to module/app level for connection reuse (currently per-request)
+            mcp_fs_server = MCPToolset("http://localhost:8080/mcp")
+            
             agent = Agent(model,
                           instructions=get_system_prompt,
                           deps_type=AgentDeps,
                           name=deps.name,
                           tools=get_tools_for_agent(deps.config.tool_names),
+                          toolsets=[mcp_fs_server],
                           retries=deps.config.retries,
                           output_type=[str, DeferredToolRequests],
                           model_settings=model_settings,
