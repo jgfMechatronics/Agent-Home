@@ -10,7 +10,7 @@ from api.schemas import HealthResponse
 from db.connection import create_sqlite_engine, init_db
 
 
-DB_PATH = "/data/db.sqlite"
+DB_PATH = "/workspace/git/Agent-Home/data/db.sqlite"
 
 
 @asynccontextmanager

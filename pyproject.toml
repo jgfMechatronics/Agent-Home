@@ -15,6 +15,7 @@ dependencies = [
     "python-dotenv",
     "asgi-lifespan>=2.1.0",
     "httpx",
+    "fastmcp",
 ]
 
 [project.optional-dependencies]
@@ -32,4 +33,4 @@ pythonpath = [".", "tests"]
 extraPaths = ["."]
 
 [tool.hatch.build.targets.wheel]
-packages = ["api", "agent", "memory", "messages", "db"]
+packages = ["api", "agent", "memory", "messages", "db", "mcp_tools"]

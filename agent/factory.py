@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, Literal, get_args, get_origin
 
 from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -101,11 +102,17 @@ class AgentFactory:
                     "max_tokens": 16000}
                    if deps.config.thinking_enabled else {}),
             )
+            # MCP filesystem tools via Streamable HTTP (requires fs_proxy running)
+            # TODO: Make URL configurable via deps.config or env
+            # TODO: Consider moving to module/app level for connection reuse (currently per-request)
+            mcp_fs_server = MCPToolset("http://localhost:8080/mcp")
+            
             agent = Agent(model,
                           instructions=get_system_prompt,
                           deps_type=AgentDeps,
                           name=deps.name,
                           tools=get_tools_for_agent(deps.config.tool_names),
+                          toolsets=[mcp_fs_server],
                           retries=deps.config.retries,
                           output_type=[str, DeferredToolRequests],
                           model_settings=model_settings)
