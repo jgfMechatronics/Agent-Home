@@ -147,6 +147,9 @@ Note: `MCPToolset` was added in pydantic-ai 1.97.0 (May 15, 2026). Earlier versi
 - [ ] Evaluate bash MCP for grep/shell commands
 - [ ] Consider MCPServerStdio for in-process option (simpler for single-machine deploy)
 
+**NOTE: Testing described in this file generally based on agent self report and thus is not completely rigorous**
+However, we are mostly testing behavior of existing modules. This is primarily exploratory to see if the behaviors match our needs and work within our system.
+
 ### Live testing completed and passed:
 - Read dir contents
 - Create file
@@ -163,3 +166,48 @@ Note: `MCPToolset` was added in pydantic-ai 1.97.0 (May 15, 2026). Earlier versi
     - Tool call showed in CLI but it just silently had an issue. Agent didn't get to follow up and the turn doesn't persist
 - directory_tree on large dir
     - There seems to be no limits to how large a response it will return. Overflowed agent context.
+
+
+## Jun 2: Switched to Desktop Commander MCP
+Swapped `@modelcontextprotocol/server-filesystem` for `@wonderwhy-er/desktop-commander@latest` (6.1k stars, active maintenance).
+
+**Why:** Anthropic server lacks arbitrary line-range reads (head/tail only). Desktop Commander's `read_file` supports `offset` + `length` for arbitrary ranges — closes the critical gap. Also includes `code_search` (ripgrep-based), terminal process management, and better directory listing with depth/overflow controls.
+
+**allowedDirectories scoping:** Desktop Commander doesn't accept path as CLI arg — it uses a `config.json` in its working directory. FastMCP's `StdioMCPServer` config supports `cwd`, so we pre-write a `config.json` in a temp dir and pass that as `cwd`. Config is created fresh each proxy start; allowedDirectories restricts filesystem ops (note: terminal commands bypass this restriction — acceptable for our container-isolated setup).
+
+**Fuzzy edit:** `edit_block` has a fuzzy fallback when exact match fails. For strict edit semantics we can fork to disable it, but leaving it on for now to evaluate in dogfooding.
+
+**DEFAULT_WORKSPACE changed to `/workspace/git/misc/test`** for initial testing.
+
+### Testing
+
+#### Tested and passed:
+- Search (grep/glob style)
+    - Interesting behavior. Will return results instantly if search completes quickly and will require retrieval of results from a background process if search does not complete in some short time window. Timeout behavior doesn't seem to control whether or not it blocks, it seems to just determine how long the background search is willing to run.
+- start_process
+    - Here the timeout parameter determines whether or not the process is run in the background. If the command does not complete within the specified timeout, it will run in the background. If it completes within the specified timeout, it runs synchronously in blocks. So the timeout parameter can really be best thought of as block duration.
+    - Can interact with background processes with continuity of env
+    - Retrieval of background results (including pagination)
+- read_file 
+    - pagination
+    - Tail reads
+- edit
+    - exact matching replaces content
+    - fuzzy matchign does not replace content, but informs model where they missed.
+- write_file
+    - create
+    - append
+
+#### Tested and failed:
+- list_directory
+    - didn't return contents of the test dir. Could have been a syntax or config issue.
+    - Debatable if we even want this tool. I'm skeptical of tools that are just a convenience wrapper for things that can be run with Bash. The model already knows how to ls.
+
+#### General thoughts
+The behavior and name and arguments of these tools does deviate some from Claude code style. That being said, all the underlying capabilities seem to still be there, just exposed in a slightly different way. I've seen research that suggests that models performance on agent decoding tasks is slightly degraded by using harnesses other than their native provider harness, in Anthropix case, Claude Code. The question is, how far do you have to deviate from the native harness before you get degradation? It's possible that the differences in desktop commanders' way of interacting with tools could be a problem.
+What we might end up wanting to do is wrap the interfaces to make them more Claude code-like, which all the existing functionality seems sufficient to do that with a simple wrapper as opposed to having to reinvent stuff. But this is a problem that we should wait to see if actually exists before trying to solve it. It should be obvious in dogfooding if models are trying to call Claude code named tools or they're struggling with the way that the tools are presented.
+
+It seems that remapping inputs and even doing some basic tool behavior modification is quite trivial with FastMCP wrappers. See claude.ai conversation.
+
+There are some tools I will likely want to filter out, stuff that is easily achievable with basic bash commands like ls.
+I'm skeptical its worth it to have things like list_directory taking up context and polluting the tool list.
