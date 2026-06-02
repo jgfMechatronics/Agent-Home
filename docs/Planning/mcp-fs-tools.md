@@ -151,5 +151,15 @@ Note: `MCPToolset` was added in pydantic-ai 1.97.0 (May 15, 2026). Earlier versi
 - Read dir contents
 - Create file
 - Read file contents
+    - **Major gap:** can get first or last N lines of a file but cannot specify an arbitrary line range
 - Edit file (append)
 - Edit file (replace)
+- Search files (glob)
+    - The agent reported some funniness with the recursive behavior, it required funny syntax
+- directory_tree on small dir
+
+### Failed
+- read media (png in this case)
+    - Tool call showed in CLI but it just silently had an issue. Agent didn't get to follow up and the turn doesn't persist
+- directory_tree on large dir
+    - There seems to be no limits to how large a response it will return. Overflowed agent context.
