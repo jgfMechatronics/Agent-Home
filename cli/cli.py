@@ -328,6 +328,29 @@ class _StreamState:
     response_started: bool = False
 
 
+def _format_tool_args(args: dict | str | None) -> str:
+    """Format tool args for display — compact key=value pairs, values truncated."""
+    MAX_VAL = 60
+    if not args:
+        return ""
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (json.JSONDecodeError, ValueError):
+            return args[:MAX_VAL] + "…" if len(args) > MAX_VAL else args
+    if isinstance(args, dict):
+        parts = []
+        for k, v in args.items():
+            if isinstance(v, str):
+                truncated = v[:MAX_VAL] + "…" if len(v) > MAX_VAL else v
+                parts.append(f'{k}="{truncated}"')
+            else:
+                s = repr(v)
+                parts.append(f"{k}={s[:MAX_VAL] + '…' if len(s) > MAX_VAL else s}")
+        return " ".join(parts)
+    return ""
+
+
 async def process_sse_event(
     state: CLIState, stream_state: _StreamState, event_type: str, data_str: str
 ) -> None:
@@ -372,10 +395,12 @@ async def process_sse_event(
         if content:
             output(state, content, end="")
     elif event_type == "FunctionToolCallEvent":
-        # Structure: {"part": {"tool_name": "name"}}
+        # Structure: {"part": {"tool_name": "name", "args": {...}}}
         part = data.get("part", {})
         tool_name = part.get("tool_name", "unknown")
-        output(state, f"\n[Tool: {tool_name}]", end="")
+        args_display = _format_tool_args(part.get("args"))
+        suffix = f" {args_display}" if args_display else ""
+        output(state, f"\n[Tool: {tool_name}]{suffix}", end="")
     elif event_type == "FunctionToolResultEvent":
         output(state, " ✓", end="")
     elif event_type == "AgentRunResultEvent":
