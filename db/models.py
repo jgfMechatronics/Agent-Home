@@ -110,6 +110,10 @@ class MessageRecord(Base):
     type: Mapped[str]
     content: Mapped[str]  # TEXT storing serialized ModelMessage JSON — not deserialized by SQLAlchemy
     input_tokens: Mapped[int | None]
+    # TODO: add an integer sequence number (per-agent ordinal) so message position has an
+    # unambiguous index. Timestamp is used as a de-facto positional index in several places
+    # (e.g. AgentRecord.context_window_start, compaction walk-back, message ordering in general) but timestamps really aren't
+    # the right tool for this
     timestamp: Mapped[datetime]
 
     def __repr__(self) -> str:
