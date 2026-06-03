@@ -54,13 +54,18 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
 
     # Ensure tool call/return pairs are never split across the compaction boundary.
     # If the candidate start message is a ToolReturnPart or RetryPromptPart, include
-    # the preceding ToolCallPart message too. A tool response can never be the first
-    # message, so n_msg_to_keep + 1 is always safe here.
+    # the preceding ToolCallPart message too.
     candidate = messages[-n_msg_to_keep]
     if candidate.type == "ModelRequest":
         [deserialized] = deserialize_messages([candidate])
         if any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in deserialized.parts):
             n_msg_to_keep += 1
+
+    # A ToolReturnPart/RetryPromptPart can never be the first message in a context window,
+    # so in practice this is at most an efficiency thing (turns compact into a no op if n_msg_to_keep == len(messages))
+    # rather than a proper safety guard
+    if n_msg_to_keep >= len(messages):
+        return
 
     deps.context_window_start = messages[-n_msg_to_keep].timestamp
     await deps.session.flush()
