@@ -12,19 +12,17 @@ aggressive as system prompt grows. It would probably be preferable for compactio
 frequent as the system prompt gets problematically large as opposed to more and more aggressive 
 where they're basically deleting all messages.
 """
-from datetime import datetime, timedelta
-
 import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ToolCallPart, ToolReturnPart, RetryPromptPart
+from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart, RetryPromptPart
 
-from messages.messages import deserialize_messages
+from messages.messages import deserialize_messages, load_messages, persist_messages
 
 from agent.compaction import compact, is_compaction_needed
-from agent.types import AgentConfig
+from agent.types import AgentConfig, AgentDeps
 from conftest import (
     SAMPLE_AGENT_CONFIG,
     make_deps,
@@ -33,7 +31,7 @@ from conftest import (
     make_retry_pair,
     make_tool_pair,
 )
-from db.models import AgentRecord, MessageRecord, utcnow
+from db.models import AgentRecord, MessageRecord
 
 
 # --- Fixtures ---
@@ -52,6 +50,15 @@ def _make_config(
     )
 
 
+async def _persist_messages_load_records(
+    deps: AgentDeps,
+    messages: list[ModelMessage],
+) -> list[MessageRecord]:
+    """Persist messages via the official persist_messages, then load and return the MessageRecords."""
+    await persist_messages(deps, messages, input_tokens=0)
+    return await load_messages(deps.session, deps.agent_id)
+
+
 async def _make_agent_with_messages(
     session: AsyncSession,
     message_count: int,
@@ -59,45 +66,30 @@ async def _make_agent_with_messages(
     config: AgentConfig | None = None,
     system_prompt_chars: int = 400,
 ) -> dict:
-    """
-    Factory for creating an agent with N messages and a compiled system prompt.
-    
-    Messages are created with sequential timestamps (1 second apart).
+    """Factory for creating an agent with N alternating request/response messages.
+
     System prompt is set to a string of specified char length (for token estimation testing).
-    
     Returns dict with agent, messages, deps for test access.
     """
     if config is None:
         config = SAMPLE_AGENT_CONFIG
-    
-    # Create system prompt of specified length
-    compiled_prompt = "x" * system_prompt_chars
-        
+
     agent = AgentRecord(
         name="test-agent",
         agent_config=config,
         system_instructions="Test agent",
-        compiled_system_prompt=compiled_prompt,
+        compiled_system_prompt="x" * system_prompt_chars,
     )
     session.add(agent)
     await session.flush()
-    
-    base_time = utcnow() - timedelta(seconds=message_count)
-    messages = []
-    for i in range(message_count):
-        msg = MessageRecord(
-            agent_id=agent.id,
-            type="ModelRequest" if i % 2 == 0 else "ModelResponse",
-            content=f"Message {i}",
-            timestamp=base_time + timedelta(seconds=i),
-        )
-        messages.append(msg)
-    
-    session.add_all(messages)
-    await session.flush()
-    
+
     deps = make_deps(session, agent)
-    
+    pydantic_msgs = [
+        make_request(f"msg {i}") if i % 2 == 0 else make_response(f"resp {i}")
+        for i in range(message_count)
+    ]
+    messages = await _persist_messages_load_records(deps, pydantic_msgs)
+
     return {"agent": agent, "messages": messages, "deps": deps}
 
 
@@ -260,37 +252,22 @@ class TestCompactToolPairAtomicity:
         agent_record.agent_config = config
         await session.flush()
 
+        deps = make_deps(session, agent_record)
         tool_call_response, tool_response_request = tool_pair_generator()
         pydantic_msgs = [
-            make_request("msg 0"),       
-            make_response("resp 1"),     
-            make_request("msg 2"),       
-            make_response("resp 3"),     
-            make_request("msg 4"),       
-            tool_call_response,         # – ModelResponse(ToolCallPart)
-            tool_response_request,      # – ModelRequest(ToolReturnPart | RetryPromptPart) — must stay paired with 5
-            make_response("resp 7"),     
-            make_request("msg 8"),       
-            make_response("resp 9"),     
+            make_request("msg 0"),
+            make_response("resp 1"),
+            make_request("msg 2"),
+            make_response("resp 3"),
+            make_request("msg 4"),
+            tool_call_response,       # – ModelResponse(ToolCallPart)
+            tool_response_request,    # – ModelRequest(ToolReturnPart | RetryPromptPart) — must stay paired with 5
+            make_response("resp 7"),
+            make_request("msg 8"),
+            make_response("resp 9"),
         ]
-
-        # Persist messages w/ controlled timestamps
-        base_time = utcnow() - timedelta(seconds=len(pydantic_msgs))
-        records = []
-        for i, msg in enumerate(pydantic_msgs):
-            # Slice [] off beginning and end of result str
-            content = ModelMessagesTypeAdapter.dump_json([msg]).decode()[1:-1]
-            records.append(MessageRecord(
-                agent_id=agent_record.id,
-                type=type(msg).__name__,
-                content=content,
-                timestamp=base_time + timedelta(seconds=i),
-            ))
-
-        session.add_all(records)
-        await session.flush()
-
-        return {"agent": agent_record, "records": records, "deps": make_deps(session, agent_record)}
+        records = await _persist_messages_load_records(deps, pydantic_msgs)
+        return {"agent": agent_record, "records": records, "deps": deps}
 
     @pytest.mark.parametrize("tool_pair_generator", [make_tool_pair, make_retry_pair])
     async def test_does_not_orphan_tool_response(self, session: AsyncSession, agent_record: AgentRecord, tool_pair_generator):

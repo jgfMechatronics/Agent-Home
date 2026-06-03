@@ -5,7 +5,8 @@ when token limits are exceeded.
 """
 from agent.types import AgentConfig, AgentDeps
 from memory.system_prompt_compilation import compile_system_prompt
-from messages.messages import load_messages
+from messages.messages import deserialize_messages, load_messages
+from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 
 
 def is_compaction_needed(input_tokens: int, config: AgentConfig) -> bool:
@@ -27,6 +28,7 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
     - Never evicts the most recent 4 messages
     - No-op if 4 or fewer messages in context
     - Does NOT delete messages (pointer manipulation only)
+    - Tool call/return pairs are kept atomic (never split across the boundary)
     - Calls compile_system_prompt after advancing pointer
     """
     messages = await load_messages(
@@ -49,6 +51,16 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
 
     if n_msg_to_keep >= len(messages):
         return
+
+    # Ensure tool call/return pairs are never split across the compaction boundary.
+    # If the candidate start message is a ToolReturnPart or RetryPromptPart, include
+    # the preceding ToolCallPart message too. A tool response can never be the first
+    # message, so n_msg_to_keep + 1 is always safe here.
+    candidate = messages[-n_msg_to_keep]
+    if candidate.type == "ModelRequest":
+        [deserialized] = deserialize_messages([candidate])
+        if any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in deserialized.parts):
+            n_msg_to_keep += 1
 
     deps.context_window_start = messages[-n_msg_to_keep].timestamp
     await deps.session.flush()
