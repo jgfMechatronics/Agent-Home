@@ -19,7 +19,9 @@ import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ToolCallPart, ToolReturnPart, RetryPromptPart
+
+from messages.messages import deserialize_messages
 
 from agent.compaction import compact, is_compaction_needed
 from agent.types import AgentConfig
@@ -310,8 +312,10 @@ class TestCompactToolPairAtomicity:
         config = _make_config(soft_compaction_limit=1000, compaction_target_percentage=0.5)
         data = await self._make_agent_with_tool_sequence(session, agent_record, tool_pair_generator, config=config)
 
-        # sanity check, assumed in ending assertion
-        assert (data["records"][5], data["records"][6]) == tool_pair_generator()
+        # sanity check: records[5] and [6] are the tool pair (assumed in ending assertion)
+        call_record, return_record = deserialize_messages(data["records"][5:7])
+        assert any(isinstance(p, ToolCallPart) for p in call_record.parts)
+        assert any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in return_record.parts)
 
         await compact(data["deps"], input_tokens=1250)
 
