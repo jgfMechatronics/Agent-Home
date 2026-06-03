@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from unittest.mock import Mock
 
 import pytest_asyncio
@@ -12,6 +13,15 @@ from sqlalchemy.pool import StaticPool
 from agent.types import AgentConfig, AgentDeps
 from db.models import AgentRecord, Base, MemoryBlockRecord
 from pydantic_ai import RunContext
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
 
 def mock_run_context(deps: AgentDeps):
@@ -32,6 +42,65 @@ SAMPLE_AGENT_CONFIG = AgentConfig(**SAMPLE_AGENT_CONFIG_DATA)
 def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
     """Construct AgentDeps from a session and agent record."""
     return AgentDeps(session=session, agent_record=agent)
+
+
+# ---------------------------------------------------------------------------
+# Pydantic-AI message factory helpers — shared across test modules
+# ---------------------------------------------------------------------------
+
+# Fixed naive UTC timestamp used in tool-pair request messages.  ModelRequest
+# doesn't auto-assign a timestamp the way ModelResponse does, so we pin one to
+# make assertions about orphan-warning log output predictable without bracketing.
+_TOOL_PAIR_REQUEST_TS = datetime(2026, 1, 1, 12, 0, 0)
+
+
+def make_request(content: str = "hello") -> ModelRequest:
+    """Minimal ModelRequest with a single UserPromptPart."""
+    return ModelRequest(parts=[UserPromptPart(content=content)])
+
+
+def make_response(content: str = "hi") -> ModelResponse:
+    """Minimal ModelResponse with a single TextPart."""
+    return ModelResponse(parts=[TextPart(content=content)])
+
+
+def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
+    """A matched tool-call / tool-return pair.
+
+    Returns (ModelResponse(ToolCallPart), ModelRequest(ToolReturnPart)).
+    The ModelRequest has a fixed timestamp so tests can assert on it without
+    time-bracketing.
+    
+    NOTE: These message shapes are hand-crafted to match pydantic-ai's internal format.
+    A possibly more robust alternative would be to use FunctionModel (pydantic_ai.models.function) to
+    run a real agent turn and capture the actual message sequence via result.all_messages().
+    FunctionModel is useful for valid sequences; orphan tests still need hand-crafted invalid
+    sequences (deliberately incomplete pairs) which could be produced by mutating the results of FunctionModel
+    """
+    call_part = ToolCallPart(tool_name="mem_replace", args='{"label":"x"}', tool_call_id="tc1")
+    return_part = ToolReturnPart(tool_name="mem_replace", content="ok", tool_call_id="tc1")
+    return (
+        ModelResponse(parts=[call_part]),
+        ModelRequest(parts=[return_part], timestamp=_TOOL_PAIR_REQUEST_TS),
+    )
+
+
+def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
+    """A matched tool-call / retry-prompt pair (ModelRetry path).
+
+    The call side is identical to make_tool_pair() — only the response side differs
+    (RetryPromptPart instead of ToolReturnPart).  Same fixed-timestamp convention.
+    """
+    call_response, _ = make_tool_pair()
+    retry_part = RetryPromptPart(
+        content="block 'x' not found",
+        tool_name="mem_replace",
+        tool_call_id="tc1",
+    )
+    return (
+        call_response,
+        ModelRequest(parts=[retry_part], timestamp=_TOOL_PAIR_REQUEST_TS),
+    )
 
 
 @pytest_asyncio.fixture

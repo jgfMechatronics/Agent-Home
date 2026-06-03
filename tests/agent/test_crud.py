@@ -30,6 +30,8 @@ class TestCreateAgentRecord:
         assert record_to_check.agent_config == SAMPLE_AGENT_CONFIG
         assert record_to_check.context_window_start is None
         assert await load_messages(self.session, self.record.id) == []
+        assert record_to_check.compiled_system_prompt is not None
+        assert "You are helpful." in record_to_check.compiled_system_prompt
 
     async def test_returns_agent_record_with_correct_fields(self):
         """Returned record has expected values — UUID valid, fields match inputs, no history, expected config"""

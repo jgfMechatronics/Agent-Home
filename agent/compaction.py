@@ -5,7 +5,8 @@ when token limits are exceeded.
 """
 from agent.types import AgentConfig, AgentDeps
 from memory.system_prompt_compilation import compile_system_prompt
-from messages.messages import load_messages
+from messages.messages import deserialize_messages, load_messages
+from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 
 
 def is_compaction_needed(input_tokens: int, config: AgentConfig) -> bool:
@@ -27,6 +28,7 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
     - Never evicts the most recent 4 messages
     - No-op if 4 or fewer messages in context
     - Does NOT delete messages (pointer manipulation only)
+    - Tool call/return pairs are kept atomic (never split across the boundary)
     - Calls compile_system_prompt after advancing pointer
     """
     messages = await load_messages(
@@ -47,6 +49,21 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
     target_tokens = deps.config.compaction_target_percentage * deps.config.soft_compaction_limit
     n_msg_to_keep = max(4, int((target_tokens - sys_tokens) / avg_tokens_per_msg))
 
+    if n_msg_to_keep >= len(messages):
+        return
+
+    # Ensure tool call/return pairs are never split across the compaction boundary.
+    # If the candidate start message is a ToolReturnPart or RetryPromptPart, include
+    # the preceding ToolCallPart message too.
+    candidate = messages[-n_msg_to_keep]
+    if candidate.type == "ModelRequest":
+        [deserialized] = deserialize_messages([candidate])
+        if any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in deserialized.parts):
+            n_msg_to_keep += 1
+
+    # A ToolReturnPart/RetryPromptPart can never be the first message in a context window,
+    # so in practice this is at most an efficiency thing (turns compact into a no op if n_msg_to_keep == len(messages))
+    # rather than a proper safety guard
     if n_msg_to_keep >= len(messages):
         return
 

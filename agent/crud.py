@@ -4,8 +4,9 @@ Agent CRUD operations
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import AgentConfig
+from agent.types import AgentConfig, AgentDeps
 from db.models import AgentRecord
+from memory.system_prompt_compilation import compile_system_prompt
 
 
 async def get_agent_record(session: AsyncSession, agent_id: str) -> AgentRecord | None:
@@ -29,5 +30,6 @@ async def create_agent_record(
     """Create a new agent, persist it, and return the AgentRecord."""
     record = AgentRecord(name=name, system_instructions=system_instructions, agent_config=config)
     session.add(record)
-    await session.flush() # TODO: Should commit here?
+    await compile_system_prompt(AgentDeps(session, record))  # flushes session internally
+    # TODO: Should commit here?
     return record

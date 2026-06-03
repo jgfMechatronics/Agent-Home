@@ -15,10 +15,8 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
-    TextPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,64 +25,15 @@ from agent.types import AgentDeps
 from db.models import AgentRecord, MessageRecord, utcnow
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
-# make_deps is a plain helper (not a pytest fixture) — import directly for use in test bodies
-from conftest import SAMPLE_AGENT_CONFIG, make_deps
-
-
-# ---------------------------------------------------------------------------
-# Message factories
-# ---------------------------------------------------------------------------
-
-def make_request(content: str = "hello") -> ModelRequest:
-    """Minimal ModelRequest with a single UserPromptPart."""
-    return ModelRequest(parts=[UserPromptPart(content=content)])
-
-
-def make_response(content: str = "hi") -> ModelResponse:
-    """Minimal ModelResponse with a single TextPart."""
-    return ModelResponse(parts=[TextPart(content=content)])
-
-
-# Fixed naive UTC timestamp for the ModelRequest in make_tool_pair — ModelRequest.timestamp
-# defaults to None (unlike ModelResponse which auto-assigns), so we set one explicitly to make
-# assertions about orphaned-return summary warnings predictable without bracketing.
-_TOOL_PAIR_REQUEST_TS = datetime(2026, 1, 1, 12, 0, 0)
-
-
-def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
-    """A matched tool-call / tool-return pair.
-
-    Returns (response_with_tool_call, request_with_tool_return).
-    Use element [0] alone to simulate an orphaned tool call.
-    Use element [1] alone to simulate an orphaned tool return.
-
-    NOTE: These message shapes are hand-crafted to match pydantic-ai's internal format.
-    A possibly more robust alternative would be to use FunctionModel (pydantic_ai.models.function) to
-    run a real agent turn and capture the actual message sequence via result.all_messages().
-    FunctionModel is useful for valid sequences; orphan tests still need hand-crafted invalid
-    sequences (deliberately incomplete pairs) which could be produced by mutating the results of FunctionModel
-    """
-    call_part = ToolCallPart(tool_name="mem_replace", args='{"label":"x"}', tool_call_id="tc1")
-    return_part = ToolReturnPart(tool_name="mem_replace", content="ok", tool_call_id="tc1")
-    return (
-        ModelResponse(parts=[call_part]),
-        ModelRequest(parts=[return_part], timestamp=_TOOL_PAIR_REQUEST_TS),
-    )
-
-
-def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
-    """A matched tool-call / tool-retry pair (tool raised ModelRetry).
-
-    Returns (response_with_tool_call, request_with_retry_prompt).
-    Use element [0] alone to simulate an orphaned tool call.
-    Use element [1] alone to simulate an orphaned retry prompt.
-    """
-    call_part = ToolCallPart(tool_name="mem_replace", args='{"label":"x"}', tool_call_id="tc1")
-    retry_part = RetryPromptPart(content="block 'x' not found", tool_name="mem_replace", tool_call_id="tc1")
-    return (
-        ModelResponse(parts=[call_part]),
-        ModelRequest(parts=[retry_part], timestamp=_TOOL_PAIR_REQUEST_TS),
-    )
+# Plain helpers (not fixtures) — import directly for use in test bodies
+from conftest import (
+    SAMPLE_AGENT_CONFIG,
+    make_deps,
+    make_request,
+    make_response,
+    make_retry_pair,
+    make_tool_pair,
+)
 
 
 def make_messages_batch(n: int) -> list[ModelMessage]:
