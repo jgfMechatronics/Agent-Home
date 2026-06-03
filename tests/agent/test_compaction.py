@@ -5,6 +5,12 @@ Tests is_compaction_needed and compact functions.
 compact(deps, input_tokens) receives the total input_tokens from the API response.
 It estimates system prompt tokens from char count, calculates message tokens,
 and advances context_window_start to hit the target percentage.
+
+TODO: We may want to change compaction target calculation to be relative to tokens free for messages
+as opposed to relative to total tokens. With the current impl the compaction gets progressively more
+aggressive as system prompt grows. It would probably be preferable for compactions to just get more and more
+frequent as the system prompt gets problematically large as opposed to more and more aggressive 
+where they're basically deleting all messages.
 """
 from datetime import datetime, timedelta
 
@@ -13,9 +19,18 @@ import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pydantic_ai.messages import ModelMessagesTypeAdapter
+
 from agent.compaction import compact, is_compaction_needed
 from agent.types import AgentConfig
-from conftest import make_deps, SAMPLE_AGENT_CONFIG
+from conftest import (
+    SAMPLE_AGENT_CONFIG,
+    make_deps,
+    make_request,
+    make_response,
+    make_retry_pair,
+    make_tool_pair,
+)
 from db.models import AgentRecord, MessageRecord, utcnow
 
 
@@ -219,3 +234,86 @@ class TestCompactEdgeCases(CompactTestBase):
         
         # Clear of the 4-message guard — tests percentage targeting, not the guard
         assert 8 <= len(in_context) <= 10
+
+
+class TestCompactToolPairAtomicity:
+    """compact() must never split a tool call/return pair at context_window_start.
+
+    When the naive trim point lands on a ModelRequest whose parts are ToolReturnPart or
+    RetryPromptPart, the fix must walk back one message to include the preceding
+    ModelResponse(ToolCallPart).  Failing to do so produces a 400 from Anthropic:
+    "tool_result block(s) provided when previous turn did not request tool use."
+    This results in an invalid message history being sent to the model on every subsequent turn,
+    soft locking the agent.
+    """
+
+    async def _make_agent_with_tool_sequence(
+        self,
+        session: AsyncSession,
+        agent_record: AgentRecord,
+        tool_pair_generator,
+        *,
+        config: AgentConfig,
+    ) -> dict:
+        agent_record.agent_config = config
+        await session.flush()
+
+        tool_call_response, tool_response_request = tool_pair_generator()
+        pydantic_msgs = [
+            make_request("msg 0"),       
+            make_response("resp 1"),     
+            make_request("msg 2"),       
+            make_response("resp 3"),     
+            make_request("msg 4"),       
+            tool_call_response,         # – ModelResponse(ToolCallPart)
+            tool_response_request,      # – ModelRequest(ToolReturnPart | RetryPromptPart) — must stay paired with 5
+            make_response("resp 7"),     
+            make_request("msg 8"),       
+            make_response("resp 9"),     
+        ]
+
+        # Persist messages w/ controlled timestamps
+        base_time = utcnow() - timedelta(seconds=len(pydantic_msgs))
+        records = []
+        for i, msg in enumerate(pydantic_msgs):
+            # Slice [] off beginning and end of result str
+            content = ModelMessagesTypeAdapter.dump_json([msg]).decode()[1:-1]
+            records.append(MessageRecord(
+                agent_id=agent_record.id,
+                type=type(msg).__name__,
+                content=content,
+                timestamp=base_time + timedelta(seconds=i),
+            ))
+
+        session.add_all(records)
+        await session.flush()
+
+        return {"agent": agent_record, "records": records, "deps": make_deps(session, agent_record)}
+
+    @pytest.mark.parametrize("tool_pair_generator", [make_tool_pair, make_retry_pair])
+    async def test_does_not_orphan_tool_response(self, session: AsyncSession, agent_record: AgentRecord, tool_pair_generator):
+        """compact() walks back from the naive trim point to preserve tool pair atomicity.
+
+        Token math — engineered to force the naive trim to land at records[6] (tool
+        response), which would orphan it from records[5] (tool call):
+
+            no system prompt → sys_tokens = 0
+            10 messages, input_tokens = 1250,  avg = 125 tok/msg
+
+            soft_compaction_limit = 1000,  compaction_target_percentage = 0.5
+            target_tokens = 0.5 × 1000 = 500
+            n_msg_to_keep = max(4, int(500 / 125)) = max(4, 4) = 4
+
+        Naive result: context_window_start = records[-4].timestamp = records[6].timestamp  ← ORPHAN
+        Fixed result: context_window_start = records[5].timestamp  ← pair kept intact
+        """
+        config = _make_config(soft_compaction_limit=1000, compaction_target_percentage=0.5)
+        data = await self._make_agent_with_tool_sequence(session, agent_record, tool_pair_generator, config=config)
+
+        # sanity check, assumed in ending assertion
+        assert (data["records"][5], data["records"][6]) == tool_pair_generator()
+
+        await compact(data["deps"], input_tokens=1250)
+
+        await session.refresh(data["agent"])
+        assert data["agent"].context_window_start == data["records"][5].timestamp
