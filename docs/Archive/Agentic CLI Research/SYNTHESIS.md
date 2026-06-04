@@ -48,7 +48,7 @@ The landscape has many strong alternatives (OpenCode at 163k stars, Pi at 52k), 
 | Releases | 809 |
 
 **Why we're not recommending:**
-- Runs agent loop internally
+- Runs agent loop internally (UPDATE: THIS MAY BE WRONG OR MISLEADING)
 - Would need significant surgery to swap in our server as backend
 - `opencode serve` exists but serves the CLI as an API, not connects to external server
 
