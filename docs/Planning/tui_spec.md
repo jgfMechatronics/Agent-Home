@@ -35,6 +35,7 @@
         - Possibly some basic memory system info
             - Full memory system management per agent will likely be better served as its own TUI/GUI
         - Likely will want extended UI elements as an extra panel. Unclear if vertical to side of chat or horizontal above
+        - NOTE: If it greatly simplifies things, we can have a seperate management console for this stuff, at least for MVP
 10. Image support, paste in text box and send to model
     - This will be hard
 11. Resizing friendly. Resizes without elements getting duplicated, busted, etc.
