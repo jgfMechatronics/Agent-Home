@@ -19,9 +19,9 @@ Toad natively supports 11 of 12 requirements, with the remaining one (image past
 | 3 | Tool call display | `ToolCall` widget with status, expand/collapse, content types |
 | 4 | Git-style diffs | `textual_diff_view.DiffView` — split/unified, syntax highlighted |
 | 5 | Approve/Deny tools | `Question` widget with a/A/r/R keybindings |
-| 7 | Esc to halt | Double-tap Esc → `session/cancel` RPC |
+| 7 | Esc to halt | Esc twice within 3s → `session/cancel` RPC (more lenient than typical double-tap) |
 | 8 | Landing page | Agent picker + project directory selector |
-| 9 | Two display modes | Sidebar (ctrl+B) with extensible panels |
+| 9 | Two display modes | Sidebar toggle (ctrl+B) is native; custom panels require Phase 3 fork |
 | 11 | Resize-friendly | Textual framework handles natively |
 | 12 | Non-blocking streaming | Prompt stays active; server handles concurrent sends |
 
@@ -62,7 +62,9 @@ Toad speaks stdio JSON-RPC. Agent Home speaks HTTP/SSE. We need a bridge CLI:
 
 ### RPC Methods to Implement
 
-| Method | Direction | Agent Home Equivalent |
+> **Note:** The "Agent Home Equivalent" column shows endpoints we need to build — these do not currently exist. See "Agent Home Gaps" below.
+
+| Method | Direction | Agent Home Equivalent (to implement) |
 |--------|-----------|----------------------|
 | `initialize` | toad→bridge | Return capabilities |
 | `session/new` | toad→bridge | `POST /agents/{id}/sessions` |
@@ -80,6 +82,19 @@ Toad can handle `fs/read_text_file`, `fs/write_text_file`, and `terminal/*` loca
 - Forward to Agent Home which forwards to MCP (more complex, true remote)
 
 **Recommend:** Local handling for prototype. Toad already implements these.
+
+### Agent Home Gaps
+
+The current Agent Home API (`api/routes.py`) is agent-scoped, not session-scoped. To support toad's ACP protocol, we need:
+
+| Gap | Description | Options |
+|-----|-------------|---------|
+| **Session abstraction** | ACP is session-oriented (`sessionId` on every method). Agent Home has no session concept. | (a) Add session model + endpoints, OR (b) Synthesize in bridge: 1 session ≡ 1 agent |
+| **Cancel endpoint** | `session/cancel` has no backing. Current `POST /messages` runs the full turn with no interrupt hook. | Add cancellation token / signal to agent run loop |
+| **Standing event stream** | SSE only exists as response to `POST /messages`. No way to push unsolicited events (self-wake, inter-agent). | Add persistent SSE endpoint per agent, or multiplex onto existing stream |
+| **Permission protocol** | No mechanism for mid-turn permission requests (pause stream → ask client → resume). | Design request/response flow with client callback |
+
+**Recommendation:** For Phase 1 spike, use option (b) for sessions (1:1 with agents). Defer cancel, standing stream, and permission protocol to Phase 2.
 
 ---
 
@@ -145,8 +160,9 @@ description = "Install Agent Home CLI"
 
 | Risk | Mitigation |
 |------|------------|
+| **Python ≥3.14 required** | Toad requires bleeding-edge Python — verify deployment environment compatibility |
 | Toad development direction diverges from our needs | AGPL allows forking; toad is well-structured |
-| Bridge complexity underestimated | Start with spike, iterate. Core RPC is ~6 methods. |
+| Bridge complexity underestimated | Start with spike, iterate. Bridge RPC is ~6 methods, but see "Agent Home Gaps" for server-side work. |
 | Image support becomes blocking | Fork toad to add (Phase 3), contribute upstream |
 | ACP protocol changes | Protocol is versioned; toad maintains compatibility |
 | Custom panels need fork | Phase 1 uses separate console; Phase 3 fork adds panels properly |
@@ -157,6 +173,8 @@ description = "Install Agent Home CLI"
 
 **Proceed with toad integration.**
 
-The bridge is bounded work (~6 RPC methods for MVP). Toad handles all the hard TUI problems (streaming, diffs, permissions, resize, styling). We focus on our differentiator: the memory system and agent loop.
+The bridge itself is bounded (~6 RPC methods for MVP), but full ACP support requires Agent Home server-side work (see "Agent Home Gaps"). Phase 1 can validate the approach with minimal server changes by synthesizing sessions 1:1 with agents.
+
+Toad handles all the hard TUI problems (streaming, diffs, permissions, resize, styling). We focus on our differentiator: the memory system and agent loop.
 
 Next step: Implement Phase 1 bridge as spike to validate the approach.
