@@ -40,5 +40,8 @@ addopts = "-m 'not e2e' --ignore=tests/e2e"
 [tool.pyright]
 extraPaths = ["."]
 
+[project.scripts]
+agent-home-acp = "acp.__main__:cli"
+
 [tool.hatch.build.targets.wheel]
-packages = ["api", "agent", "memory", "messages", "db", "mcp_tools"]
+packages = ["api", "agent", "memory", "messages", "db", "acp", "mcp_tools"]
