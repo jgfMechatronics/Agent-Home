@@ -40,6 +40,7 @@ import httpx
 DEFAULT_SERVER_URL = "http://localhost:8000"
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_SOFT_COMPACTION_LIMIT = 80000
+DEFAULT_MEMORY_TOOLS = ["memory_replace", "memory_insert"]
 
 _AGENTS_JSON = Path(__file__).parent.parent.parent / "LettaTelegramLocal" / "agents.json"
 
@@ -93,8 +94,9 @@ def default_agent_config() -> dict:
     """Return default AgentConfig for new agents."""
     return {
         "model_name": DEFAULT_MODEL,
-        "tool_names": [],  # No tools for basic testing
+        "tool_names": DEFAULT_MEMORY_TOOLS,
         "soft_compaction_limit": DEFAULT_SOFT_COMPACTION_LIMIT,
+        "thinking_enabled": True,
     }
 
 
@@ -223,12 +225,15 @@ def run_config_wizard(state: CLIState) -> dict:
     is_deletable_str = prompt_with_default(state, "Is deletable (true/false)", "false")
     is_deletable = is_deletable_str.lower() in ("true", "yes", "1")
     
-    # tool_names - keep simple for now
-    tools_str = prompt_with_default(state, "Tool names (comma-separated, or empty)", "")
+    thinking_str = prompt_with_default(state, "Enable thinking (true/false)", "true")
+    thinking_enabled = thinking_str.lower() in ("true", "yes", "1")
+
+    default_tools = ", ".join(DEFAULT_MEMORY_TOOLS)
+    tools_str = prompt_with_default(state, "Tool names (comma-separated)", default_tools)
     tool_names = [t.strip() for t in tools_str.split(",") if t.strip()] if tools_str else []
-    
+
     output(state, "")
-    
+
     return {
         "name": name,
         "system_instructions": system_instructions,
@@ -238,6 +243,7 @@ def run_config_wizard(state: CLIState) -> dict:
             "soft_compaction_limit": soft_compaction_limit,
             "compaction_target_fraction": compaction_target_fraction,
             "is_deletable": is_deletable,
+            "thinking_enabled": thinking_enabled,
         },
     }
 
