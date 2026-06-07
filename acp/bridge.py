@@ -67,6 +67,46 @@ def agent_thought_chunk(session_id: str, text: str) -> dict[str, Any]:
     })
 
 
+def user_message_chunk(session_id: str, text: str) -> dict[str, Any]:
+    """Build a UserMessageChunk update for user messages (used in history replay)."""
+    return session_update(session_id, {
+        "sessionUpdate": "user_message_chunk",
+        "content": {"type": "text", "text": text},
+    })
+
+
+def tool_call_complete(
+    session_id: str, tool_call_id: str, tool_name: str,
+    args: dict[str, Any], result: Any, status: str = "completed"
+) -> dict[str, Any]:
+    """Build a complete ToolCall for history replay (not streaming)."""
+    # Format args + result as displayable content
+    content_blocks = []
+    if args:
+        args_text = json.dumps(args, indent=2)
+        content_blocks.append({
+            "type": "content",
+            "content": {"type": "text", "text": f"**Arguments:**\n```json\n{args_text}\n```"}
+        })
+    if result:
+        result_text = json.dumps(result, indent=2) if not isinstance(result, str) else result
+        status_label = "✓ Success" if status == "completed" else "✗ Failed"
+        content_blocks.append({
+            "type": "content",
+            "content": {"type": "text", "text": f"**{status_label}:**\n```json\n{result_text}\n```"}
+        })
+    
+    return session_update(session_id, {
+        "sessionUpdate": "tool_call",
+        "toolCallId": tool_call_id,
+        "title": tool_name,
+        "status": status,
+        "rawInput": args,
+        "rawOutput": {"result": result} if result else None,
+        "content": content_blocks if content_blocks else None,
+    })
+
+
 def tool_call(
     session_id: str, tool_call_id: str, tool_name: str, args: dict[str, Any] | str | None
 ) -> dict[str, Any]:
@@ -302,6 +342,75 @@ async def handle_initialize(state: BridgeState, msg: dict[str, Any]) -> None:
     }))
 
 
+async def replay_history(
+    session_id: str, server_url: str, client: httpx.AsyncClient
+) -> None:
+    """Fetch agent's in-context messages and replay as session/update notifications."""
+    try:
+        resp = await client.get(f"{server_url}/agents/{session_id}/messages")
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        # History replay is best-effort — don't fail the session
+        print(f"Warning: Failed to fetch history: {e}", file=sys.stderr)
+        return
+    
+    messages = data.get("messages", [])
+    
+    # Track tool call args for combining with results
+    tool_call_args: dict[str, dict[str, Any]] = {}
+    
+    for msg in messages:
+        kind = msg.get("kind")
+        parts = msg.get("parts", [])
+        
+        if kind == "request":
+            # User message or tool results
+            for part in parts:
+                part_kind = part.get("part_kind")
+                if part_kind == "user-prompt":
+                    content = part.get("content", "")
+                    if content:
+                        send(user_message_chunk(session_id, content))
+                elif part_kind in ("tool-return", "retry-prompt"):
+                    # Tool result — combine with tracked args
+                    tool_call_id = part.get("tool_call_id", "")
+                    content = part.get("content", "")
+                    outcome = part.get("outcome", "success")
+                    status = "failed" if (part_kind == "retry-prompt" or outcome in ("failed", "denied")) else "completed"
+                    args = tool_call_args.get(tool_call_id)
+                    send(tool_call_update(session_id, tool_call_id, content, status, args=args))
+        
+        elif kind == "response":
+            # Assistant message — may have thinking, tool calls, and/or text
+            for part in parts:
+                part_kind = part.get("part_kind")
+                
+                if part_kind == "thinking":
+                    content = part.get("content", "")
+                    if content:
+                        send(agent_thought_chunk(session_id, content))
+                
+                elif part_kind == "tool-call":
+                    tool_call_id = part.get("tool_call_id", "")
+                    tool_name = part.get("tool_name", "unknown")
+                    args = part.get("args", {})
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except (json.JSONDecodeError, ValueError):
+                            args = {"raw": args}
+                    # Track args for when we see the result
+                    tool_call_args[tool_call_id] = args
+                    # Tool call start — result comes in a following message
+                    send(tool_call(session_id, tool_call_id, tool_name, args))
+                
+                elif part_kind == "text":
+                    content = part.get("content", "")
+                    if content:
+                        send(agent_message_chunk(session_id, content))
+
+
 async def handle_session_new(
     state: BridgeState, msg: dict[str, Any], client: httpx.AsyncClient
 ) -> None:
@@ -324,11 +433,11 @@ async def handle_session_new(
     
     session_id = state.agent_id
     
-    # TODO: Replay history as session/update notifications
-    # This would fetch GET /agents/{id}/messages?full=false
-    # and emit each message as appropriate update notifications
-    
+    # Send response first so client knows session is ready
     send(response(msg["id"], {"sessionId": session_id}))
+    
+    # Then replay history as session/update notifications
+    await replay_history(session_id, state.server_url, client)
 
 
 async def handle_session_prompt(

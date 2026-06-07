@@ -210,6 +210,7 @@ NOTE: This doesn't mean do shit work. Still do your best.
 ### Phase 1: Happy path, live agent (prove the approach)
 Basic TUI round-trip against a **live agent**, **no mid-turn interrupts** (no cancellation, no permission pause/resume). Uses the **existing `run_stream_events` route unchanged** — zero dependency on the deferred iter() work. This is pure ACP/Toad integration risk: the thing most likely to kill the approach and moot all the interrupt design. Retire it first.
 - [ ] `agent-home acp` CLI skeleton
+    - I don't know if we did this or not, but if we didn't we don't need it.
 - [ ] `initialize` → return capabilities with `loadSession: false`
 - [ ] `session/new` → connect to agent, replay history, return sessionId
 - [ ] `session/prompt` → POST message, subscribe SSE, forward chunks
