@@ -27,6 +27,9 @@ if [[ -f "$PID_FILE" ]]; then
     rm -f "$PID_FILE"
 fi
 
+# Ensure DB directory exists (SQLite can't create the file if the parent dir is missing)
+mkdir -p ~/.agent-home
+
 # Start server
 cd "$SCRIPT_DIR"
 echo "Starting server... stdout: $LOG_FILE  stderr: $ERR_FILE"

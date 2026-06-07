@@ -215,6 +215,8 @@ Basic TUI round-trip against a **live agent**, **no mid-turn interrupts** (no ca
 - [ ] `session/prompt` → POST message, subscribe SSE, forward chunks
 - [ ] `session/update` forwarding from SSE
 - [ ] Basic error handling
+- [ ] Streaming of agent activity initiated from another source
+    - this can also be done after the first live test
 - [ ] **Separate console for Agent Home status** (no fork yet)
     - Stop and have James play with the prototype before bothering with this.
 
@@ -303,7 +305,7 @@ We did the Pydantic AI control-flow pass (Jun 6, pydantic-ai 1.104.0). Findings:
 
 **The real cancellation mechanism is therefore DEFERRED to a separate `iter()` migration** — run through our full process (well-scoped, low-risk, but slow; mostly the time for James to learn the pydantic-node model). It is gated behind Phase 1 proving the whole approach viable.
 
-**Critically — deferring is SAFE because the external event contract is preserved.** Empirically verified (`/workspace/git/misc/event_parity_test.py`): `iter()` + per-node `node.stream()` (plus a synthesized terminal `AgentRunResultEvent`) reproduces the *exact* event sequence `run_stream_events` emits — identical types and order, tool-call scenario included. So a Phase 1 bridge built on the existing `run_stream_events` route exposes the same SSE contract the eventual `iter()` route will. Switching later changes server internals, not the wire. Full findings: `/workspace/git/AgentMemory/Opus/agent-home-iter-cancellation-findings.md`.
+**Critically — deferring is SAFE because the external event contract is preserved.** Empirically verified (`/workspace/git/misc/event_parity_test.py`): `iter()` + per-node `node.stream()` (plus a synthesized terminal `AgentRunResultEvent`) reproduces the *exact* event sequence `run_stream_events` emits — identical types and order, tool-call scenario included. So a Phase 1 bridge built on the existing `run_stream_events` route exposes the same SSE contract the eventual `iter()` route will. Switching later changes server internals, not the wire. Full findings: `docs/Planning/agent-home-iter-cancellation-findings.md` (on branch `Development/ConvertToAgentIterForStream`).
 
 **Status: *what* resolved (dispatch-boundary model); *how* resolved (iter() + between-node flag); real mechanism deferred behind Phase 1, safely, thanks to confirmed event-contract parity.**
 
