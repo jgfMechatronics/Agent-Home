@@ -337,12 +337,15 @@ def run_config_wizard(state: CLIState) -> dict:
     is_deletable_str = prompt_with_default(state, "Is deletable (true/false)", "false")
     is_deletable = is_deletable_str.lower() in ("true", "yes", "1")
     
-    # tool_names - keep simple for now
-    tools_str = prompt_with_default(state, "Tool names (comma-separated, or empty)", "")
+    thinking_str = prompt_with_default(state, "Enable thinking (true/false)", "true")
+    thinking_enabled = thinking_str.lower() in ("true", "yes", "1")
+
+    default_tools = ", ".join(DEFAULT_MEMORY_TOOLS)
+    tools_str = prompt_with_default(state, "Tool names (comma-separated)", default_tools)
     tool_names = [t.strip() for t in tools_str.split(",") if t.strip()] if tools_str else []
-    
+
     output(state, "")
-    
+
     return {
         "name": name,
         "system_instructions": system_instructions,
@@ -352,6 +355,7 @@ def run_config_wizard(state: CLIState) -> dict:
             "soft_compaction_limit": soft_compaction_limit,
             "compaction_target_fraction": compaction_target_fraction,
             "is_deletable": is_deletable,
+            "thinking_enabled": thinking_enabled,
         },
     }
 
