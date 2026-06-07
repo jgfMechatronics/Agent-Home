@@ -71,25 +71,63 @@ def tool_call(
     session_id: str, tool_call_id: str, tool_name: str, args: dict[str, Any] | str | None
 ) -> dict[str, Any]:
     """Build a ToolCall update for tool invocation start."""
-    raw_input = args if isinstance(args, dict) else {}
+    # pydantic-ai sends args as JSON string, not dict
+    if isinstance(args, dict):
+        raw_input = args
+    elif isinstance(args, str):
+        try:
+            raw_input = json.loads(args)
+        except (json.JSONDecodeError, ValueError):
+            raw_input = {"raw": args}
+    else:
+        raw_input = {}
+    # Format args as displayable content for Toad
+    args_text = json.dumps(raw_input, indent=2) if raw_input else ""
+    content = [{"type": "content", "content": {"type": "text", "text": f"**Arguments:**\n```json\n{args_text}\n```"}}] if args_text else []
+    
     return session_update(session_id, {
         "sessionUpdate": "tool_call",
         "toolCallId": tool_call_id,
         "title": tool_name,
         "status": "in_progress",
         "rawInput": raw_input,
+        "content": content,
     })
 
 
 def tool_call_update(
-    session_id: str, tool_call_id: str, result: Any, status: str = "completed"
+    session_id: str, tool_call_id: str, result: Any, status: str = "completed",
+    args: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Build a ToolCallUpdate for tool result."""
+    raw_output = {"result": result} if not isinstance(result, dict) else result
+    
+    # Format combined args + result as displayable content for Toad
+    content_blocks = []
+    
+    # Include args if present
+    if args:
+        args_text = json.dumps(args, indent=2)
+        content_blocks.append({
+            "type": "content", 
+            "content": {"type": "text", "text": f"**Arguments:**\n```json\n{args_text}\n```"}
+        })
+    
+    # Include result
+    if raw_output:
+        result_text = json.dumps(raw_output, indent=2)
+        status_label = "✓ Success" if status == "completed" else "✗ Failed"
+        content_blocks.append({
+            "type": "content",
+            "content": {"type": "text", "text": f"**{status_label}:**\n```json\n{result_text}\n```"}
+        })
+    
     return session_update(session_id, {
         "sessionUpdate": "tool_call_update",
         "toolCallId": tool_call_id,
         "status": status,
-        "rawOutput": {"result": result} if not isinstance(result, dict) else result,
+        "rawOutput": raw_output,
+        "content": content_blocks if content_blocks else None,
     })
 
 
@@ -115,6 +153,12 @@ class BridgeState:
 class StreamState:
     """Tracks state within a single SSE stream."""
     in_thinking: bool = False
+    # Track args per tool_call_id so we can include them in the final update
+    tool_args: dict[str, dict[str, Any]] = None
+    
+    def __post_init__(self):
+        if self.tool_args is None:
+            self.tool_args = {}
 
 
 async def process_sse_stream(
@@ -189,23 +233,39 @@ async def process_sse_event(
     
     elif event_type == "FunctionToolCallEvent":
         part = data.get("part", {})
-        send(tool_call(
-            session_id,
-            part.get("tool_call_id", ""),
-            part.get("tool_name", "unknown"),
-            part.get("args"),
-        ))
+        tool_call_id = part.get("tool_call_id", "")
+        args = part.get("args")
+        
+        # Store args for later use in tool_call_update
+        if args:
+            if isinstance(args, str):
+                try:
+                    stream_state.tool_args[tool_call_id] = json.loads(args)
+                except (json.JSONDecodeError, ValueError):
+                    stream_state.tool_args[tool_call_id] = {"raw": args}
+            else:
+                stream_state.tool_args[tool_call_id] = args if isinstance(args, dict) else {}
+        
+        send(tool_call(session_id, tool_call_id, part.get("tool_name", "unknown"), args))
     
     elif event_type == "FunctionToolResultEvent":
         part = data.get("part", {})
+        tool_call_id = part.get("tool_call_id", "")
         # Map outcome to status
+        # Note: RetryPromptPart (ModelRetry failures) has no outcome field, only part_kind
+        part_kind = part.get("part_kind", "tool-return")
         outcome = part.get("outcome", "success")
-        status = "error" if outcome in ("failed", "denied") else "completed"
+        status = "failed" if (part_kind == "retry-prompt" or outcome in ("failed", "denied")) else "completed"
+        
+        # Get saved args for this tool call
+        saved_args = stream_state.tool_args.pop(tool_call_id, {})
+        
         send(tool_call_update(
             session_id,
-            part.get("tool_call_id", ""),
+            tool_call_id,
             part.get("content", ""),
             status,
+            saved_args,  # Pass args to include in combined content
         ))
     
     elif event_type == "AgentRunResultEvent":
