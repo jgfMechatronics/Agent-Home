@@ -1,4 +1,5 @@
 # Toad TUI Integration Plan for Agent Home
+**NOTE:** As this is part of a rapid AI driven prototype, the plan and the prototype code has less HITL review than normal. In some cases none.
 
 ## Executive Summary
 
@@ -120,7 +121,7 @@ Toad speaks stdio JSON-RPC. Agent Home speaks HTTP/SSE. We need a bridge CLI:
 | `session/prompt` | toad→bridge | `POST /agents/{id}/messages` (SSE response), forward as `session/update` |
 | `session/cancel` | toad→bridge | `POST /agents/{id}/cancel` (Phase 1.5 — transport via stub, real mechanism rides deferred iter()) |
 | `session/update` | bridge→toad | Forward from SSE stream |
-| `session/request_permission` | bridge→toad | Forward from SSE, wait for response, POST approval back (Phase 1.6 — mechanism only) |
+| `session/request_permission` | bridge→toad | Forward from SSE, wait for response, POST approval back (Phase 1.5 — mechanism only) |
 
 **Not implemented:**
 - `session/load` — we declare `loadSession: false`, toad won't call this
@@ -146,7 +147,7 @@ These have very different risk profiles and should be separated.
 3. Approval comes back via a response endpoint (SSE is one-way, so this needs a separate POST-back channel)
 4. Agent resumes from suspended state
 
-This is the architecturally novel control flow. Our stack currently assumes a turn runs start-to-finish (message in → stream out → done). Pausing *mid-turn*, holding state, and resuming is a different shape — and it's exactly what "auto-approve everything" papers over. It shares the mid-turn-suspend machinery with cancellation and depends on the same iter()-based loop ownership, so (see Implementation Phases) it lands in **Phase 1.6**, after the happy-path spike proves the approach and alongside the deferred iter() work — not in the Phase 1 happy path.
+This is the architecturally novel control flow. Our stack currently assumes a turn runs start-to-finish (message in → stream out → done). Pausing *mid-turn*, holding state, and resuming is a different shape — and it's exactly what "auto-approve everything" papers over. It shares the mid-turn-suspend machinery with cancellation and depends on the same iter()-based loop ownership, so (see Implementation Phases) it lands in **Phase 1.5**, after the happy-path spike proves the approach and alongside the deferred iter() work — not in the Phase 1 happy path.
 
 **The policy** — which tools need approval, and headless behavior:
 - Memory tools (truly server-side) → always auto-approve
@@ -156,7 +157,7 @@ This is the architecturally novel control flow. Our stack currently assumes a tu
 
 This is configuration *on top of* the mechanism. Genuinely deferrable.
 
-**Decision (Phase 1.6):** Build the mechanism, defer the policy. Designate *one* tool as approval-required (a real external MCP tool or a deliberate test tool) purely to exercise the full round-trip end to end (Pydantic AI → Agent Home API → bridge → toad → back). Everything else stays auto-approved. This validates the pause/resume architecture across all layers without designing the policy engine or solving the autonomous question yet. (Phase 1 ships with no permission round-trip at all — every tool auto-approves.)
+**Decision (Phase 1.5):** Build the mechanism, defer the policy. Designate *one* tool as approval-required (a real external MCP tool or a deliberate test tool) purely to exercise the full round-trip end to end (Pydantic AI → Agent Home API → bridge → toad → back). Everything else stays auto-approved. This validates the pause/resume architecture across all layers without designing the policy engine or solving the autonomous question yet. (Phase 1 ships with no permission round-trip at all — every tool auto-approves.)
 
 ### Agent Home Server Work
 
@@ -165,7 +166,7 @@ This is configuration *on top of* the mechanism. Genuinely deferrable.
 | **History endpoint** | `GET /agents/{id}/history` — return the agent's in-context messages for replay | Phase 1 |
 | **Cancel endpoint** | `POST /agents/{id}/cancel` — interrupt running turn. Transport provable via stub; real impl rides deferred iter() migration. | Phase 1.5 |
 | **Standing event stream** | Persistent SSE for unsolicited events (self-wake, inter-agent) | Phase 2 |
-| **Permission mechanism** | Mid-turn pause/resume round-trip + approval response endpoint. One tool designated approval-required to exercise it. | Phase 1.6 |
+| **Permission mechanism** | Mid-turn pause/resume round-trip + approval response endpoint. One tool designated approval-required to exercise it. | Phase 1.5 |
 | **Permission policy** | Tool differentiation (sandbox vs external MCP), headless/autonomous behavior | Deferred |
 
 ---
@@ -203,7 +204,8 @@ How does toad's picker learn which agents exist?
 
 ## Implementation Phases
 
-> **Working mode (Jun 6): exploratory spike.** This is the high-uncertainty "does the approach work at all" phase. We deliberately *skip* the heavyweight spec → reviewed-TDD → iterate loop. Sonnet and Opus dogfood a working prototype fast to retire integration risk; TDD is the implementers' discretion. Rigor returns for the keeper work (e.g. the iter() migration), not the spike.
+> **Working mode (Jun 6): exploratory spike.** This is the high-uncertainty "does the approach work at all" phase. We deliberately *skip* the heavyweight spec → reviewed-TDD → iterate loop. Sonnet and Opus produce a working prototype to see if it works; TDD is the implementers' discretion. Rigor returns for the keeper work (e.g. the iter() migration, and the design if validated), not the spike.
+NOTE: This doesn't mean do shit work. Still do your best.
 
 ### Phase 1: Happy path, live agent (prove the approach)
 Basic TUI round-trip against a **live agent**, **no mid-turn interrupts** (no cancellation, no permission pause/resume). Uses the **existing `run_stream_events` route unchanged** — zero dependency on the deferred iter() work. This is pure ACP/Toad integration risk: the thing most likely to kill the approach and moot all the interrupt design. Retire it first.
@@ -214,13 +216,20 @@ Basic TUI round-trip against a **live agent**, **no mid-turn interrupts** (no ca
 - [ ] `session/update` forwarding from SSE
 - [ ] Basic error handling
 - [ ] **Separate console for Agent Home status** (no fork yet)
+    - Stop and have James play with the prototype before bothering with this.
 
-### Phase 1.5: Cancellation
+### Phase 1.5: Mid-turn interrupts (Cancellation + Permission mechanism)
+Both are novel control flow involving mid-turn suspension — deferred until happy path proves viable.
+
+**Cancellation:**
 - [ ] **ACP cancel transport** — `session/cancel` wired toad → bridge, bridge catches it mid-stream (listen-while-streaming concurrency), acks. Provable with a **stub** server-side handler. *Caveat:* with a live agent under it, the stub will desync (acks "cancelled" while the real turn finishes + persists) — accepted as a known throwaway spike artifact, NOT real semantics.
 - [ ] **Real agent-loop cancellation** — dispatch-boundary halt + partial persist. Rides on the **deferred iter() migration** (see Open Design Questions). Done properly via full TDD, not in the spike.
 
-### Phase 1.6 — Permission mechanism  **[Jun 6 — flag for final read-through]**
-The mid-turn pause/resume round-trip (one approval-required tool, full round-trip + POST-back endpoint). **Moved out of Phase 1** by the same logic as cancellation: it's novel mid-turn-*suspend* control flow that depends on the same iter()-based loop ownership we're deferring — and arguably harder than cancellation (suspend + resume vs. just halt). You can't "auto-approve everything papers over it" in the happy-path phase *and* prove the suspend/resume mechanism there. Confirm this re-scoping.
+**Permission mechanism:**
+- [ ] Mid-turn pause/resume round-trip — one approval-required tool, full round-trip + POST-back endpoint (mechanism only, no policy).
+- [ ] Route plumbing: deferred tool-call event handling + approval result endpoint.
+
+*Note:* Permission suspension is handled internally by Pydantic AI (voluntary yield), so it doesn't strictly depend on iter() — but it's still novel mid-turn control flow with its own route plumbing, and Phase 1 has enough scope. Get happy path working first.
 
 ### Phase 2: Full Protocol Support
 - [ ] **Permission policy** — tool differentiation (sandbox vs external MCP), headless/autonomous behavior
@@ -264,7 +273,7 @@ The mid-turn pause/resume round-trip (one approval-required tool, full round-tri
 
 ### Cancellation Mechanism (active discussion)
 
-Cancellation is **essential** and in scope for the spike — a coding TUI without a working stop button is unusable, and an agent burning tokens in the wrong direction with no recourse is unacceptable. It also shares "interrupt the running turn" machinery with the permission mechanism (permission = *interrupt and wait*; cancel = *interrupt and abort*), so getting the interrupt architecture right once serves both.
+Cancellation is **essential** and in scope for the spike — a coding TUI without a working stop button is unusable, and an agent burning tokens in the wrong direction with no recourse is unacceptable.
 
 **The core challenge:** Our agent server runs on cooperative multitasking (asyncio). Unlike the permission flow — where the agent *voluntarily* reaches a yield point and waits for approval — cancellation must inject a halt *unexpectedly* into a running turn, gracefully, with no true preemption available. We can only act at await points.
 
