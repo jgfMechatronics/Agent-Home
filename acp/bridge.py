@@ -647,15 +647,31 @@ async def main(agent_id: str | None = None, server_url: str = "http://localhost:
 
 
 if __name__ == "__main__":
+    import argparse
     import os
-    
+
+    parser = argparse.ArgumentParser(description="Agent Home ACP bridge")
+    parser.add_argument(
+        "agent_id",
+        nargs="?",
+        default=None,
+        help="Agent ID to connect to (overridden AGENT_HOME_AGENT_ID env var)",
+    )
+    parser.add_argument(
+        "--server-url",
+        default=None,
+        help="Agent Home server URL (overrides AGENT_HOME_SERVER_URL env var)",
+    )
+    args = parser.parse_args()
+
     logging.basicConfig(
         level=logging.DEBUG if os.environ.get("ACP_DEBUG") else logging.WARNING,
         format="%(levelname)s: %(message)s",
         stream=sys.stderr,  # Logs to stderr, not stdout (which is for JSON-RPC)
     )
-    
-    agent_id = os.environ.get("AGENT_HOME_AGENT_ID")
-    server_url = os.environ.get("AGENT_HOME_SERVER_URL", "http://localhost:8000")
-    
+
+    # Env var takes priority over CLI arg — allows overriding the TOML default at runtime
+    agent_id = os.environ.get("AGENT_HOME_AGENT_ID") or args.agent_id
+    server_url = os.environ.get("AGENT_HOME_SERVER_URL") or args.server_url or "http://localhost:8000"
+
     asyncio.run(main(agent_id=agent_id, server_url=server_url))
