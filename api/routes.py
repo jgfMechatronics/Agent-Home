@@ -62,6 +62,31 @@ async def get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
     return record
 
 
+async def _handle_message(agent: Agent, deps: AgentDeps, user_prompt: str) -> AsyncGenerator[ServerSentEvent, None]:
+    records = await load_messages(deps.session, deps.agent_id, start_timestamp=deps.context_window_start)
+    message_history = deserialize_messages(records)
+
+    # TODO: Exceptions raised during run_stream_events result in entire turn being discarded.
+    # this was discovered with "UnexpectedModelBehavior" due to excess retries
+    async for event in agent.run_stream_events(user_prompt=user_prompt,
+                                                message_history=message_history,
+                                                deps=deps):
+        yield map_to_sse(event)
+
+        if isinstance(event, AgentRunResultEvent):
+            final_result = event.result
+            input_tokens = final_result.usage().input_tokens
+            await persist_messages(deps=deps,
+                                    messages=final_result.new_messages(),
+                                    input_tokens=input_tokens)
+
+            # commit before compaction — if compaction fails, the turn may still be valid
+            await deps.commit_changes_refresh_agent_record()
+
+            if is_compaction_needed(input_tokens, deps.config):
+                await compact(deps, input_tokens)
+
+
 # --- Routes ---
 
 @router.post("/{agent_id}/messages", response_class=EventSourceResponse)
@@ -69,33 +94,13 @@ async def send_message(
     agent_id: str,
     body: MessageRequest,
     agent_and_deps: tuple[Agent, AgentDeps] = Depends(get_agent_and_deps),
-) -> AsyncGenerator[ServerSentEvent]:
+) -> AsyncGenerator[ServerSentEvent, None]:
     """TODO: Agent run should still be able to complete and persist in the event that client disconnects"""
     # AgentNotFoundError / AgentLockedError are translated to HTTP 404/503 by get_agent_and_deps
     agent, deps = agent_and_deps
     try:
-        records = await load_messages(deps.session, deps.agent_id, start_timestamp=deps.context_window_start)
-        message_history = deserialize_messages(records)
-
-        # TODO: Exceptions raised during run_stream_events result in entire turn being discarded.
-        # this was discovered with "UnexpectedModelBehavior" due to excess retries
-        async for event in agent.run_stream_events(user_prompt=body.message,
-                                                    message_history=message_history,
-                                                    deps=deps):
-            yield map_to_sse(event)
-
-            if isinstance(event, AgentRunResultEvent):
-                final_result = event.result
-                input_tokens = final_result.usage().input_tokens
-                await persist_messages(deps=deps,
-                                       messages=final_result.new_messages(),
-                                       input_tokens=input_tokens)
-
-                # commit before compaction — if compaction fails, the turn may still be valid
-                await deps.commit_changes_refresh_agent_record()
-
-                if is_compaction_needed(input_tokens, deps.config):
-                    await compact(deps, input_tokens)
+        async for event in _handle_message(agent, deps, body.message):
+            yield event
     except Exception as e:
         # TODO (low priority): put more thought into logging strategy (log levels, handler chain, structured logging)
         logger.exception("Unexpected error in send_message for agent %s", agent_id)
