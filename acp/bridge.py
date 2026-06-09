@@ -9,7 +9,8 @@ import asyncio
 import json
 import logging
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -180,9 +181,20 @@ class BridgeState:
     """Global bridge state."""
     server_url: str = "http://localhost:8000"
     agent_id: str | None = None  # Set via config or session/new
-    
+
     # Accumulated usage for the current turn
     usage: dict[str, int] | None = None
+
+    # Watermark for history polling — timestamp of the last message seen from any source.
+    # Updated by replay_history, _update_watermark, and poll_for_new_messages.
+    last_message_ts: datetime | None = None
+
+    # True while a toad-initiated prompt stream is active — polling skips during this window
+    # to avoid racing with the live stream and double-sending notifications.
+    stream_active: bool = False
+
+    # Handle for the background polling task — kept so it can be cancelled on session restart.
+    polling_task: asyncio.Task | None = field(default=None, repr=False)
 
 
 # =============================================================================
@@ -342,30 +354,34 @@ async def handle_initialize(state: BridgeState, msg: dict[str, Any]) -> None:
     }))
 
 
-async def replay_history(
-    session_id: str, server_url: str, client: httpx.AsyncClient
-) -> None:
-    """Fetch agent's in-context messages and replay as session/update notifications."""
-    try:
-        resp = await client.get(f"{server_url}/agents/{session_id}/messages")
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as e:
-        # History replay is best-effort — don't fail the session
-        print(f"Warning: Failed to fetch history: {e}", file=sys.stderr)
-        return
-    
-    messages = data.get("messages", [])
-    
-    # Track tool call args for combining with results
+def _replay_message_items(session_id: str, items: list[dict[str, Any]]) -> datetime | None:
+    """Convert a list of MessageItem dicts to session/update notifications.
+
+    Each item has shape: {id, type, content, timestamp} where content is a
+    serialized pydantic-ai ModelMessage JSON string.
+
+    Returns the timestamp of the latest item, or None if items is empty.
+    Used by both replay_history (initial load) and poll_for_new_messages (incremental).
+    """
     tool_call_args: dict[str, dict[str, Any]] = {}
-    
-    for msg in messages:
+    latest_ts: datetime | None = None
+
+    for item in items:
+        ts_str = item.get("timestamp")
+        if ts_str:
+            latest_ts = datetime.fromisoformat(ts_str)
+
+        # Unwrap the nested pydantic-ai message JSON
+        try:
+            msg = json.loads(item["content"])
+        except (KeyError, json.JSONDecodeError):
+            logger.warning("Skipping malformed message item: %r", item.get("id"))
+            continue
+
         kind = msg.get("kind")
         parts = msg.get("parts", [])
-        
+
         if kind == "request":
-            # User message or tool results
             for part in parts:
                 part_kind = part.get("part_kind")
                 if part_kind == "user-prompt":
@@ -373,24 +389,20 @@ async def replay_history(
                     if content:
                         send(user_message_chunk(session_id, content))
                 elif part_kind in ("tool-return", "retry-prompt"):
-                    # Tool result — combine with tracked args
                     tool_call_id = part.get("tool_call_id", "")
                     content = part.get("content", "")
                     outcome = part.get("outcome", "success")
                     status = "failed" if (part_kind == "retry-prompt" or outcome in ("failed", "denied")) else "completed"
                     args = tool_call_args.get(tool_call_id)
                     send(tool_call_update(session_id, tool_call_id, content, status, args=args))
-        
+
         elif kind == "response":
-            # Assistant message — may have thinking, tool calls, and/or text
             for part in parts:
                 part_kind = part.get("part_kind")
-                
                 if part_kind == "thinking":
                     content = part.get("content", "")
                     if content:
                         send(agent_thought_chunk(session_id, content))
-                
                 elif part_kind == "tool-call":
                     tool_call_id = part.get("tool_call_id", "")
                     tool_name = part.get("tool_name", "unknown")
@@ -400,15 +412,84 @@ async def replay_history(
                             args = json.loads(args)
                         except (json.JSONDecodeError, ValueError):
                             args = {"raw": args}
-                    # Track args for when we see the result
                     tool_call_args[tool_call_id] = args
-                    # Tool call start — result comes in a following message
                     send(tool_call(session_id, tool_call_id, tool_name, args))
-                
                 elif part_kind == "text":
                     content = part.get("content", "")
                     if content:
                         send(agent_message_chunk(session_id, content))
+
+    return latest_ts
+
+
+async def replay_history(state: BridgeState, session_id: str, client: httpx.AsyncClient) -> None:
+    """Fetch agent's in-context messages, replay as session/update notifications, update watermark."""
+    try:
+        resp = await client.get(f"{state.server_url}/agents/{session_id}/messages")
+        resp.raise_for_status()
+        items = resp.json().get("messages", [])
+    except Exception as e:
+        # History replay is best-effort — don't fail the session
+        print(f"Warning: Failed to fetch history: {e}", file=sys.stderr)
+        return
+
+    latest_ts = _replay_message_items(session_id, items)
+    if latest_ts is not None:
+        state.last_message_ts = latest_ts
+
+
+async def _update_watermark(state: BridgeState, session_id: str, client: httpx.AsyncClient) -> None:
+    """Silently advance the watermark after a toad-initiated turn.
+
+    Fetches messages after the current watermark and updates last_message_ts
+    WITHOUT sending any notifications — the live stream already delivered those.
+    Prevents the background poller from re-sending the same turn as notifications.
+    """
+    if state.last_message_ts is None:
+        return
+    try:
+        resp = await client.get(
+            f"{state.server_url}/agents/{session_id}/messages",
+            params={"after": state.last_message_ts.isoformat()},
+        )
+        resp.raise_for_status()
+        items = resp.json().get("messages", [])
+        if items:
+            latest_ts_str = items[-1].get("timestamp")
+            if latest_ts_str:
+                state.last_message_ts = datetime.fromisoformat(latest_ts_str)
+    except Exception as e:
+        logger.warning("Watermark update failed: %s", e)
+
+
+async def poll_for_new_messages(
+    state: BridgeState, session_id: str, client: httpx.AsyncClient
+) -> None:
+    """Background task: poll for new messages from non-toad sources every 2 seconds.
+
+    Skips polling while a toad-initiated stream is active (stream_active=True) to
+    avoid racing with the live SSE stream. Also serves as a heartbeat — if the
+    server is unreachable, warnings are logged but the loop continues.
+    """
+    while True:
+        await asyncio.sleep(2)
+        if state.stream_active or state.last_message_ts is None:
+            continue
+        try:
+            resp = await client.get(
+                f"{state.server_url}/agents/{session_id}/messages",
+                params={"after": state.last_message_ts.isoformat()},
+            )
+            resp.raise_for_status()
+            items = resp.json().get("messages", [])
+            if items:
+                latest_ts = _replay_message_items(session_id, items)
+                if latest_ts is not None:
+                    state.last_message_ts = latest_ts
+        except asyncio.CancelledError:
+            raise  # Let cancellation propagate cleanly
+        except Exception as e:
+            logger.warning("Poll failed: %s", e)
 
 
 async def handle_session_new(
@@ -432,12 +513,19 @@ async def handle_session_new(
         return
     
     session_id = state.agent_id
-    
+
     # Send response first so client knows session is ready
     send(response(msg["id"], {"sessionId": session_id}))
-    
-    # Then replay history as session/update notifications
-    await replay_history(session_id, state.server_url, client)
+
+    # Replay history as session/update notifications and set initial watermark
+    await replay_history(state, session_id, client)
+
+    # Cancel any existing polling task (e.g. reconnect), then start fresh
+    if state.polling_task is not None:
+        state.polling_task.cancel()
+    state.polling_task = asyncio.create_task(
+        poll_for_new_messages(state, session_id, client)
+    )
 
 
 async def handle_session_prompt(
@@ -465,7 +553,9 @@ async def handle_session_prompt(
         send(error_response(msg["id"], -32602, "Empty prompt"))
         return
     
-    # POST to Agent Home
+    # Pause background polling for the duration of this stream — we'll update the
+    # watermark silently afterward to prevent the poller from re-sending these events.
+    state.stream_active = True
     try:
         async with client.stream(
             "POST",
@@ -479,14 +569,19 @@ async def handle_session_prompt(
                     msg["id"], -32000, f"Agent Home error: {http_response.status_code} {body.decode()}"
                 ))
                 return
-            
+
             # Stream events as ACP notifications
             usage = await process_sse_stream(state, http_response, session_id)
-    
+
+        # Advance watermark past this turn so the poller doesn't re-send it
+        await _update_watermark(state, session_id, client)
+
     except httpx.RequestError as e:
         send(error_response(msg["id"], -32000, f"Request failed: {e}"))
         return
-    
+    finally:
+        state.stream_active = False
+
     # Turn complete — send response
     send(response(msg["id"], {
         "sessionId": session_id,
