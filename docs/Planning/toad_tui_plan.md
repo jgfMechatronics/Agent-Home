@@ -209,17 +209,14 @@ NOTE: This doesn't mean do shit work. Still do your best.
 
 ### Phase 1: Happy path, live agent (prove the approach)
 Basic TUI round-trip against a **live agent**, **no mid-turn interrupts** (no cancellation, no permission pause/resume). Uses the **existing `run_stream_events` route unchanged** — zero dependency on the deferred iter() work. This is pure ACP/Toad integration risk: the thing most likely to kill the approach and moot all the interrupt design. Retire it first.
-- [ ] `agent-home acp` CLI skeleton
-    - I don't know if we did this or not, but if we didn't we don't need it.
-- [ ] `initialize` → return capabilities with `loadSession: false`
-- [ ] `session/new` → connect to agent, replay history, return sessionId
-- [ ] `session/prompt` → POST message, subscribe SSE, forward chunks
-- [ ] `session/update` forwarding from SSE
-- [ ] Basic error handling
-- [ ] Streaming of agent activity initiated from another source
+- [x] `initialize` → return capabilities with `loadSession: false`
+- [x] `session/new` → connect to agent, replay history, return sessionId
+- [x] `session/prompt` → POST message, subscribe SSE, forward chunks
+- [x] `session/update` forwarding from SSE
+- [ ] Displaying of server side errors
+- [x] Streaming of agent activity initiated from another source
     - this can also be done after the first live test
-- [ ] **Separate console for Agent Home status** (no fork yet)
-    - Stop and have James play with the prototype before bothering with this.
+- [ ] Basic agent selector
 
 ### Phase 1.5: Mid-turn interrupts (Cancellation + Permission mechanism)
 Both are novel control flow involving mid-turn suspension — deferred until happy path proves viable.
@@ -245,6 +242,10 @@ Both are novel control flow involving mid-turn suspension — deferred until hap
 - [ ] Add custom sidebar panels (MCP status, context stats)
 - [ ] Contribute both upstream if quality is good
 
+
+### Whenever we need them (not high risk):
+- [ ] **Separate console for Agent Home status**
+    - Superceded by toad management panel if we get there first (but that is likely harder)
 ---
 
 ## Goals Assessment
@@ -321,3 +322,11 @@ The bridge is bounded (~4 RPC methods for Phase 1). Our `loadSession: false` + h
 Toad handles all the hard TUI problems (streaming, diffs, permissions, resize, styling). We focus on our differentiator: the memory system and agent loop.
 
 Next step: Implement Phase 1 bridge as spike to validate the approach.
+
+
+---
+
+## External activity stream design
+
+Bridge polls message history endpoint looking for messages newer than the timestamp of its last recieved msg
+This currently only updates from external activity at end of turn, but we plan to persist messages more frequently which will give a more responsive update
