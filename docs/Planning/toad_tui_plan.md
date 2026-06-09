@@ -216,7 +216,12 @@ Basic TUI round-trip against a **live agent**, **no mid-turn interrupts** (no ca
 - [ ] Displaying of server side errors
 - [x] Streaming of agent activity initiated from another source
     - this can also be done after the first live test
-- [ ] Basic agent selector
+- [x] Basic agent selector
+    - Done with per-agent toml files currenlty.  Clunky but proves out a workable concept.
+- [ ] server exec slash commands
+    - TUI Send, server execute, server stream result as tool call
+    - Discovery of slash commands (supposedly supported by toad via session/update)
+
 
 ### Phase 1.5: Mid-turn interrupts (Cancellation + Permission mechanism)
 Both are novel control flow involving mid-turn suspension — deferred until happy path proves viable.
