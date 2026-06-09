@@ -24,7 +24,8 @@ test = [
     "pytest-mock",
 ]
 
-[tool.pytest.ini_options]
+[tool.pytest]
+markers = ["note: important info/caveats about tests"]
 asyncio_mode = "auto"
 pythonpath = [".", "tests"]
 

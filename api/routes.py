@@ -8,6 +8,7 @@ have full write access. Worth revisiting when we have bandwidth.
 TODO: We have some exception catching and mapping that doesn't use "raise ... from e", probably some places we want to add the chaining.
 """
 import logging
+from datetime import datetime
 from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,6 +25,7 @@ from api.schemas import (
     CreateAgentRequest,
     CreateMemoryBlockRequest,
     MemoryBlockResponse,
+    MessageItem,
     MessageRequest,
     MessagesResponse,
 )
@@ -185,16 +187,28 @@ async def create_memory_block(
 async def get_messages(
     agent_id: str,
     full: bool = False,
+    after: datetime | None = None,
     session: AsyncSession = Depends(get_session_dep),
 ) -> MessagesResponse:
-    """
-    Return conversation history. Use ?full=true for complete history.
+    """Return conversation history.
+
+    - Default (no params): in-context messages only.
+    - ?full=true: complete history.
+    - ?after=<ISO datetime>: messages strictly after the given timestamp (exclusive).
+      Intended for polling — pass the timestamp of the last received message to get only new ones.
+
     TODO: Another instance of bad read-only control
     """
     record = await get_agent_record_or_404(session, agent_id)
-    # TODO: Don't need agent record if requesting full, but we're likely gonna rework this anyway
-    start_timestamp = None if full else record.context_window_start
-    messages = await load_messages(session, agent_id, start_timestamp=start_timestamp)
-    # Parse stored JSON and return — format TBD, this is throwaway (TODO)
-    import json
-    return MessagesResponse(messages=[json.loads(m.content) for m in messages])
+    if after is not None:
+        start_timestamp, start_exclusive = after, True
+    elif full:
+        start_timestamp, start_exclusive = None, False
+    else:
+        # TODO: Don't need agent record if requesting full, but we're likely gonna rework this anyway
+        start_timestamp, start_exclusive = record.context_window_start, False
+    messages = await load_messages(session, agent_id, start_timestamp=start_timestamp, start_exclusive=start_exclusive)
+    return MessagesResponse(messages=[
+        MessageItem(id=m.id, type=m.type, content=m.content, timestamp=m.timestamp)
+        for m in messages
+    ])

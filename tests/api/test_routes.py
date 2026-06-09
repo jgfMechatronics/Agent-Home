@@ -510,56 +510,92 @@ class TestGetMemoryBlocks:
 
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
-
-@pytest.mark.xfail(reason="get_messages endpoint format TBD — will be reworked once coding CLI/harness is selected")
+@pytest.mark.note("These tests are REFERENCE ONLY For the TUI PROTOTYPE BRANCH. They are now a mix of official reviewed tests (on main) and tests added for the prototype")
 class TestGetMessages:
     """
     GET /agents/{agent_id}/messages — conversation history.
     TODO: This is OK for now but we will likely rework the endpoint after defining what is most useful for the frontend in terms of message format
     """
 
+    @staticmethod
+    def _make_message_record(
+        id: str = "msg-1",
+        type: str = "ModelResponse",
+        content: str = '{"kind": "response", "parts": []}',
+        timestamp: datetime | None = None,
+    ) -> Mock:
+        """Build a mock MessageRecord with the attributes the route accesses."""
+        m = Mock()
+        m.id = id
+        m.type = type
+        m.content = content
+        m.timestamp = timestamp or datetime(2026, 6, 9, 12, 0, 0)
+        return m
+
     @pytest.fixture(autouse=True)
     def mock_message_loaders(self):
-        """Patch message-loading functions for all TestGetMessages tests.
+        """Patch load_messages for all TestGetMessages tests.
 
         Provides self.mock_load_messages for loader-routing assertions.
         """
-        with (
-            patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load,
-        ):
+        with patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load:
             mock_load.return_value = []
             self.mock_load_messages = mock_load
             yield
 
-    async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
-        """Without ?full=true: calls load_messages with context_window_start as start_timestamp."""
-        expected_messages = [{"role": "user", "content": "test"}]
-        self.mock_load_messages.return_value = expected_messages
+    async def test_default_loads_context_window(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+        """Without params: calls load_messages with context_window_start as start_timestamp."""
+        self.mock_load_messages.return_value = [self._make_message_record()]
 
         response = await client.get(f"/agents/{agent_record.id}/messages")
 
         assert response.status_code == 200
-        assert response.json()["messages"] == expected_messages
         self.mock_load_messages.assert_called_once_with(
-            session, agent_record.id, start_timestamp=agent_record.context_window_start
+            session, agent_record.id, start_timestamp=agent_record.context_window_start, start_exclusive=False
         )
 
-    async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+    async def test_full_true_loads_complete_history(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
         """With ?full=true: calls load_messages with start_timestamp=None for full history."""
-        expected_messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}]
-        self.mock_load_messages.return_value = expected_messages
+        records = [self._make_message_record(id="msg-1"), self._make_message_record(id="msg-2", type="ModelRequest")]
+        self.mock_load_messages.return_value = records
 
         response = await client.get(f"/agents/{agent_record.id}/messages?full=true")
 
         assert response.status_code == 200
-        assert response.json()["messages"] == expected_messages
+        assert len(response.json()["messages"]) == 2
         self.mock_load_messages.assert_called_once_with(
-            session, agent_record.id, start_timestamp=None
+            session, agent_record.id, start_timestamp=None, start_exclusive=False
         )
 
-    async def test_returns_reasonable_format(self):
-        # TODO: finalize MessageItem format, constrain MessageResponse (or whatever it is) to be list[MessageItem]
-        pytest.fail()
+    async def test_response_uses_message_item_format(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+        """Response items use MessageItem format: id, type, content (raw JSON string), timestamp (ISO string)."""
+        ts = datetime(2026, 6, 9, 12, 0, 0)
+        raw_content = '{"kind": "response", "parts": [{"part_kind": "text", "content": "hello"}]}'
+        self.mock_load_messages.return_value = [
+            self._make_message_record(id="msg-42", type="ModelResponse", content=raw_content, timestamp=ts)
+        ]
+
+        response = await client.get(f"/agents/{agent_record.id}/messages")
+
+        assert response.status_code == 200
+        messages = response.json()["messages"]
+        assert len(messages) == 1
+        item = messages[0]
+        assert item["id"] == "msg-42"
+        assert item["type"] == "ModelResponse"
+        assert item["content"] == raw_content  # raw JSON string — NOT parsed by the route
+        assert item["timestamp"] == ts.isoformat()
+
+    async def test_after_param_filters_exclusively(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+        """?after=<timestamp>: calls load_messages with that timestamp and start_exclusive=True."""
+        cutoff = datetime(2026, 6, 9, 12, 0, 0)
+
+        response = await client.get(f"/agents/{agent_record.id}/messages?after={cutoff.isoformat()}")
+
+        assert response.status_code == 200
+        self.mock_load_messages.assert_called_once_with(
+            session, agent_record.id, start_timestamp=cutoff, start_exclusive=True
+        )
 
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
