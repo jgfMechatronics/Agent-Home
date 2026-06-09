@@ -1,6 +1,8 @@
 """ACP bridge: translates stdio JSON-RPC ↔ Agent Home HTTP/SSE.
 
 Phase 1: Happy path only. No cancellation, no permissions.
+TODO: This bridge is too smart, its fine as a POC but really Agent-Home server should speak ACP and the bridge should just
+map stdio->HTTP and back, with maybe some basic polling. Right now, Agent-Home isn't really ACP compatible.
 """
 
 from __future__ import annotations
