@@ -330,3 +330,15 @@ Next step: Implement Phase 1 bridge as spike to validate the approach.
 
 Bridge polls message history endpoint looking for messages newer than the timestamp of its last recieved msg
 This currently only updates from external activity at end of turn, but we plan to persist messages more frequently which will give a more responsive update
+
+## Slash commands
+https://agentclientprotocol.com/protocol/v1/slash-commands
+This may be usable for providing custom slash commands like /recompile!
+Not sure if toad supports this.
+
+---
+
+## Missing features we'd like from Toad
+- Session/load usage for agent discovery
+- Images
+- 
