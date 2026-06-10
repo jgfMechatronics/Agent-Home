@@ -8,6 +8,7 @@ have full write access. Worth revisiting when we have bandwidth.
 TODO: We have some exception catching and mapping that doesn't use "raise ... from e", probably some places we want to add the chaining.
 """
 import logging
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, AsyncGenerator, Awaitable, Protocol
 
@@ -47,6 +48,14 @@ class SlashCommandHandler(Protocol):
     async def __call__(self, deps: AgentDeps, args: str) -> ServerSentEvent: ...
 
 
+@dataclass
+class SlashCommandDef:
+    """Definition for a slash command: handler + discovery metadata."""
+    handler: SlashCommandHandler
+    description: str
+    hint: str | None = None
+
+
 async def _handle_recompile(deps: AgentDeps, args: str) -> ServerSentEvent:
     """Handler for /recompile command. Recompiles the system prompt from current memory blocks."""
     await compile_system_prompt(deps)
@@ -57,9 +66,23 @@ async def _handle_recompile(deps: AgentDeps, args: str) -> ServerSentEvent:
     )
 
 
-SLASH_COMMANDS: dict[str, SlashCommandHandler] = {
-    "recompile": _handle_recompile,
+SLASH_COMMANDS: dict[str, SlashCommandDef] = {
+    "recompile": SlashCommandDef(
+        handler=_handle_recompile,
+        description="Recompile memory blocks into system prompt",
+    ),
 }
+
+
+def get_available_commands() -> list[dict[str, Any]]:
+    """Build the availableCommands list for ACP discovery notification."""
+    commands = []
+    for name, cmd_def in SLASH_COMMANDS.items():
+        cmd = {"name": name, "description": cmd_def.description}
+        if cmd_def.hint:
+            cmd["input"] = {"hint": cmd_def.hint}
+        commands.append(cmd)
+    return commands
 
 
 def _parse_slash_cmd(msg: str) -> tuple[str, str] | None:
@@ -99,7 +122,7 @@ async def _handle_slash_cmd(deps: AgentDeps, msg: str) -> ServerSentEvent:
             event="SlashCommandResult"
         )
     cmd, args = parsed
-    handler = SLASH_COMMANDS[cmd]
+    handler = SLASH_COMMANDS[cmd].handler
     try:
         return await handler(deps, args)
     except Exception as e:
@@ -161,6 +184,12 @@ async def _handle_message(agent: Agent, deps: AgentDeps, user_prompt: str) -> As
 
 
 # --- Routes ---
+
+@router.get("/slash-commands")
+async def get_slash_commands() -> list[dict[str, Any]]:
+    """Return available slash commands for client discovery."""
+    return get_available_commands()
+
 
 @router.post("/{agent_id}/messages", response_class=EventSourceResponse)
 async def send_message(

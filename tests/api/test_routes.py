@@ -43,7 +43,7 @@ from conftest import make_deps
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import DuplicateBlockError
-from api.routes import _parse_slash_cmd, _is_slash_cmd, _handle_slash_cmd, _handle_recompile
+from api.routes import _parse_slash_cmd, _is_slash_cmd, _handle_slash_cmd, _handle_recompile, SlashCommandDef
 from fastapi.sse import ServerSentEvent
 
 # --- Module-level test data ---
@@ -503,7 +503,8 @@ class TestHandleSlashCmd:
         )
         mock_handler = AsyncMock(return_value=expected_sse)
 
-        with patch.dict("api.routes.SLASH_COMMANDS", {"recompile": mock_handler}):
+        mock_def = SlashCommandDef(handler=mock_handler, description="test")
+        with patch.dict("api.routes.SLASH_COMMANDS", {"recompile": mock_def}):
             result = await _handle_slash_cmd(deps, msg)
 
         mock_handler.assert_awaited_once_with(deps, expected_args)
@@ -514,7 +515,8 @@ class TestHandleSlashCmd:
         deps = Mock()
         mock_handler = AsyncMock(side_effect=RuntimeError("boom"))
 
-        with patch.dict("api.routes.SLASH_COMMANDS", {"recompile": mock_handler}):
+        mock_def = SlashCommandDef(handler=mock_handler, description="test")
+        with patch.dict("api.routes.SLASH_COMMANDS", {"recompile": mock_def}):
             result = await _handle_slash_cmd(deps, "/recompile")
 
         assert result.event == "SlashCommandResult"
