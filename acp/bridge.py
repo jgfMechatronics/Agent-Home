@@ -174,6 +174,14 @@ def tool_call_update(
     })
 
 
+def available_commands_update(session_id: str, commands: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build an available_commands_update notification for slash command discovery."""
+    return session_update(session_id, {
+        "sessionUpdate": "available_commands_update",
+        "availableCommands": commands,
+    })
+
+
 # =============================================================================
 # Bridge State
 # =============================================================================
@@ -504,6 +512,19 @@ async def poll_for_new_messages(
             logger.warning("Poll failed: %s", e)
 
 
+async def send_available_commands(
+    state: BridgeState, session_id: str, client: httpx.AsyncClient
+) -> None:
+    """Fetch available slash commands from server and send to client."""
+    try:
+        resp = await client.get(f"{state.server_url}/agents/slash-commands")
+        resp.raise_for_status()
+        commands = resp.json()
+        send(available_commands_update(session_id, commands))
+    except Exception as e:
+        logger.warning("Failed to fetch slash commands: %s", e)
+
+
 async def handle_session_new(
     state: BridgeState, msg: dict[str, Any], client: httpx.AsyncClient
 ) -> None:
@@ -531,6 +552,9 @@ async def handle_session_new(
 
     # Replay history as session/update notifications and set initial watermark
     await replay_history(state, session_id, client)
+
+    # Send available slash commands for client discovery
+    await send_available_commands(state, session_id, client)
 
     # Cancel any existing polling task (e.g. reconnect), then start fresh
     if state.polling_task is not None:
