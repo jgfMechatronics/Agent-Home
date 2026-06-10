@@ -221,6 +221,8 @@ Basic TUI round-trip against a **live agent**, **no mid-turn interrupts** (no ca
 - [ ] server exec slash commands
     - TUI Send, server execute, server stream result as tool call
     - Discovery of slash commands (supposedly supported by toad via session/update)
+    - send prompt on to agent if not a valid slash cmd
+    - note: probably want to rethink the arg sitaution. Right now you can just send whatever args and it still runs
 
 
 ### Phase 1.5: Mid-turn interrupts (Cancellation + Permission mechanism)
