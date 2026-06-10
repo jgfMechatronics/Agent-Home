@@ -11,7 +11,8 @@ have full write access. Worth revisiting when we have bandwidth.
 TODO: We have some exception catching and mapping that doesn't use "raise ... from e", probably some places we want to add the chaining.
 """
 import logging
-from typing import Any, AsyncGenerator
+from datetime import datetime
+from typing import Any, AsyncGenerator, Awaitable, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
@@ -41,6 +42,77 @@ from messages.messages import load_messages
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agents")
+
+
+# --- Slash Commands ---
+
+class SlashCommandHandler(Protocol):
+    """Protocol for slash command handlers. All handlers receive deps and args."""
+    async def __call__(self, deps: AgentDeps, args: str) -> ServerSentEvent: ...
+
+
+async def _handle_recompile(deps: AgentDeps, args: str) -> ServerSentEvent:
+    """Handler for /recompile command. Recompiles the system prompt from current memory blocks."""
+    await compile_system_prompt(deps)
+    await deps.commit_changes_refresh_agent_record()
+    return ServerSentEvent(
+        data={"name": "user_recompile", "args": args, "result": "System prompt recompiled successfully", "status": "success"},
+        event="SlashCommandResult",
+    )
+
+
+SLASH_COMMANDS: dict[str, SlashCommandHandler] = {
+    "recompile": _handle_recompile,
+}
+
+
+def _parse_slash_cmd(msg: str) -> tuple[str, str] | None:
+    """Parse a message as a slash command.
+    
+    Returns (command_name, args) if msg starts with '/' and command is in registry.
+    Returns None otherwise (including unrecognized commands — those pass to model).
+    """
+    if not msg.startswith("/"):
+        return None
+    # Split into command and args: "/recompile foo bar" -> ("recompile", "foo bar")
+    parts = msg[1:].split(maxsplit=1)
+    if not parts:
+        return None
+    cmd = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+    if cmd not in SLASH_COMMANDS:
+        return None
+    return (cmd, args)
+
+
+def _is_slash_cmd(msg: str) -> bool:
+    """Check if message is a recognized slash command."""
+    return _parse_slash_cmd(msg) is not None
+
+
+async def _handle_slash_cmd(deps: AgentDeps, msg: str) -> ServerSentEvent:
+    """Dispatch a slash command to its handler and return the result SSE.
+    
+    Precondition: _is_slash_cmd(msg) is True.
+    """
+    parsed = _parse_slash_cmd(msg)
+    if parsed is None:
+        # Shouldn't happen if precondition met, but handle gracefully
+        return ServerSentEvent(
+            data={"name": "user_unknown", "args": msg, "result": "Unknown command", "status": "error"},
+            event="SlashCommandResult"
+        )
+    cmd, args = parsed
+    handler = SLASH_COMMANDS[cmd]
+    try:
+        return await handler(deps, args)
+    except Exception as e:
+        logger.exception("Slash command /%s failed", cmd)
+        return ServerSentEvent(
+            data={"name": f"user_{cmd}", "args": args, "result": f"Command failed: {e}", "status": "error"},
+            event="SlashCommandResult"
+        )
+
 
 # --- Helpers ---
 
@@ -83,11 +155,15 @@ async def handle_message(
 
     try:
         agent_app_state = agent_app_state_reg[agent_id]
-        async for event in run_stateful_agent(agent=agent,
-                                              deps=deps, 
-                                              agent_app_state=agent_app_state,
-                                              user_prompt=body.message):
-            yield map_to_sse(event)
+
+        if _is_slash_cmd(body.message):
+            yield await _handle_slash_cmd(deps, body.message)
+        else:
+            async for event in run_stateful_agent(agent=agent,
+                                                deps=deps, 
+                                                agent_app_state=agent_app_state,
+                                                user_prompt=body.message):
+                yield map_to_sse(event)
     except Exception as e:
         # TODO (low priority): put more thought into logging strategy (log levels, handler chain, structured logging)
         logger.exception("Unexpected error in handle_message for agent %s", agent_id)
