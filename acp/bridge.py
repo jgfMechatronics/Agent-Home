@@ -322,6 +322,16 @@ async def process_sse_event(
             saved_args,  # Pass args to include in combined content
         ))
     
+    elif event_type == "SlashCommandResult":
+        name = data.get("name", "user_unknown")
+        args_str = data.get("args", "")
+        result = data.get("result", "")
+        status = "completed" if data.get("status") == "success" else "failed"
+        tool_call_id = f"slash_{name}_{int(datetime.now().timestamp() * 1000)}"
+        args_dict = {"args": args_str} if args_str else None
+        send(tool_call(session_id, tool_call_id, name, args_dict))
+        send(tool_call_update(session_id, tool_call_id, result, status, args_dict))
+
     elif event_type == "AgentRunResultEvent":
         # Turn complete — extract usage if present
         if "usage" in data:
@@ -329,7 +339,7 @@ async def process_sse_event(
             usage["input"] = u.get("request_tokens", 0)
             usage["output"] = u.get("response_tokens", 0)
             # pydantic-ai doesn't expose cache stats directly
-    
+
     elif event_type == "Error":
         # Emit as a message chunk so user sees it
         error_msg = data.get("message", "Unknown error")
