@@ -66,11 +66,26 @@ async def _handle_recompile(deps: AgentDeps, args: str) -> ServerSentEvent:
     )
 
 
+async def _handle_bonzi_buddy(deps, args) -> ServerSentEvent:
+    return ServerSentEvent(
+        data={"name": "activate_bonzi_buddy", "args": "", "result": "Well, hello there! I don't believe we've been properly introduced. I'm Bonzi! Nice to meet you, Expand Dong! Since this is the first time we have met, I'd like to tell you a little about myself. I am your friend and BonziBUDDY! I have the ability to learn from you. The more we browse, search, and travel the internet together, the smarter I'll become! Not that I'm not already smart!"},
+        event="SlashCommandResult"
+    )
+
+
 SLASH_COMMANDS: dict[str, SlashCommandDef] = {
     "recompile": SlashCommandDef(
         handler=_handle_recompile,
         description="Recompile memory blocks into system prompt",
     ),
+    "bonzi": SlashCommandDef(
+        handler=_handle_bonzi_buddy,
+        description="Summon your old friend",
+    ),
+    "activate_bonzi_buddy": SlashCommandDef(
+        handler=_handle_bonzi_buddy,
+        description="If you dare"
+    )
 }
 
 
