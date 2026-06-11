@@ -1,7 +1,14 @@
 # Req:
 
 - Doesn't duplicate during persistence across persistence pts
-- Persists every complete Model Message as you go (how to test?)
+- Doesn't persist message history (messages loaded from the DB and passed in at agent
+  construction must NOT be re-persisted). Technically a sub-case of "doesn't duplicate
+  across persistence pts," but called out explicitly because it's an easy gotcha.
+- Persists every complete Model Message as you go, **except** orphaned tool calls. A
+  ModelResponse carrying a ToolCallPart must NOT be persisted until its matching
+  ToolReturnPart exists — i.e. defer the persistence point until the tool returns, so the
+  call+return go in as a well-formed unit. (persist_messages' orphan sanitizer is a
+  failsafe against invalid histories; we should never actually be feeding it an orphan.)
 - Persists even on mid-run exception or cancellation
 - Cancellation allows any active tool execution to complete
   - May be sensitive to PydanticAI internals w/o `agent.iter()` whatever
