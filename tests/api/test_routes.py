@@ -131,7 +131,7 @@ def _base_route_patches():
     """Patch 4 route-level side effects (everything except persist_messages).
 
     Shared by TestSendMessage.mock_route_side_effects and
-    TestPersistenceAcrossInterruptions.persist_spy so the patch set stays DRY.
+    _RealAgentTestBase.persist_spy so the patch set stays DRY.
 
     Yields a dict: {"load", "deserialize", "needs_compact", "compact"}
     """
@@ -457,7 +457,8 @@ class TestCreateAgent:
 
 
 # ---------------------------------------------------------------------------
-# Persistence helpers (used by TestPersistenceAcrossInterruptions)
+# Persistence helpers + real-agent base class
+# (shared by TestPersistenceAcrossInterruptions and TestCancellation)
 # ---------------------------------------------------------------------------
 
 def _union_of_persisted(spy) -> list:
@@ -469,7 +470,7 @@ def _union_of_persisted(spy) -> list:
     return union
 
 
-def _select(union: list, msg_type: type, part_type: type) -> list:
+def _messages_with_part(union: list, msg_type: type, part_type: type) -> list:
     """Messages of msg_type in the union carrying at least one part of part_type."""
     return [
         m for m in union
@@ -563,14 +564,16 @@ async def _exception_after_tool_return_stream(messages, info: AgentInfo):
 
 
 # ---------------------------------------------------------------------------
-# TestPersistenceAcrossInterruptions
+# _RealAgentTestBase + TestPersistenceAcrossInterruptions
 # ---------------------------------------------------------------------------
 
-class _PersistSpyMixin:
-    """Shared autouse fixture: spy on persist_messages (autospec) + expose base patches.
+class _RealAgentTestBase:
+    """Base for the two test classes that drive a real pydantic-ai Agent.
 
-    Inherited by the persistence and cancellation test classes, which both assert on
-    the persisted-message union via self.spy.
+    Provides (1) an autouse persist_messages spy (self.spy) plus the base route patches,
+    and (2) _install_real_agent_dep(), a context manager subclasses use to override
+    get_agent_and_deps with a real Agent + mock session. Both subclasses assert on the
+    persisted-message union via self.spy.
     """
 
     @pytest.fixture(autouse=True)
@@ -605,7 +608,7 @@ class _PersistSpyMixin:
             app.dependency_overrides.pop(get_agent_and_deps)
 
 
-class TestPersistenceAcrossInterruptions(_PersistSpyMixin):
+class TestPersistenceAcrossInterruptions(_RealAgentTestBase):
     """Persistence contract tests using a real pydantic-ai Agent + FunctionModel.
 
     Test 1 (happy path) documents existing persist-at-terminal-event behavior and
@@ -651,10 +654,10 @@ class TestPersistenceAcrossInterruptions(_PersistSpyMixin):
 
         union = _union_of_persisted(self.spy)
 
-        user_reqs = _select(union, ModelRequest, UserPromptPart)
-        tool_resps = _select(union, ModelResponse, ToolCallPart)
-        tool_return_reqs = _select(union, ModelRequest, ToolReturnPart)
-        text_resps = _select(union, ModelResponse, TextPart)
+        user_reqs = _messages_with_part(union, ModelRequest, UserPromptPart)
+        tool_resps = _messages_with_part(union, ModelResponse, ToolCallPart)
+        tool_return_reqs = _messages_with_part(union, ModelRequest, ToolReturnPart)
+        text_resps = _messages_with_part(union, ModelResponse, TextPart)
 
         assert len(user_reqs) == 1, "Expected exactly one UserPrompt in union"
         assert len(tool_resps) == 1, "Expected exactly one ToolCall response in union"
@@ -698,9 +701,9 @@ class TestPersistenceAcrossInterruptions(_PersistSpyMixin):
 
         union = _union_of_persisted(self.spy)
 
-        tool_resps = _select(union, ModelResponse, ToolCallPart)
-        tool_return_reqs = _select(union, ModelRequest, ToolReturnPart)
-        text_resps = _select(union, ModelResponse, TextPart)
+        tool_resps = _messages_with_part(union, ModelResponse, ToolCallPart)
+        tool_return_reqs = _messages_with_part(union, ModelRequest, ToolReturnPart)
+        text_resps = _messages_with_part(union, ModelResponse, TextPart)
 
         assert len(tool_resps) >= 1, "Completed tool call must appear in persist union"
         assert len(tool_return_reqs) >= 1, "Completed tool return must appear in persist union"
@@ -756,7 +759,7 @@ _RENDEZVOUS_MIN_VERSION = "1.104.0"
 # TestCancellation
 # ---------------------------------------------------------------------------
 
-class TestCancellation(_PersistSpyMixin):
+class TestCancellation(_RealAgentTestBase):
     """Cancellation contract tests.
 
     Uses a blocking tool for deterministic timing: the tool signals 'tool_entered'
@@ -826,16 +829,16 @@ class TestCancellation(_PersistSpyMixin):
         union = _union_of_persisted(self.spy)
 
         # Tool call + return pair (tool was allowed to complete — req #4).
-        assert len(_select(union, ModelResponse, ToolCallPart)) >= 1, (
+        assert len(_messages_with_part(union, ModelResponse, ToolCallPart)) >= 1, (
             "Tool call must be persisted on graceful cancel"
         )
-        assert len(_select(union, ModelRequest, ToolReturnPart)) >= 1, (
+        assert len(_messages_with_part(union, ModelRequest, ToolReturnPart)) >= 1, (
             "Tool return must be persisted — tool must complete before cancel takes effect"
         )
         _assert_no_orphans(union)
 
         # No final assistant text: post-tool model step must not run after cancel (req #4).
-        assert len(_select(union, ModelResponse, TextPart)) == 0, (
+        assert len(_messages_with_part(union, ModelResponse, TextPart)) == 0, (
             "Post-tool model step must not run after cancel"
         )
 
