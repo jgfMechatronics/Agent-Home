@@ -130,7 +130,7 @@ class _BaseRouteTest:
     """Base class for test classes that need the standard route-level patches.
 
     Patches load_messages, deserialize_messages, is_compaction_needed, and compact,
-    exposing them as self.mock_load_messages, self.mock_deserialize,
+    exposing them as self.mock_load_messages, self.mock_deserialize_msgs,
     self.mock_needs_compact, and self.mock_compact.
     """
 
@@ -152,7 +152,7 @@ class _BaseRouteTest:
             mock_deserialize.return_value = []
             mock_needs_compact.return_value = False
             self.mock_load_messages = mock_load
-            self.mock_deserialize = mock_deserialize
+            self.mock_deserialize_msgs = mock_deserialize
             self.mock_needs_compact = mock_needs_compact
             self.mock_compact = mock_compact
             self.mock_persist_messages = mock_persist_messages
@@ -549,10 +549,7 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
 
 
 class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
-    """Persistence contract tests using a real pydantic-ai Agent + FunctionModel.
-
-    Test 1 (happy path) is a more detailed/stronger version of the basic persistence test in TestSendMessage.
-    """
+    """Persistence contract tests using a real pydantic-ai Agent + FunctionModel."""
 
     @staticmethod
     def _make_function_agent(stream_fn) -> Agent:
@@ -614,16 +611,19 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         ):
             yield
 
-    @pytest.mark.asyncio
     async def test_happy_path_persists_full_message_list(self, client: AsyncClient):
         """
         Persisted message list contains all four message types in causal order.
 
         Uses a real pydantic-ai Agent so new_messages() reflects actual pydantic-ai
         message structure.  Validates the full pipeline against the real library.
+        
+        A more detailed/stronger version of the basic persistence test in TestSendMessage.
         """
         fake_history = [ModelRequest(parts=[UserPromptPart(content="prior turn")])]
-        self.mock_deserialize.return_value = fake_history
+        # TODO: Sanity assertion that the msg history actually made it into the agent. This is coupled to impl details
+        # pretty hard rn with no validation that coupling holds
+        self.mock_deserialize_msgs.return_value = fake_history
 
         events = await stream_and_collect(client, self.agent_record.id)
         event_types = [e["event"] for e in events]
@@ -653,7 +653,9 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         assert self.mock_session.commit.called, "Session must be committed on happy path"
         assert not self.mock_session.rollback.called, "Session must NOT be rolled back on happy path"
 
-    @pytest.mark.asyncio
+    async def test_persists_as_complete_msgs_come_in(self):
+        pytest.fail("TODO: Happy path doesn't test this. This is a real req based on TUI polling history.")
+
     async def test_persist_survives_mid_run_exception(self, client: AsyncClient):
         """CONTRACT-DEFINING RED TEST.
 
@@ -770,7 +772,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
             "not yet implemented; xfail strict=True forces cleanup when impl lands"
         ),
     )
-    @pytest.mark.asyncio
+
     async def test_graceful_cancel(self, client: AsyncClient):
         """CONTRACT: graceful cancel lets the in-flight tool complete, persists the
         tool call+return pair and a cancellation notice, then commits — without rolling back.
@@ -851,7 +853,6 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 # Rendezvous regression guard (standalone — no class fixtures needed)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
 @pytest.mark.skipif(
     Version(_PYDANTIC_AI_VERSION) < Version(_RENDEZVOUS_MIN_VERSION),
     reason=f"Rendezvous semantics not verified before pydantic-ai {_RENDEZVOUS_MIN_VERSION}",
