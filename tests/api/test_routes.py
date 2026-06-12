@@ -126,30 +126,47 @@ def override_db_session(app: FastAPI, session: AsyncSession):
     app.dependency_overrides.pop(get_session_dep)
 
 
-@pytest.fixture
-def _base_route_patches():
-    """Patch 4 route-level side effects (everything except persist_messages).
+class _BaseRouteTest:
+    """Base class for test classes that need the standard route-level patches.
 
-    Shared by TestSendMessage.mock_route_side_effects and
-    _RealAgentTestBase.persist_spy so the patch set stays DRY.
-
-    Yields a dict: {"load", "deserialize", "needs_compact", "compact"}
+    Patches load_messages, deserialize_messages, is_compaction_needed, and compact,
+    exposing them as self.mock_load_messages, self.mock_deserialize,
+    self.mock_needs_compact, and self.mock_compact.
     """
-    with (
-        patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load,
-        patch("api.routes.deserialize_messages") as mock_deserialize,
-        patch("api.routes.is_compaction_needed") as mock_needs_compact,
-        patch("api.routes.compact", new_callable=AsyncMock) as mock_compact,
-    ):
-        mock_load.return_value = []
-        mock_deserialize.return_value = []
-        mock_needs_compact.return_value = False
-        yield {
-            "load": mock_load,
-            "deserialize": mock_deserialize,
-            "needs_compact": mock_needs_compact,
-            "compact": mock_compact,
-        }
+
+    @pytest.fixture(autouse=True)
+    def _base_route_patches(self):
+        """
+        Patch route-level side effects
+        TODO: Consider autospec across the board. Currently only applied to persist_messages
+        Came in from refactor where the signature matching for it was explicitly considered.
+        """
+        with (
+            patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load,
+            patch("api.routes.deserialize_messages") as mock_deserialize,
+            patch("api.routes.is_compaction_needed") as mock_needs_compact,
+            patch("api.routes.compact", new_callable=AsyncMock) as mock_compact,
+            patch("api.routes.persist_messages", autospec=True) as mock_persist_messages,
+        ):
+            mock_load.return_value = []
+            mock_deserialize.return_value = []
+            mock_needs_compact.return_value = False
+            self.mock_load_messages = mock_load
+            self.mock_deserialize = mock_deserialize
+            self.mock_needs_compact = mock_needs_compact
+            self.mock_compact = mock_compact
+            self.mock_persist_messages = mock_persist_messages
+            yield
+
+
+    @staticmethod
+    def _make_mock_session() -> Mock:
+        """Build a mock AsyncSession with async commit/rollback/refresh."""
+        session = Mock()
+        session.commit = AsyncMock()
+        session.rollback = AsyncMock()
+        session.refresh = AsyncMock()
+        return session
 
 
 # --- Helpers ---
@@ -197,7 +214,7 @@ async def stream_and_collect(client: AsyncClient, agent_id, message: str = "test
 
 # --- Test Classes ---
 
-class TestSendMessage:
+class TestSendMessage(_BaseRouteTest):
     """
     POST /agents/{agent_id}/messages — main streaming endpoint.
     TODO (Low priority): This test class got a bit confusing, consider simplifying if possible
@@ -218,7 +235,7 @@ class TestSendMessage:
         method is called on the agent. We already have a mock agent so we can just use that.
         """
         self.agent_record = agent_record
-        self.mock_session = _make_mock_session()
+        self.mock_session = self._make_mock_session()
 
         def _configure(events=None, raise_exc=None, raises_mid_stream=None):
             async def _mock_dep():
@@ -236,21 +253,6 @@ class TestSendMessage:
         yield
 
         app.dependency_overrides.pop(get_agent_and_deps)
-
-    @pytest.fixture(autouse=True)
-    def mock_route_side_effects(self, _base_route_patches):
-        """Patch route-level side effects for all TestSendMessage tests.
-
-        Provides self.mock_persist, self.mock_needs_compact, self.mock_compact
-        for tests that assert on persistence/compaction behavior.
-        """
-        with patch("api.routes.persist_messages", new_callable=AsyncMock) as mock_persist:
-            self.mock_load_messages = _base_route_patches["load"]
-            self.mock_deserialize = _base_route_patches["deserialize"]
-            self.mock_needs_compact = _base_route_patches["needs_compact"]
-            self.mock_compact = _base_route_patches["compact"]
-            self.mock_persist = mock_persist
-            yield
 
     @pytest.mark.parametrize("events_factory,expected_types", [
         pytest.param(TEXT_STREAM, ["PartStartEvent", "PartDeltaEvent", "AgentRunResultEvent"], id="text-stream"),
@@ -315,7 +317,7 @@ class TestSendMessage:
 
         await stream_and_collect(client, self.agent_record.id)
 
-        self.mock_persist.assert_called_once()
+        self.mock_persist_messages.assert_called_once()
 
     @pytest.mark.parametrize("needs_compact,expect_compact", [(True, True), (False, False)])
     async def test_compaction_called_based_on_check(
@@ -355,7 +357,7 @@ class TestSendMessage:
 
         await stream_and_collect(client, self.agent_record.id)
 
-        self.mock_persist.assert_called_once()
+        self.mock_persist_messages.assert_called_once()
 
     # --- Transaction behaviour ---
 
@@ -368,7 +370,7 @@ class TestSendMessage:
 
     async def test_rollback_and_error_sse_on_persist_failure(self, client: AsyncClient):
         """persist_messages failure triggers rollback and yields Error SSE. Session is not committed."""
-        self.mock_persist.side_effect = RuntimeError("DB write failed")
+        self.mock_persist_messages.side_effect = RuntimeError("DB write failed")
 
         sse_events = await stream_and_collect(client, self.agent_record.id)
 
@@ -504,14 +506,6 @@ def _assert_no_orphans(union: list) -> None:
     assert not orphans, f"Orphaned ToolCallPart IDs with no matching return: {orphans}"
 
 
-def _make_mock_session() -> Mock:
-    """Build a mock AsyncSession with async commit/rollback/refresh."""
-    session = Mock()
-    session.commit = AsyncMock()
-    session.rollback = AsyncMock()
-    session.refresh = AsyncMock()
-    return session
-
 
 def _make_function_agent(stream_fn) -> Agent:
     """Build a real pydantic-ai Agent backed by FunctionModel with a record_thing tool."""
@@ -567,25 +561,14 @@ async def _exception_after_tool_return_stream(messages, info: AgentInfo):
 # _RealAgentTestBase + TestPersistenceAcrossInterruptions
 # ---------------------------------------------------------------------------
 
-class _RealAgentTestBase:
+class _RealAgentTestBase(_BaseRouteTest):
     """Base for the two test classes that drive a real pydantic-ai Agent.
 
-    Provides (1) an autouse persist_messages spy (self.spy) plus the base route patches,
+    Provides (1) an autouse persist_messages spy (self.mock_persist_messages) plus the base route patches,
     and (2) _install_real_agent_dep(), a context manager subclasses use to override
     get_agent_and_deps with a real Agent + mock session. Both subclasses assert on the
-    persisted-message union via self.spy.
+    persisted-message union via self.mock_persist_messages.
     """
-
-    @pytest.fixture(autouse=True)
-    def persist_spy(self, _base_route_patches):
-        """Spy on persist_messages (autospec) + expose base patches as attrs."""
-        with patch("api.routes.persist_messages", autospec=True) as spy:
-            self.spy = spy
-            self.mock_load_messages = _base_route_patches["load"]
-            self.mock_deserialize = _base_route_patches["deserialize"]
-            self.mock_needs_compact = _base_route_patches["needs_compact"]
-            self.mock_compact = _base_route_patches["compact"]
-            yield
 
     @contextmanager
     def _install_real_agent_dep(self, app, agent_record, agent_factory):
@@ -596,7 +579,7 @@ class _RealAgentTestBase:
         Exposes self.agent_record and self.mock_session.
         """
         self.agent_record = agent_record
-        self.mock_session = _make_mock_session()
+        self.mock_session = self._make_mock_session()
 
         async def _dep():
             yield agent_factory(), make_deps(self.mock_session, agent_record)
@@ -652,7 +635,7 @@ class TestPersistenceAcrossInterruptions(_RealAgentTestBase):
         event_types = [e["event"] for e in events]
         assert "Error" not in event_types, f"Unexpected Error event: {events}"
 
-        union = _union_of_persisted(self.spy)
+        union = _union_of_persisted(self.mock_persist_messages)
 
         user_reqs = _messages_with_part(union, ModelRequest, UserPromptPart)
         tool_resps = _messages_with_part(union, ModelResponse, ToolCallPart)
@@ -695,11 +678,11 @@ class TestPersistenceAcrossInterruptions(_RealAgentTestBase):
 
         # --- All assertions below are RED with current impl ---
 
-        assert self.spy.call_count >= 1, (
+        assert self.mock_persist_messages.call_count >= 1, (
             "persist_messages must be called even when the run crashes mid-stream"
         )
 
-        union = _union_of_persisted(self.spy)
+        union = _union_of_persisted(self.mock_persist_messages)
 
         tool_resps = _messages_with_part(union, ModelResponse, ToolCallPart)
         tool_return_reqs = _messages_with_part(union, ModelRequest, ToolReturnPart)
@@ -822,11 +805,11 @@ class TestCancellation(_RealAgentTestBase):
             f"Cancel route must return 200; got {cancel_response.status_code}"
         )
 
-        assert self.spy.call_count >= 1, (
+        assert self.mock_persist_messages.call_count >= 1, (
             "persist_messages must be called even on graceful cancel"
         )
 
-        union = _union_of_persisted(self.spy)
+        union = _union_of_persisted(self.mock_persist_messages)
 
         # Tool call + return pair (tool was allowed to complete — req #4).
         assert len(_messages_with_part(union, ModelResponse, ToolCallPart)) >= 1, (
