@@ -459,69 +459,12 @@ class TestCreateAgent:
 
 
 # ---------------------------------------------------------------------------
-# Persistence helpers + real-agent base class
-# (shared by TestPersistenceAcrossInterruptions and TestCancellation)
+# Detailed Persistence test and Cancellation tests
 # ---------------------------------------------------------------------------
 
-def _list_persisted_messages(mock_persist_messages) -> list:
-    """Concatenate messages from all persist_messages calls, in call order."""
-    messages = []
-    for call in mock_persist_messages.call_args_list:
-        assert "messages" in call.kwargs, (
-            "At time of writing impl only uses kwargs. This will break if impl switches to positional args. "
-            "Update if that issue occurs."
-        )
-        messages.extend(call.kwargs["messages"])
-    return messages
-
-
-def _messages_with_part(persisted_msgs_list: list, msg_type: type, part_type: type) -> list:
-    """Messages of msg_type in the persisted list carrying at least one part of part_type."""
-    return [
-        m for m in persisted_msgs_list
-        if isinstance(m, msg_type) and any(isinstance(p, part_type) for p in m.parts)
-    ]
-
-
-def _assert_no_duplicates(persisted_msgs_list: list) -> None:
-    """Each message object must appear at most once in the persisted message list."""
-    for i in range(len(persisted_msgs_list)):
-        for j in range(i + 1, len(persisted_msgs_list)):
-            assert persisted_msgs_list[i] != persisted_msgs_list[j], (
-                f"Duplicate message at indices {i} and {j}: {persisted_msgs_list[i]!r}"
-            )
-
-
-def _assert_no_orphans(persisted_msgs_list: list) -> None:
-    """Every ToolCallPart must have a matching ToolReturnPart or RetryPromptPart."""
-    tool_call_ids: set[str] = set()
-    response_ids: set[str] = set()
-    for msg in persisted_msgs_list:
-        if isinstance(msg, ModelResponse):
-            for part in msg.parts:
-                if isinstance(part, ToolCallPart):
-                    tool_call_ids.add(part.tool_call_id)
-        elif isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, (ToolReturnPart, RetryPromptPart)):
-                    response_ids.add(part.tool_call_id)
-    orphans = tool_call_ids - response_ids
-    assert not orphans, f"Orphaned ToolCallPart IDs with no matching return: {orphans}"
-
-
-def _make_function_agent(stream_fn) -> Agent:
-    """Build a real pydantic-ai Agent backed by FunctionModel with a dummy tool."""
-    agent: Agent = Agent(FunctionModel(stream_function=stream_fn))
-
-    def dummy_tool(arg: str) -> str:
-        return "dummy_tool_output"
-
-    agent.tool_plain(dummy_tool)
-    return agent
-
-
+# This helper shared by a few classes without clean way to get through inheritance
 def _has_tool_return(messages) -> bool:
-    """True when messages include a ToolReturnPart — i.e. the stream is in step 2."""
+    """True when messages include a ToolReturnPart"""
     return any(
         isinstance(part, ToolReturnPart)
         for msg in messages if isinstance(msg, ModelRequest)
@@ -529,51 +472,63 @@ def _has_tool_return(messages) -> bool:
     )
 
 
-def _tool_call_delta(tool_call_id: str) -> DeltaToolCalls:
-    """A single dummy_tool call streaming delta."""
-    return DeltaToolCalls(
-        {0: DeltaToolCall(name="dummy_tool", json_args='{"arg": "dummy"}', tool_call_id=tool_call_id)}
-    )
+class _PersistenceAndCancellationTestBase(_BaseRouteTest):
+    """Base for test classes that drive a real pydantic-ai Agent.
 
-
-async def _two_step_stream(messages, info: AgentInfo):
-    """Step 1 → emit tool call; step 2 (after tool return) → yield final text."""
-    if _has_tool_return(messages):
-        yield "Turn complete."
-    else:
-        yield _tool_call_delta("tc-a1")
-
-
-async def _exception_after_tool_return_stream(messages, info: AgentInfo):
-    """Step 1 → emit tool call; step 2 → yield one text chunk then raise.
-
-    The leading yield is required: FunctionModel calls peek() during request_stream
-    __aenter__, which must succeed for setup to complete.  The exception on the
-    *next* __anext__ then propagates through the event iteration loop (where the
-    route's try/except can catch it) rather than during context-manager setup
-    (which bypasses it).
+    Shared assertion and extraction helpers (as static methods) plus
+    _install_real_agent_dep() for injecting a real Agent + mock session via
+    get_agent_and_deps. Subclasses provide class-specific stream functions
+    and agent factories as static methods.
     """
-    if _has_tool_return(messages):
-        yield "start..."  # let peek() succeed; exception fires on the next __anext__
-        raise RuntimeError("Simulated crash mid-stream")
-    yield _tool_call_delta("tc-b1")
 
+    @staticmethod
+    def _list_persisted_messages(mock_persist_messages) -> list:
+        """Concatenate messages from all persist_messages calls, in call order."""
+        messages = []
+        for call in mock_persist_messages.call_args_list:
+            assert "messages" in call.kwargs, (
+                "At time of writing impl only uses kwargs. This will break if impl switches to positional args. "
+                "Update if that issue occurs."
+            )
+            messages.extend(call.kwargs["messages"])
+        return messages
 
-# ---------------------------------------------------------------------------
-# _RealAgentTestBase + TestPersistenceAcrossInterruptions
-# ---------------------------------------------------------------------------
+    @staticmethod
+    def _messages_with_part(persisted_msgs_list: list, msg_type: type, part_type: type) -> list:
+        """Messages of msg_type in the persisted list carrying at least one part of part_type."""
+        return [
+            m for m in persisted_msgs_list
+            if isinstance(m, msg_type) and any(isinstance(p, part_type) for p in m.parts)
+        ]
 
-class _RealAgentTestBase(_BaseRouteTest):
-    """Base for the two test classes that drive a real pydantic-ai Agent.
+    @staticmethod
+    def _assert_no_duplicates(persisted_msgs_list: list) -> None:
+        """Each message object must appear at most once in the persisted message list."""
+        for i in range(len(persisted_msgs_list)):
+            for j in range(i + 1, len(persisted_msgs_list)):
+                assert persisted_msgs_list[i] != persisted_msgs_list[j], (
+                    f"Duplicate message at indices {i} and {j}: {persisted_msgs_list[i]!r}"
+                )
 
-    Provides (1) an autouse persist_messages spy (self.mock_persist_messages) plus the base route patches,
-    and (2) _install_real_agent_dep(), a context manager subclasses use to override
-    get_agent_and_deps with a real Agent + mock session. Both subclasses assert on the
-    persisted message list via self.mock_persist_messages.
-    """
+    @staticmethod
+    def _assert_no_orphans(persisted_msgs_list: list) -> None:
+        """Every ToolCallPart must have a matching ToolReturnPart or RetryPromptPart."""
+        tool_call_ids: set[str] = set()
+        response_ids: set[str] = set()
+        for msg in persisted_msgs_list:
+            if isinstance(msg, ModelResponse):
+                for part in msg.parts:
+                    if isinstance(part, ToolCallPart):
+                        tool_call_ids.add(part.tool_call_id)
+            elif isinstance(msg, ModelRequest):
+                for part in msg.parts:
+                    if isinstance(part, (ToolReturnPart, RetryPromptPart)):
+                        response_ids.add(part.tool_call_id)
+        orphans = tool_call_ids - response_ids
+        assert not orphans, f"Orphaned ToolCallPart IDs with no matching return: {orphans}"
 
     @contextmanager
-    def _install_real_agent_dep(self, app, agent_record, agent_factory):
+    def _install_real_agent_dep(self, app, agent_record, test_agent_factory):
         """Override get_agent_and_deps with a real Agent + mock session, popping on teardown.
 
         agent_factory is called fresh inside the dependency on every request, so subclasses
@@ -584,7 +539,7 @@ class _RealAgentTestBase(_BaseRouteTest):
         self.mock_session = self._make_mock_session()
 
         async def _dep():
-            yield agent_factory(), make_deps(self.mock_session, agent_record)
+            yield test_agent_factory(), make_deps(self.mock_session, agent_record)
 
         app.dependency_overrides[get_agent_and_deps] = _dep
         try:
@@ -593,15 +548,52 @@ class _RealAgentTestBase(_BaseRouteTest):
             app.dependency_overrides.pop(get_agent_and_deps)
 
 
-class TestSendMessagePersistenceBehavior(_RealAgentTestBase):
+class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
     """Persistence contract tests using a real pydantic-ai Agent + FunctionModel.
 
-    Test 1 (happy path) Is a more detailed version of the basic persistence test
-
-    Test 2 (exception mid-stream) is a CONTRACT-DEFINING RED TEST.  Current impl
-    rolls back on exception and never persists.  The test encodes the desired
-    behavior: persist the completed portion even when the run crashes mid-stream.
+    Test 1 (happy path) is a more detailed/stronger version of the basic persistence test in TestSendMessage.
     """
+
+    @staticmethod
+    def _make_function_agent(stream_fn) -> Agent:
+        """Build a real pydantic-ai Agent backed by FunctionModel with a dummy tool."""
+        agent: Agent = Agent(FunctionModel(stream_function=stream_fn))
+
+        def dummy_tool(arg: str) -> str:
+            return "dummy_tool_output"
+
+        agent.tool_plain(dummy_tool)
+        return agent
+
+    @staticmethod
+    def _tool_call_delta(tool_call_id: str) -> DeltaToolCalls:
+        """A single dummy_tool call streaming delta."""
+        return DeltaToolCalls(
+            {0: DeltaToolCall(name="dummy_tool", json_args='{"arg": "dummy"}', tool_call_id=tool_call_id)}
+        )
+
+    @staticmethod
+    async def _two_step_stream(messages, info: AgentInfo):
+        """Step 1 → emit tool call; step 2 (after tool return) → yield final text."""
+        if _PersistenceAndCancellationTestBase._has_tool_return(messages):
+            yield "Turn complete."
+        else:
+            yield TestSendMessagePersistenceBehavior._tool_call_delta("tc-a1")
+
+    @staticmethod
+    async def _exception_after_tool_return_stream(messages, info: AgentInfo):
+        """Step 1 → emit tool call; step 2 → yield one text chunk then raise.
+
+        The leading yield is required: FunctionModel calls peek() during request_stream
+        __aenter__, which must succeed for setup to complete.  The exception on the
+        *next* __anext__ then propagates through the event iteration loop (where the
+        route's try/except can catch it) rather than during context-manager setup
+        (which bypasses it).
+        """
+        if _PersistenceAndCancellationTestBase._has_tool_return(messages):
+            yield "start..."  # let peek() succeed; exception fires on the next __anext__
+            raise RuntimeError("Simulated crash mid-stream")
+        yield TestSendMessagePersistenceBehavior._tool_call_delta("tc-b1")
 
     @pytest.fixture(autouse=True)
     def real_agent_dep(self, app, agent_record):
@@ -610,7 +602,7 @@ class TestSendMessagePersistenceBehavior(_RealAgentTestBase):
         Exposes self.agent_record, self.mock_session.
         Call self.set_stream_fn(fn) before the request to swap the stream function.
         """
-        self._stream_fn = _two_step_stream
+        self._stream_fn = self._two_step_stream
 
         def set_stream_fn(fn):
             self._stream_fn = fn
@@ -618,7 +610,7 @@ class TestSendMessagePersistenceBehavior(_RealAgentTestBase):
         self.set_stream_fn = set_stream_fn
 
         with self._install_real_agent_dep(
-            app, agent_record, lambda: _make_function_agent(self._stream_fn)
+            app, agent_record, lambda: self._make_function_agent(self._stream_fn)
         ):
             yield
 
@@ -637,12 +629,12 @@ class TestSendMessagePersistenceBehavior(_RealAgentTestBase):
         event_types = [e["event"] for e in events]
         assert "Error" not in event_types, f"Unexpected Error event: {events}"
 
-        persisted_msgs_list = _list_persisted_messages(self.mock_persist_messages)
+        persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
-        user_reqs = _messages_with_part(persisted_msgs_list, ModelRequest, UserPromptPart)
-        tool_resps = _messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)
-        tool_return_reqs = _messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)
-        text_resps = _messages_with_part(persisted_msgs_list, ModelResponse, TextPart)
+        user_reqs = self._messages_with_part(persisted_msgs_list, ModelRequest, UserPromptPart)
+        tool_resps = self._messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)
+        tool_return_reqs = self._messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)
+        text_resps = self._messages_with_part(persisted_msgs_list, ModelResponse, TextPart)
 
         assert len(user_reqs) == 1, "Expected exactly one UserPrompt in persisted message list"
         assert len(tool_resps) == 1, "Expected exactly one ToolCall response in persisted message list"
@@ -652,8 +644,8 @@ class TestSendMessagePersistenceBehavior(_RealAgentTestBase):
         causal_order = [persisted_msgs_list.index(m) for m in (user_reqs[0], tool_resps[0], tool_return_reqs[0], text_resps[0])]
         assert causal_order == sorted(causal_order), "Messages are not in causal order in persisted message list"
 
-        _assert_no_duplicates(persisted_msgs_list)
-        _assert_no_orphans(persisted_msgs_list)
+        self._assert_no_duplicates(persisted_msgs_list)
+        self._assert_no_orphans(persisted_msgs_list)
 
         for h_msg in fake_history:
             assert h_msg not in persisted_msgs_list, f"History message leaked into persisted message list: {h_msg!r}"
@@ -672,7 +664,7 @@ class TestSendMessagePersistenceBehavior(_RealAgentTestBase):
         Will fail with current implementation.  Goes green when the
         cancellation+improved-persistence implementation lands.
         """
-        self.set_stream_fn(_exception_after_tool_return_stream)
+        self.set_stream_fn(self._exception_after_tool_return_stream)
 
         events = await stream_and_collect(client, self.agent_record.id)
         event_types = [e["event"] for e in events]
@@ -684,17 +676,17 @@ class TestSendMessagePersistenceBehavior(_RealAgentTestBase):
             "persist_messages must be called even when the run crashes mid-stream"
         )
 
-        persisted_msgs_list = _list_persisted_messages(self.mock_persist_messages)
+        persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
-        tool_resps = _messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)
-        tool_return_reqs = _messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)
-        text_resps = _messages_with_part(persisted_msgs_list, ModelResponse, TextPart)
+        tool_resps = self._messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)
+        tool_return_reqs = self._messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)
+        text_resps = self._messages_with_part(persisted_msgs_list, ModelResponse, TextPart)
 
         assert len(tool_resps) >= 1, "Completed tool call must appear in persisted message list"
         assert len(tool_return_reqs) >= 1, "Completed tool return must appear in persisted message list"
         assert len(text_resps) == 0, "No final text expected: crash before step 2 yielded text"
 
-        _assert_no_orphans(persisted_msgs_list)
+        self._assert_no_orphans(persisted_msgs_list)
 
         assert self.mock_session.commit.called, (
             "Completed work must be committed even when the run crashes"
@@ -703,6 +695,12 @@ class TestSendMessagePersistenceBehavior(_RealAgentTestBase):
             "Rollback discards completed work — must not roll back on mid-run exception"
         )
 
+
+# ---------------------------------------------------------------------------
+# Blocking-tool helpers (module-level)
+# Kept at module level — shared between TestCancellation AND the standalone
+# test_rendezvous_property function, which doesn't inherit from a test class.
+# ---------------------------------------------------------------------------
 
 async def _blocking_tool_stream(messages, info: AgentInfo):
     """Step 1 → emit blocking_tool call; step 2 (after tool return) → yield final text."""
@@ -744,7 +742,7 @@ _RENDEZVOUS_MIN_VERSION = "1.104.0"
 # TestCancellation
 # ---------------------------------------------------------------------------
 
-class TestCancellation(_RealAgentTestBase):
+class TestCancellation(_PersistenceAndCancellationTestBase):
     """Cancellation contract tests.
 
     Uses a blocking tool for deterministic timing: the tool signals 'tool_entered'
@@ -811,19 +809,19 @@ class TestCancellation(_RealAgentTestBase):
             "persist_messages must be called even on graceful cancel"
         )
 
-        persisted_msgs_list = _list_persisted_messages(self.mock_persist_messages)
+        persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
         # Tool call + return pair (tool was allowed to complete — req #4).
-        assert len(_messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)) >= 1, (
+        assert len(self._messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)) >= 1, (
             "Tool call must be persisted on graceful cancel"
         )
-        assert len(_messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)) >= 1, (
+        assert len(self._messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)) >= 1, (
             "Tool return must be persisted — tool must complete before cancel takes effect"
         )
-        _assert_no_orphans(persisted_msgs_list)
+        self._assert_no_orphans(persisted_msgs_list)
 
         # No final assistant text: post-tool model step must not run after cancel (req #4).
-        assert len(_messages_with_part(persisted_msgs_list, ModelResponse, TextPart)) == 0, (
+        assert len(self._messages_with_part(persisted_msgs_list, ModelResponse, TextPart)) == 0, (
             "Post-tool model step must not run after cancel"
         )
 

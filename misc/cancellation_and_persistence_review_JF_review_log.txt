@@ -3,4 +3,12 @@ Started this log to allow me to review top-down without losing track of what I h
 line 510 on needs to be reviewed (helpers) but jumping to review test classes
 Noting that 460-954 is solid green diff to main so I can not look at diffs while reviewing this seciton.
 
+Major reshuffle results in line numbers above being somewhat unreliable.
+
+_install_real_agent_dep reviewed
+
+_PersistenceAndCancellationTestBase has many helpers previously reviewed in it now.
+_PersistenceAndCancellationTestBase now fully reviewd
+
+
 
