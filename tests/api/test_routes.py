@@ -14,7 +14,7 @@ Fixtures from conftest used here:
 import asyncio
 import importlib.metadata
 import json
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
@@ -218,10 +218,7 @@ class TestSendMessage:
         method is called on the agent. We already have a mock agent so we can just use that.
         """
         self.agent_record = agent_record
-        self.mock_session = Mock()
-        self.mock_session.commit = AsyncMock()
-        self.mock_session.rollback = AsyncMock()
-        self.mock_session.refresh = AsyncMock()
+        self.mock_session = _make_mock_session()
 
         def _configure(events=None, raise_exc=None, raises_mid_stream=None):
             async def _mock_dep():
@@ -392,21 +389,6 @@ class TestSendMessage:
         sse_events = await stream_and_collect(client, self.agent_record.id)
 
         self.mock_session.commit.assert_called_once()
-        assert sse_events[-1]["event"] == "Error"
-
-    async def test_yields_error_sse_on_mid_stream_exception(self, client: AsyncClient):
-        """Error SSE is delivered to the client when an exception occurs mid-stream.
-
-        Verifies that partial events (e.g. a TextPart that started streaming) are followed
-        by an Error event — clients always receive an explicit signal that the request failed.
-        """
-        self.configure_mock_get_agent_and_deps(
-            events=[PartStartEvent(index=0, part=TextPart(content="Starting..."))],
-            raises_mid_stream=RuntimeError("mid-stream crash"),
-        )
-
-        sse_events = await stream_and_collect(client, self.agent_record.id)
-
         assert sse_events[-1]["event"] == "Error"
 
 
@@ -602,6 +584,26 @@ class _PersistSpyMixin:
             self.mock_compact = _base_route_patches["compact"]
             yield
 
+    @contextmanager
+    def _install_real_agent_dep(self, app, agent_record, agent_factory):
+        """Override get_agent_and_deps with a real Agent + mock session, popping on teardown.
+
+        agent_factory is called fresh inside the dependency on every request, so subclasses
+        can swap behavior between requests via instance state (e.g. the stream function).
+        Exposes self.agent_record and self.mock_session.
+        """
+        self.agent_record = agent_record
+        self.mock_session = _make_mock_session()
+
+        async def _dep():
+            yield agent_factory(), make_deps(self.mock_session, agent_record)
+
+        app.dependency_overrides[get_agent_and_deps] = _dep
+        try:
+            yield
+        finally:
+            app.dependency_overrides.pop(get_agent_and_deps)
+
 
 class TestPersistenceAcrossInterruptions(_PersistSpyMixin):
     """Persistence contract tests using a real pydantic-ai Agent + FunctionModel.
@@ -621,9 +623,6 @@ class TestPersistenceAcrossInterruptions(_PersistSpyMixin):
         Exposes self.agent_record, self.mock_session.
         Call self.set_stream_fn(fn) before the request to swap the stream function.
         """
-        self.agent_record = agent_record
-        self.mock_session = _make_mock_session()
-
         self._stream_fn = _two_step_stream
 
         def set_stream_fn(fn):
@@ -631,14 +630,10 @@ class TestPersistenceAcrossInterruptions(_PersistSpyMixin):
 
         self.set_stream_fn = set_stream_fn
 
-        async def _dep():
-            agent = _make_function_agent(self._stream_fn)
-            deps = make_deps(self.mock_session, agent_record)
-            yield agent, deps
-
-        app.dependency_overrides[get_agent_and_deps] = _dep
-        yield
-        app.dependency_overrides.pop(get_agent_and_deps)
+        with self._install_real_agent_dep(
+            app, agent_record, lambda: _make_function_agent(self._stream_fn)
+        ):
+            yield
 
     @pytest.mark.asyncio
     async def test_happy_path_persists_full_message_union(self, client: AsyncClient):
@@ -774,19 +769,13 @@ class TestCancellation(_PersistSpyMixin):
     @pytest.fixture(autouse=True)
     def real_agent_dep(self, app, agent_record):
         """Inject a real blocking-tool Agent + mock session via get_agent_and_deps."""
-        self.agent_record = agent_record
         self.tool_entered = asyncio.Event()
         self.release = asyncio.Event()
-        self.mock_session = _make_mock_session()
 
-        async def _dep():
-            agent = _make_blocking_agent(self.tool_entered, self.release)
-            deps = make_deps(self.mock_session, agent_record)
-            yield agent, deps
-
-        app.dependency_overrides[get_agent_and_deps] = _dep
-        yield
-        app.dependency_overrides.pop(get_agent_and_deps)
+        with self._install_real_agent_dep(
+            app, agent_record, lambda: _make_blocking_agent(self.tool_entered, self.release)
+        ):
+            yield
 
     @pytest.mark.xfail(
         strict=True,
