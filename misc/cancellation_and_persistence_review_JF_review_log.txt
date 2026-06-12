@@ -1,0 +1,6 @@
+Reviewed up to line 510 at which point the sequential line by line approach started causing problems.
+Started this log to allow me to review top-down without losing track of what I have reviewed.
+line 510 on needs to be reviewed (helpers) but jumping to review test classes
+Noting that 460-954 is solid green diff to main so I can not look at diffs while reviewing this seciton.
+
+

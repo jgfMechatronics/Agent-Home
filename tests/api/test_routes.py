@@ -463,37 +463,40 @@ class TestCreateAgent:
 # (shared by TestPersistenceAcrossInterruptions and TestCancellation)
 # ---------------------------------------------------------------------------
 
-def _union_of_persisted(spy) -> list:
+def _list_persisted_messages(mock_persist_messages) -> list:
     """Concatenate messages from all persist_messages calls, in call order."""
-    union = []
-    for call in spy.call_args_list:
-        msgs = call.kwargs.get("messages") or (call.args[1] if len(call.args) > 1 else [])
-        union.extend(msgs)
-    return union
+    messages = []
+    for call in mock_persist_messages.call_args_list:
+        assert "messages" in call.kwargs, (
+            "At time of writing impl only uses kwargs. This will break if impl switches to positional args. "
+            "Update if that issue occurs."
+        )
+        messages.extend(call.kwargs["messages"])
+    return messages
 
 
-def _messages_with_part(union: list, msg_type: type, part_type: type) -> list:
-    """Messages of msg_type in the union carrying at least one part of part_type."""
+def _messages_with_part(persisted_msgs_list: list, msg_type: type, part_type: type) -> list:
+    """Messages of msg_type in the persisted list carrying at least one part of part_type."""
     return [
-        m for m in union
+        m for m in persisted_msgs_list
         if isinstance(m, msg_type) and any(isinstance(p, part_type) for p in m.parts)
     ]
 
 
-def _assert_no_duplicates(union: list) -> None:
-    """Each message object must appear at most once in the persist union."""
-    for i in range(len(union)):
-        for j in range(i + 1, len(union)):
-            assert union[i] is not union[j], (
-                f"Duplicate message at indices {i} and {j}: {union[i]!r}"
+def _assert_no_duplicates(persisted_msgs_list: list) -> None:
+    """Each message object must appear at most once in the persisted message list."""
+    for i in range(len(persisted_msgs_list)):
+        for j in range(i + 1, len(persisted_msgs_list)):
+            assert persisted_msgs_list[i] != persisted_msgs_list[j], (
+                f"Duplicate message at indices {i} and {j}: {persisted_msgs_list[i]!r}"
             )
 
 
-def _assert_no_orphans(union: list) -> None:
+def _assert_no_orphans(persisted_msgs_list: list) -> None:
     """Every ToolCallPart must have a matching ToolReturnPart or RetryPromptPart."""
     tool_call_ids: set[str] = set()
     response_ids: set[str] = set()
-    for msg in union:
+    for msg in persisted_msgs_list:
         if isinstance(msg, ModelResponse):
             for part in msg.parts:
                 if isinstance(part, ToolCallPart):
@@ -506,15 +509,14 @@ def _assert_no_orphans(union: list) -> None:
     assert not orphans, f"Orphaned ToolCallPart IDs with no matching return: {orphans}"
 
 
-
 def _make_function_agent(stream_fn) -> Agent:
-    """Build a real pydantic-ai Agent backed by FunctionModel with a record_thing tool."""
+    """Build a real pydantic-ai Agent backed by FunctionModel with a dummy tool."""
     agent: Agent = Agent(FunctionModel(stream_function=stream_fn))
 
-    def record_thing(thing: str) -> str:
-        return f"recorded: {thing}"
+    def dummy_tool(arg: str) -> str:
+        return "dummy_tool_output"
 
-    agent.tool_plain(record_thing)
+    agent.tool_plain(dummy_tool)
     return agent
 
 
@@ -527,10 +529,10 @@ def _has_tool_return(messages) -> bool:
     )
 
 
-def _tool_call_delta(tool_name: str, tool_call_id: str) -> DeltaToolCalls:
-    """A single-tool-call streaming delta. The tool arg is asserted nowhere, so fixed."""
+def _tool_call_delta(tool_call_id: str) -> DeltaToolCalls:
+    """A single dummy_tool call streaming delta."""
     return DeltaToolCalls(
-        {0: DeltaToolCall(name=tool_name, json_args='{"thing": "x"}', tool_call_id=tool_call_id)}
+        {0: DeltaToolCall(name="dummy_tool", json_args='{"arg": "dummy"}', tool_call_id=tool_call_id)}
     )
 
 
@@ -539,7 +541,7 @@ async def _two_step_stream(messages, info: AgentInfo):
     if _has_tool_return(messages):
         yield "Turn complete."
     else:
-        yield _tool_call_delta("record_thing", "tc-a1")
+        yield _tool_call_delta("tc-a1")
 
 
 async def _exception_after_tool_return_stream(messages, info: AgentInfo):
@@ -554,7 +556,7 @@ async def _exception_after_tool_return_stream(messages, info: AgentInfo):
     if _has_tool_return(messages):
         yield "start..."  # let peek() succeed; exception fires on the next __anext__
         raise RuntimeError("Simulated crash mid-stream")
-    yield _tool_call_delta("record_thing", "tc-b1")
+    yield _tool_call_delta("tc-b1")
 
 
 # ---------------------------------------------------------------------------
@@ -567,7 +569,7 @@ class _RealAgentTestBase(_BaseRouteTest):
     Provides (1) an autouse persist_messages spy (self.mock_persist_messages) plus the base route patches,
     and (2) _install_real_agent_dep(), a context manager subclasses use to override
     get_agent_and_deps with a real Agent + mock session. Both subclasses assert on the
-    persisted-message union via self.mock_persist_messages.
+    persisted message list via self.mock_persist_messages.
     """
 
     @contextmanager
@@ -591,11 +593,10 @@ class _RealAgentTestBase(_BaseRouteTest):
             app.dependency_overrides.pop(get_agent_and_deps)
 
 
-class TestPersistenceAcrossInterruptions(_RealAgentTestBase):
+class TestSendMessagePersistenceBehavior(_RealAgentTestBase):
     """Persistence contract tests using a real pydantic-ai Agent + FunctionModel.
 
-    Test 1 (happy path) documents existing persist-at-terminal-event behavior and
-    will stay green as the implementation changes.
+    Test 1 (happy path) Is a more detailed version of the basic persistence test
 
     Test 2 (exception mid-stream) is a CONTRACT-DEFINING RED TEST.  Current impl
     rolls back on exception and never persists.  The test encodes the desired
@@ -622,8 +623,9 @@ class TestPersistenceAcrossInterruptions(_RealAgentTestBase):
             yield
 
     @pytest.mark.asyncio
-    async def test_happy_path_persists_full_message_union(self, client: AsyncClient):
-        """Persist union contains all four message types in causal order.
+    async def test_happy_path_persists_full_message_list(self, client: AsyncClient):
+        """
+        Persisted message list contains all four message types in causal order.
 
         Uses a real pydantic-ai Agent so new_messages() reflects actual pydantic-ai
         message structure.  Validates the full pipeline against the real library.
@@ -635,26 +637,26 @@ class TestPersistenceAcrossInterruptions(_RealAgentTestBase):
         event_types = [e["event"] for e in events]
         assert "Error" not in event_types, f"Unexpected Error event: {events}"
 
-        union = _union_of_persisted(self.mock_persist_messages)
+        persisted_msgs_list = _list_persisted_messages(self.mock_persist_messages)
 
-        user_reqs = _messages_with_part(union, ModelRequest, UserPromptPart)
-        tool_resps = _messages_with_part(union, ModelResponse, ToolCallPart)
-        tool_return_reqs = _messages_with_part(union, ModelRequest, ToolReturnPart)
-        text_resps = _messages_with_part(union, ModelResponse, TextPart)
+        user_reqs = _messages_with_part(persisted_msgs_list, ModelRequest, UserPromptPart)
+        tool_resps = _messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)
+        tool_return_reqs = _messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)
+        text_resps = _messages_with_part(persisted_msgs_list, ModelResponse, TextPart)
 
-        assert len(user_reqs) == 1, "Expected exactly one UserPrompt in union"
-        assert len(tool_resps) == 1, "Expected exactly one ToolCall response in union"
-        assert len(tool_return_reqs) == 1, "Expected exactly one ToolReturn request in union"
-        assert len(text_resps) == 1, "Expected exactly one final Text response in union"
+        assert len(user_reqs) == 1, "Expected exactly one UserPrompt in persisted message list"
+        assert len(tool_resps) == 1, "Expected exactly one ToolCall response in persisted message list"
+        assert len(tool_return_reqs) == 1, "Expected exactly one ToolReturn request in persisted message list"
+        assert len(text_resps) == 1, "Expected exactly one final Text response in persisted message list"
 
-        causal_order = [union.index(m) for m in (user_reqs[0], tool_resps[0], tool_return_reqs[0], text_resps[0])]
-        assert causal_order == sorted(causal_order), "Messages are not in causal order in union"
+        causal_order = [persisted_msgs_list.index(m) for m in (user_reqs[0], tool_resps[0], tool_return_reqs[0], text_resps[0])]
+        assert causal_order == sorted(causal_order), "Messages are not in causal order in persisted message list"
 
-        _assert_no_duplicates(union)
-        _assert_no_orphans(union)
+        _assert_no_duplicates(persisted_msgs_list)
+        _assert_no_orphans(persisted_msgs_list)
 
         for h_msg in fake_history:
-            assert h_msg not in union, f"History message leaked into persist union: {h_msg!r}"
+            assert h_msg not in persisted_msgs_list, f"History message leaked into persisted message list: {h_msg!r}"
 
         assert self.mock_session.commit.called, "Session must be committed on happy path"
         assert not self.mock_session.rollback.called, "Session must NOT be rolled back on happy path"
@@ -682,17 +684,17 @@ class TestPersistenceAcrossInterruptions(_RealAgentTestBase):
             "persist_messages must be called even when the run crashes mid-stream"
         )
 
-        union = _union_of_persisted(self.mock_persist_messages)
+        persisted_msgs_list = _list_persisted_messages(self.mock_persist_messages)
 
-        tool_resps = _messages_with_part(union, ModelResponse, ToolCallPart)
-        tool_return_reqs = _messages_with_part(union, ModelRequest, ToolReturnPart)
-        text_resps = _messages_with_part(union, ModelResponse, TextPart)
+        tool_resps = _messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)
+        tool_return_reqs = _messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)
+        text_resps = _messages_with_part(persisted_msgs_list, ModelResponse, TextPart)
 
-        assert len(tool_resps) >= 1, "Completed tool call must appear in persist union"
-        assert len(tool_return_reqs) >= 1, "Completed tool return must appear in persist union"
+        assert len(tool_resps) >= 1, "Completed tool call must appear in persisted message list"
+        assert len(tool_return_reqs) >= 1, "Completed tool return must appear in persisted message list"
         assert len(text_resps) == 0, "No final text expected: crash before step 2 yielded text"
 
-        _assert_no_orphans(union)
+        _assert_no_orphans(persisted_msgs_list)
 
         assert self.mock_session.commit.called, (
             "Completed work must be committed even when the run crashes"
@@ -707,7 +709,7 @@ async def _blocking_tool_stream(messages, info: AgentInfo):
     if _has_tool_return(messages):
         yield "Done."
     else:
-        yield _tool_call_delta("blocking_tool", "tc-c1")
+        yield DeltaToolCalls({0: DeltaToolCall(name="blocking_tool", json_args='{}', tool_call_id="tc-c1")})
 
 
 def _make_blocking_agent(tool_entered: asyncio.Event, release: asyncio.Event) -> Agent:
@@ -718,10 +720,10 @@ def _make_blocking_agent(tool_entered: asyncio.Event, release: asyncio.Event) ->
     """
     agent: Agent = Agent(FunctionModel(stream_function=_blocking_tool_stream))
 
-    async def blocking_tool(thing: str) -> str:
+    async def blocking_tool() -> str:
         tool_entered.set()
         await release.wait()
-        return f"recorded: {thing}"
+        return "blocking_tool_output"
 
     agent.tool_plain(blocking_tool)
     return agent
@@ -809,25 +811,25 @@ class TestCancellation(_RealAgentTestBase):
             "persist_messages must be called even on graceful cancel"
         )
 
-        union = _union_of_persisted(self.mock_persist_messages)
+        persisted_msgs_list = _list_persisted_messages(self.mock_persist_messages)
 
         # Tool call + return pair (tool was allowed to complete — req #4).
-        assert len(_messages_with_part(union, ModelResponse, ToolCallPart)) >= 1, (
+        assert len(_messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)) >= 1, (
             "Tool call must be persisted on graceful cancel"
         )
-        assert len(_messages_with_part(union, ModelRequest, ToolReturnPart)) >= 1, (
+        assert len(_messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)) >= 1, (
             "Tool return must be persisted — tool must complete before cancel takes effect"
         )
-        _assert_no_orphans(union)
+        _assert_no_orphans(persisted_msgs_list)
 
         # No final assistant text: post-tool model step must not run after cancel (req #4).
-        assert len(_messages_with_part(union, ModelResponse, TextPart)) == 0, (
+        assert len(_messages_with_part(persisted_msgs_list, ModelResponse, TextPart)) == 0, (
             "Post-tool model step must not run after cancel"
         )
 
         # Cancellation notice persisted as <system_message> (req #5).
         cancel_notices = [
-            m for m in union
+            m for m in persisted_msgs_list
             if isinstance(m, ModelRequest)
             and any(
                 isinstance(p, UserPromptPart) and "<system_message>" in p.content
@@ -936,6 +938,8 @@ async def test_TODO_decide_cancel_orphan_tool_call_handling():
           keeping the history API-valid. Cheaper, but first verify the sanitizer
           does not also discard accompanying text/thinking parts on the same
           ModelResponse.
+
+    Note: if we select option B we will have some failures from _assert_no_orphans()
 
     Both options yield API-valid history (no dangling tool_use), so this is a
     narrative-cleanliness call, deferred deliberately. Resolve it, update the plan
