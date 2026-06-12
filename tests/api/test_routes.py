@@ -11,6 +11,8 @@ Fixtures from conftest used here:
 - agent_with_blocks: Agent with memory blocks attached
 """
 # Standard library
+import asyncio
+import importlib.metadata
 import json
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -20,20 +22,26 @@ from uuid import uuid4
 # Third-party
 import pytest
 import pytest_asyncio
+from packaging.version import Version
 from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient, Response
-from pydantic_ai import AgentRunResultEvent
+from pydantic_ai import Agent, AgentRunResultEvent
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
+    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 # Local
 from agent.factory import AgentNotFoundError
@@ -117,6 +125,31 @@ def override_db_session(app: FastAPI, session: AsyncSession):
     yield
     app.dependency_overrides.pop(get_session_dep)
 
+
+@pytest.fixture
+def _base_route_patches():
+    """Patch 4 route-level side effects (everything except persist_messages).
+
+    Shared by TestSendMessage.mock_route_side_effects and
+    TestPersistenceAcrossInterruptions.persist_spy so the patch set stays DRY.
+
+    Yields a dict: {"load", "deserialize", "needs_compact", "compact"}
+    """
+    with (
+        patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load,
+        patch("api.routes.deserialize_messages") as mock_deserialize,
+        patch("api.routes.is_compaction_needed") as mock_needs_compact,
+        patch("api.routes.compact", new_callable=AsyncMock) as mock_compact,
+    ):
+        mock_load.return_value = []
+        mock_deserialize.return_value = []
+        mock_needs_compact.return_value = False
+        yield {
+            "load": mock_load,
+            "deserialize": mock_deserialize,
+            "needs_compact": mock_needs_compact,
+            "compact": mock_compact,
+        }
 
 
 # --- Helpers ---
@@ -208,27 +241,18 @@ class TestSendMessage:
         app.dependency_overrides.pop(get_agent_and_deps)
 
     @pytest.fixture(autouse=True)
-    def mock_route_side_effects(self):
+    def mock_route_side_effects(self, _base_route_patches):
         """Patch route-level side effects for all TestSendMessage tests.
 
         Provides self.mock_persist, self.mock_needs_compact, self.mock_compact
         for tests that assert on persistence/compaction behavior.
         """
-        with (
-            patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load,
-            patch("api.routes.deserialize_messages") as mock_deserialize,
-            patch("api.routes.persist_messages", new_callable=AsyncMock) as mock_persist,
-            patch("api.routes.is_compaction_needed") as mock_needs_compact,
-            patch("api.routes.compact", new_callable=AsyncMock) as mock_compact,
-        ):
-            mock_load.return_value = []  # safe default — no prior history
-            mock_deserialize.return_value = []  # safe default — empty deserialized history
-            mock_needs_compact.return_value = False  # safe default — no compaction unless overridden
-            self.mock_load_messages = mock_load
-            self.mock_deserialize = mock_deserialize
+        with patch("api.routes.persist_messages", new_callable=AsyncMock) as mock_persist:
+            self.mock_load_messages = _base_route_patches["load"]
+            self.mock_deserialize = _base_route_patches["deserialize"]
+            self.mock_needs_compact = _base_route_patches["needs_compact"]
+            self.mock_compact = _base_route_patches["compact"]
             self.mock_persist = mock_persist
-            self.mock_needs_compact = mock_needs_compact
-            self.mock_compact = mock_compact
             yield
 
     @pytest.mark.parametrize("events_factory,expected_types", [
@@ -447,8 +471,507 @@ class TestCreateAgent:
             "/agents/",
             json={"name": "incomplete"},  # missing system_instructions and config
         )
-        
         assert response.status_code in (400, 422)  # FastAPI validation error
+
+
+# ---------------------------------------------------------------------------
+# Persistence helpers (used by TestPersistenceAcrossInterruptions)
+# ---------------------------------------------------------------------------
+
+def _union_of_persisted(spy) -> list:
+    """Concatenate messages from all persist_messages calls, in call order."""
+    union = []
+    for call in spy.call_args_list:
+        msgs = call.kwargs.get("messages") or (call.args[1] if len(call.args) > 1 else [])
+        union.extend(msgs)
+    return union
+
+
+def _select(union: list, msg_type: type, part_type: type) -> list:
+    """Messages of msg_type in the union carrying at least one part of part_type."""
+    return [
+        m for m in union
+        if isinstance(m, msg_type) and any(isinstance(p, part_type) for p in m.parts)
+    ]
+
+
+def _assert_no_duplicates(union: list) -> None:
+    """Each message object must appear at most once in the persist union."""
+    for i in range(len(union)):
+        for j in range(i + 1, len(union)):
+            assert union[i] is not union[j], (
+                f"Duplicate message at indices {i} and {j}: {union[i]!r}"
+            )
+
+
+def _assert_no_orphans(union: list) -> None:
+    """Every ToolCallPart must have a matching ToolReturnPart or RetryPromptPart."""
+    tool_call_ids: set[str] = set()
+    response_ids: set[str] = set()
+    for msg in union:
+        if isinstance(msg, ModelResponse):
+            for part in msg.parts:
+                if isinstance(part, ToolCallPart):
+                    tool_call_ids.add(part.tool_call_id)
+        elif isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, (ToolReturnPart, RetryPromptPart)):
+                    response_ids.add(part.tool_call_id)
+    orphans = tool_call_ids - response_ids
+    assert not orphans, f"Orphaned ToolCallPart IDs with no matching return: {orphans}"
+
+
+def _make_mock_session() -> Mock:
+    """Build a mock AsyncSession with async commit/rollback/refresh."""
+    session = Mock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+    session.refresh = AsyncMock()
+    return session
+
+
+def _make_function_agent(stream_fn) -> Agent:
+    """Build a real pydantic-ai Agent backed by FunctionModel with a record_thing tool."""
+    agent: Agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    def record_thing(thing: str) -> str:
+        return f"recorded: {thing}"
+
+    agent.tool_plain(record_thing)
+    return agent
+
+
+def _has_tool_return(messages) -> bool:
+    """True when messages include a ToolReturnPart — i.e. the stream is in step 2."""
+    return any(
+        isinstance(part, ToolReturnPart)
+        for msg in messages if isinstance(msg, ModelRequest)
+        for part in msg.parts
+    )
+
+
+def _tool_call_delta(tool_name: str, tool_call_id: str) -> DeltaToolCalls:
+    """A single-tool-call streaming delta. The tool arg is asserted nowhere, so fixed."""
+    return DeltaToolCalls(
+        {0: DeltaToolCall(name=tool_name, json_args='{"thing": "x"}', tool_call_id=tool_call_id)}
+    )
+
+
+async def _two_step_stream(messages, info: AgentInfo):
+    """Step 1 → emit tool call; step 2 (after tool return) → yield final text."""
+    if _has_tool_return(messages):
+        yield "Turn complete."
+    else:
+        yield _tool_call_delta("record_thing", "tc-a1")
+
+
+async def _exception_after_tool_return_stream(messages, info: AgentInfo):
+    """Step 1 → emit tool call; step 2 → yield one text chunk then raise.
+
+    The leading yield is required: FunctionModel calls peek() during request_stream
+    __aenter__, which must succeed for setup to complete.  The exception on the
+    *next* __anext__ then propagates through the event iteration loop (where the
+    route's try/except can catch it) rather than during context-manager setup
+    (which bypasses it).
+    """
+    if _has_tool_return(messages):
+        yield "start..."  # let peek() succeed; exception fires on the next __anext__
+        raise RuntimeError("Simulated crash mid-stream")
+    yield _tool_call_delta("record_thing", "tc-b1")
+
+
+# ---------------------------------------------------------------------------
+# TestPersistenceAcrossInterruptions
+# ---------------------------------------------------------------------------
+
+class _PersistSpyMixin:
+    """Shared autouse fixture: spy on persist_messages (autospec) + expose base patches.
+
+    Inherited by the persistence and cancellation test classes, which both assert on
+    the persisted-message union via self.spy.
+    """
+
+    @pytest.fixture(autouse=True)
+    def persist_spy(self, _base_route_patches):
+        """Spy on persist_messages (autospec) + expose base patches as attrs."""
+        with patch("api.routes.persist_messages", autospec=True) as spy:
+            self.spy = spy
+            self.mock_load_messages = _base_route_patches["load"]
+            self.mock_deserialize = _base_route_patches["deserialize"]
+            self.mock_needs_compact = _base_route_patches["needs_compact"]
+            self.mock_compact = _base_route_patches["compact"]
+            yield
+
+
+class TestPersistenceAcrossInterruptions(_PersistSpyMixin):
+    """Persistence contract tests using a real pydantic-ai Agent + FunctionModel.
+
+    Test 1 (happy path) documents existing persist-at-terminal-event behavior and
+    will stay green as the implementation changes.
+
+    Test 2 (exception mid-stream) is a CONTRACT-DEFINING RED TEST.  Current impl
+    rolls back on exception and never persists.  The test encodes the desired
+    behavior: persist the completed portion even when the run crashes mid-stream.
+    """
+
+    @pytest.fixture(autouse=True)
+    def real_agent_dep(self, app, agent_record):
+        """Inject a real Agent + mock session via get_agent_and_deps override.
+
+        Exposes self.agent_record, self.mock_session.
+        Call self.set_stream_fn(fn) before the request to swap the stream function.
+        """
+        self.agent_record = agent_record
+        self.mock_session = _make_mock_session()
+
+        self._stream_fn = _two_step_stream
+
+        def set_stream_fn(fn):
+            self._stream_fn = fn
+
+        self.set_stream_fn = set_stream_fn
+
+        async def _dep():
+            agent = _make_function_agent(self._stream_fn)
+            deps = make_deps(self.mock_session, agent_record)
+            yield agent, deps
+
+        app.dependency_overrides[get_agent_and_deps] = _dep
+        yield
+        app.dependency_overrides.pop(get_agent_and_deps)
+
+    @pytest.mark.asyncio
+    async def test_happy_path_persists_full_message_union(self, client: AsyncClient):
+        """Persist union contains all four message types in causal order.
+
+        Uses a real pydantic-ai Agent so new_messages() reflects actual pydantic-ai
+        message structure.  Validates the full pipeline against the real library.
+        """
+        fake_history = [ModelRequest(parts=[UserPromptPart(content="prior turn")])]
+        self.mock_deserialize.return_value = fake_history
+
+        events = await stream_and_collect(client, self.agent_record.id)
+        event_types = [e["event"] for e in events]
+        assert "Error" not in event_types, f"Unexpected Error event: {events}"
+
+        union = _union_of_persisted(self.spy)
+
+        user_reqs = _select(union, ModelRequest, UserPromptPart)
+        tool_resps = _select(union, ModelResponse, ToolCallPart)
+        tool_return_reqs = _select(union, ModelRequest, ToolReturnPart)
+        text_resps = _select(union, ModelResponse, TextPart)
+
+        assert len(user_reqs) == 1, "Expected exactly one UserPrompt in union"
+        assert len(tool_resps) == 1, "Expected exactly one ToolCall response in union"
+        assert len(tool_return_reqs) == 1, "Expected exactly one ToolReturn request in union"
+        assert len(text_resps) == 1, "Expected exactly one final Text response in union"
+
+        causal_order = [union.index(m) for m in (user_reqs[0], tool_resps[0], tool_return_reqs[0], text_resps[0])]
+        assert causal_order == sorted(causal_order), "Messages are not in causal order in union"
+
+        _assert_no_duplicates(union)
+        _assert_no_orphans(union)
+
+        for h_msg in fake_history:
+            assert h_msg not in union, f"History message leaked into persist union: {h_msg!r}"
+
+        assert self.mock_session.commit.called, "Session must be committed on happy path"
+        assert not self.mock_session.rollback.called, "Session must NOT be rolled back on happy path"
+
+    @pytest.mark.asyncio
+    async def test_persist_survives_mid_run_exception(self, client: AsyncClient):
+        """CONTRACT-DEFINING RED TEST.
+
+        Current behavior: exception → rollback, persist_messages never called.
+        Desired behavior: persist the completed portion of the run (up to the crash),
+        commit it, surface Error SSE — do NOT discard completed work.
+
+        Will fail with current implementation.  Goes green when the
+        cancellation+improved-persistence implementation lands.
+        """
+        self.set_stream_fn(_exception_after_tool_return_stream)
+
+        events = await stream_and_collect(client, self.agent_record.id)
+        event_types = [e["event"] for e in events]
+        assert "Error" in event_types, "Expected Error SSE after mid-run exception"
+
+        # --- All assertions below are RED with current impl ---
+
+        assert self.spy.call_count >= 1, (
+            "persist_messages must be called even when the run crashes mid-stream"
+        )
+
+        union = _union_of_persisted(self.spy)
+
+        tool_resps = _select(union, ModelResponse, ToolCallPart)
+        tool_return_reqs = _select(union, ModelRequest, ToolReturnPart)
+        text_resps = _select(union, ModelResponse, TextPart)
+
+        assert len(tool_resps) >= 1, "Completed tool call must appear in persist union"
+        assert len(tool_return_reqs) >= 1, "Completed tool return must appear in persist union"
+        assert len(text_resps) == 0, "No final text expected: crash before step 2 yielded text"
+
+        _assert_no_orphans(union)
+
+        assert self.mock_session.commit.called, (
+            "Completed work must be committed even when the run crashes"
+        )
+        assert not self.mock_session.rollback.called, (
+            "Rollback discards completed work — must not roll back on mid-run exception"
+        )
+
+
+async def _blocking_tool_stream(messages, info: AgentInfo):
+    """Step 1 → emit blocking_tool call; step 2 (after tool return) → yield final text."""
+    if _has_tool_return(messages):
+        yield "Done."
+    else:
+        yield _tool_call_delta("blocking_tool", "tc-c1")
+
+
+def _make_blocking_agent(tool_entered: asyncio.Event, release: asyncio.Event) -> Agent:
+    """Build a real Agent whose 'blocking_tool' signals entry and waits for release.
+
+    Used for deterministic mid-tool cancellation timing: await tool_entered to confirm
+    the tool is provably in-flight, then act (cancel/etc), then release.set() to unblock.
+    """
+    agent: Agent = Agent(FunctionModel(stream_function=_blocking_tool_stream))
+
+    async def blocking_tool(thing: str) -> str:
+        tool_entered.set()
+        await release.wait()
+        return f"recorded: {thing}"
+
+    agent.tool_plain(blocking_tool)
+    return agent
+
+
+# ---------------------------------------------------------------------------
+# Version constants for rendezvous regression guard
+# ---------------------------------------------------------------------------
+
+_PYDANTIC_AI_VERSION = importlib.metadata.version("pydantic-ai")
+# Rendezvous semantics confirmed on pydantic-ai 1.104.0 (PR #5313, merged May 2026).
+# If the rendezvous test starts failing after a pydantic-ai upgrade, our cancel
+# strategy must be re-evaluated before shipping.
+_RENDEZVOUS_MIN_VERSION = "1.104.0"
+
+
+# ---------------------------------------------------------------------------
+# TestCancellation
+# ---------------------------------------------------------------------------
+
+class TestCancellation(_PersistSpyMixin):
+    """Cancellation contract tests.
+
+    Uses a blocking tool for deterministic timing: the tool signals 'tool_entered'
+    when it starts and waits on 'release' before returning, letting the test act
+    precisely while the tool is in flight.
+
+    test_graceful_cancel: xfail pending cancel route + _cancel_signals implementation.
+    """
+
+    @pytest.fixture(autouse=True)
+    def real_agent_dep(self, app, agent_record):
+        """Inject a real blocking-tool Agent + mock session via get_agent_and_deps."""
+        self.agent_record = agent_record
+        self.tool_entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.mock_session = _make_mock_session()
+
+        async def _dep():
+            agent = _make_blocking_agent(self.tool_entered, self.release)
+            deps = make_deps(self.mock_session, agent_record)
+            yield agent, deps
+
+        app.dependency_overrides[get_agent_and_deps] = _dep
+        yield
+        app.dependency_overrides.pop(get_agent_and_deps)
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "cancel route (POST /agents/{id}/cancel) and _cancel_signals mechanism "
+            "not yet implemented; xfail strict=True forces cleanup when impl lands"
+        ),
+    )
+    @pytest.mark.asyncio
+    async def test_graceful_cancel(self, client: AsyncClient):
+        """CONTRACT: graceful cancel lets the in-flight tool complete, persists the
+        tool call+return pair and a cancellation notice, then commits — without rolling back.
+
+        Covers requirements:
+          #4 — active tool is allowed to complete before cancel takes effect
+          #5 — cancellation notice wrapped in <system_message> tags is persisted
+          #7 — cancel is delivered via POST /agents/{id}/cancel
+
+        xfail: will pass once the cancel route and _cancel_signals mechanism land.
+        strict=True: when this test unexpectedly passes, pytest errors, forcing removal
+        of this marker.
+        """
+        # Start the SSE stream as a background task so we can interleave cancel.
+        stream_task = asyncio.create_task(
+            stream_and_collect(client, self.agent_record.id)
+        )
+
+        # Wait until the tool is provably in-flight before sending cancel.
+        await asyncio.wait_for(self.tool_entered.wait(), timeout=5.0)
+
+        # Deliver cancel (currently 404 — no route yet).
+        cancel_response = await client.post(f"/agents/{self.agent_record.id}/cancel")
+
+        # Always release so the stream task can finish regardless of cancel outcome.
+        self.release.set()
+        events = await asyncio.wait_for(stream_task, timeout=5.0)
+
+        # --- Contract assertions (all RED without cancel implementation) ---
+
+        assert cancel_response.status_code == 200, (
+            f"Cancel route must return 200; got {cancel_response.status_code}"
+        )
+
+        assert self.spy.call_count >= 1, (
+            "persist_messages must be called even on graceful cancel"
+        )
+
+        union = _union_of_persisted(self.spy)
+
+        # Tool call + return pair (tool was allowed to complete — req #4).
+        assert len(_select(union, ModelResponse, ToolCallPart)) >= 1, (
+            "Tool call must be persisted on graceful cancel"
+        )
+        assert len(_select(union, ModelRequest, ToolReturnPart)) >= 1, (
+            "Tool return must be persisted — tool must complete before cancel takes effect"
+        )
+        _assert_no_orphans(union)
+
+        # No final assistant text: post-tool model step must not run after cancel (req #4).
+        assert len(_select(union, ModelResponse, TextPart)) == 0, (
+            "Post-tool model step must not run after cancel"
+        )
+
+        # Cancellation notice persisted as <system_message> (req #5).
+        cancel_notices = [
+            m for m in union
+            if isinstance(m, ModelRequest)
+            and any(
+                isinstance(p, UserPromptPart) and "<system_message>" in p.content
+                for p in m.parts
+            )
+        ]
+        assert len(cancel_notices) >= 1, (
+            "A cancellation notice wrapped in <system_message> tags must be persisted"
+        )
+
+        # Commit, no rollback — completed work must not be discarded.
+        assert self.mock_session.commit.called, (
+            "Completed work must be committed on graceful cancel"
+        )
+        assert not self.mock_session.rollback.called, (
+            "Must not rollback completed work on graceful cancel"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Rendezvous regression guard (standalone — no class fixtures needed)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    Version(_PYDANTIC_AI_VERSION) < Version(_RENDEZVOUS_MIN_VERSION),
+    reason=f"Rendezvous semantics not verified before pydantic-ai {_RENDEZVOUS_MIN_VERSION}",
+)
+async def test_rendezvous_tool_does_not_start_before_event_consumed():
+    """Regression guard: pydantic-ai rendezvous semantics.
+
+    Property: a tool does NOT begin executing until its FunctionToolCallEvent has
+    been consumed by the caller.  Our cancel strategy depends entirely on this —
+    we can break out of the event stream BEFORE consuming FunctionToolCallEvent
+    and guarantee the tool has not started (and therefore cancel without orphaning it).
+
+    Drives a real Agent directly (no HTTP route) to isolate the pydantic-ai behaviour.
+
+    Pinned to pydantic-ai {_PYDANTIC_AI_VERSION} — see _RENDEZVOUS_MIN_VERSION.
+    If a pydantic-ai upgrade breaks this test, the cancellation strategy must be
+    re-evaluated before shipping.
+    """
+    tool_entered = asyncio.Event()
+    release = asyncio.Event()
+    release.set()  # release immediately; we only need the entry signal here
+
+    agent = _make_blocking_agent(tool_entered, release)
+
+    async with asyncio.timeout(5.0):
+        async with agent.run_stream_events("test", message_history=[]) as stream:
+            events_iter = stream.__aiter__()
+
+            # Consume events strictly before FunctionToolCallEvent.
+            # FunctionToolCallEvent is emitted only after the stream function's generator
+            # is exhausted, so at least one PartStartEvent/PartDeltaEvent precedes it.
+            event = await events_iter.__anext__()
+            pre_tool_event_seen = False
+
+            while not isinstance(event, FunctionToolCallEvent):
+                pre_tool_event_seen = True
+                # THE INVARIANT: until FunctionToolCallEvent is consumed, the tool
+                # must not have started (producer is blocked on the rendezvous send).
+                # Yield real time to the event loop to let the producer attempt to advance.
+                await asyncio.sleep(0.2)
+                assert not tool_entered.is_set(), (
+                    f"Rendezvous violated: blocking_tool started before "
+                    f"FunctionToolCallEvent was consumed "
+                    f"(pydantic-ai {_PYDANTIC_AI_VERSION}). "
+                    f"Cancel strategy must be re-evaluated."
+                )
+                event = await events_iter.__anext__()
+
+            assert pre_tool_event_seen, (
+                "No events appeared before FunctionToolCallEvent — "
+                "the rendezvous invariant was never exercised. "
+                "Check whether pydantic-ai changed its event ordering."
+            )
+
+            # FunctionToolCallEvent consumed: tool is now allowed to start.
+            # Drain remaining events to allow clean context-manager teardown.
+            async for _ in stream:
+                pass
+
+    # After FunctionToolCallEvent consumed and release already set, tool should have run.
+    assert tool_entered.is_set(), (
+        "Tool must execute after FunctionToolCallEvent is consumed"
+    )
+
+
+async def test_TODO_decide_cancel_orphan_tool_call_handling():
+    """DECISION REQUIRED before the persist-on-cancel implementation ships.
+
+    When a cancel lands on a tool call that was *generated but never run*
+    (rendezvous guarantees the tool didn't start — see
+    test_rendezvous_tool_does_not_start_before_event_consumed), the tail of the
+    captured/persisted messages is a lone ToolCallPart with no matching
+    ToolReturnPart. We must choose ONE of:
+
+      (A) TRIM it in the cursor/persist logic — drop the lone ToolCallPart before
+          persisting; the tool is simply re-requested on the next turn. Preserves
+          any sibling text/thinking parts on that ModelResponse. Requires a unit
+          test of the trim/cursor logic.
+
+      (B) LET persist_messages EAT it — its orphan sanitizer already replaces an
+          unmatched ToolCallPart with an "[Orphaned tool call(s) dropped]" record,
+          keeping the history API-valid. Cheaper, but first verify the sanitizer
+          does not also discard accompanying text/thinking parts on the same
+          ModelResponse.
+
+    Both options yield API-valid history (no dangling tool_use), so this is a
+    narrative-cleanliness call, deferred deliberately. Resolve it, update the plan
+    doc's Test Coverage section, and REPLACE this marker with the real test.
+    """
+    pytest.fail(
+        "TODO: decide cancel-orphan tool-call handling (trim vs. let "
+        "persist_messages eat it), then replace this marker with the real "
+        "persistence unit test. "
+        "See docs/Planning/cancellation_and_improved_persistence_plan.md."
+    )
 
 
 class TestGetAgent:
