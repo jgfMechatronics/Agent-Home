@@ -575,7 +575,7 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
     @staticmethod
     async def _two_step_stream(messages, info: AgentInfo):
         """Step 1 → emit tool call; step 2 (after tool return) → yield final text."""
-        if _PersistenceAndCancellationTestBase._has_tool_return(messages):
+        if _has_tool_return(messages):
             yield "Turn complete."
         else:
             yield TestSendMessagePersistenceBehavior._tool_call_delta("tc-a1")
@@ -590,7 +590,7 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         route's try/except can catch it) rather than during context-manager setup
         (which bypasses it).
         """
-        if _PersistenceAndCancellationTestBase._has_tool_return(messages):
+        if _has_tool_return(messages):
             yield "start..."  # let peek() succeed; exception fires on the next __anext__
             raise RuntimeError("Simulated crash mid-stream")
         yield TestSendMessagePersistenceBehavior._tool_call_delta("tc-b1")
