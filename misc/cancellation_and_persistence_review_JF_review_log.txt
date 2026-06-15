@@ -10,5 +10,10 @@ _install_real_agent_dep reviewed
 _PersistenceAndCancellationTestBase has many helpers previously reviewed in it now.
 _PersistenceAndCancellationTestBase now fully reviewd
 
+Reworked a good bit of the way we were doing the FunctionModelAgent was handled because it was too scattered to reason about.
+Reviewed FunctionModelTestAgent
+Re-reviewed 
 
+This has gotten to be a messy iteration so I'm just going to want to review vs main again once I *think* I'm done.
 
+Made it to reviewing TestSendMessagePersistenceBehavior

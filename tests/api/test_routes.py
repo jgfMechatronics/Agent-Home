@@ -112,6 +112,15 @@ def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | N
     return agent
 
 
+def _make_mock_session() -> Mock:
+    """Build a mock AsyncSession with async commit/rollback/refresh."""
+    session = Mock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+    session.refresh = AsyncMock()
+    return session
+
+
 @pytest.fixture(autouse=True)
 def override_db_session(app: FastAPI, session: AsyncSession):
     """Ensure routes use the test session, not a separate DB connection.
@@ -157,16 +166,6 @@ class _BaseRouteTest:
             self.mock_compact = mock_compact
             self.mock_persist_messages = mock_persist_messages
             yield
-
-
-    @staticmethod
-    def _make_mock_session() -> Mock:
-        """Build a mock AsyncSession with async commit/rollback/refresh."""
-        session = Mock()
-        session.commit = AsyncMock()
-        session.rollback = AsyncMock()
-        session.refresh = AsyncMock()
-        return session
 
 
 # --- Helpers ---
@@ -235,7 +234,7 @@ class TestSendMessage(_BaseRouteTest):
         method is called on the agent. We already have a mock agent so we can just use that.
         """
         self.agent_record = agent_record
-        self.mock_session = self._make_mock_session()
+        self.mock_session = _make_mock_session()
 
         def _configure(events=None, raise_exc=None, raises_mid_stream=None):
             async def _mock_dep():
@@ -462,24 +461,126 @@ class TestCreateAgent:
 # Detailed Persistence test and Cancellation tests
 # ---------------------------------------------------------------------------
 
-# This helper shared by a few classes without clean way to get through inheritance
-def _has_tool_return(messages) -> bool:
-    """True when messages include a ToolReturnPart"""
-    return any(
-        isinstance(part, ToolReturnPart)
-        for msg in messages if isinstance(msg, ModelRequest)
-        for part in msg.parts
-    )
+class FunctionModelTestAgent:
+    """Test agent backed by FunctionModel for precise behavioral control.
+
+    Centralises agent construction, message-history capture (self.calls), and
+    dependency injection.  Behavior is declared as a sequence of steps consumed
+    in order, one per _stream invocation (i.e. one per model call).  Each step
+    is either a value to yield or an Exception to raise immediately.
+
+    Class-level constants cover the common scenarios:
+
+        DEFAULT_STEPS  — happy path: tool call → completion text
+        CRASH_STEPS    — exception after tool return (no text emitted before crash)
+
+    Usage:
+        # Happy path (default)
+        agent = FunctionModelTestAgent()
+
+        # Exception after tool return — call before making the request
+        agent.set_steps(FunctionModelTestAgent.CRASH_STEPS)
+
+        # Blocking tool (for cancellation/timing tests)
+        agent.block_in_tool = True
+        # Then in test: await agent.tool_entered.wait(), do assertions,
+        # agent.resume_tool_exec.set()
+
+        # Inject into app
+        with agent.override_agent_and_deps_factory(app, agent_record) as mock_session:
+            ...
+    """
+
+    # --- Step constants (one value or exception per model invocation) ---
+    TOOL_CALL  = DeltaToolCalls({0: DeltaToolCall(name="dummy_tool", json_args='{"arg": "dummy"}', tool_call_id="tc-a1")})
+    COMPLETION = "Turn complete."
+    CRASH      = RuntimeError("Simulated crash mid-stream")
+
+    # --- Step sequences ---
+    DEFAULT_STEPS = [TOOL_CALL, COMPLETION]
+    CRASH_STEPS   = [TOOL_CALL, CRASH]
+
+    def __init__(self) -> None:
+        self.calls: list[list] = []
+        self._stream_step_index = 0
+        self._stream_steps = self.DEFAULT_STEPS
+        # use to pause tool execution to test intermediate states
+        self.block_in_tool = False
+        # Set when dummy_tool begins executing (tests can await this)
+        self.tool_entered = asyncio.Event()
+        # Tests set this to let dummy_tool resume after blocking
+        self.resume_tool_exec = asyncio.Event()
+        self._agent = self._build()
+
+    def set_steps(self, steps) -> None:
+        """Replace the step sequence and reset the index (call before making a request)."""
+        self._stream_steps = steps
+        self._stream_step_index = 0
+
+    @property
+    def agent(self) -> Agent:
+        return self._agent
+
+    @contextmanager
+    def override_agent_and_deps_factory(self, app: FastAPI, agent_record):
+        """
+        Install this agent in app's dep overrides; restore previous override on exit.
+        yields the mock_session used to construct the agent and deps
+        """
+        mock_session = _make_mock_session()
+
+        async def _make_agent_and_deps():
+            yield self._agent, make_deps(mock_session, agent_record)
+
+        app.dependency_overrides[get_agent_and_deps] = _make_agent_and_deps
+        try:
+            yield mock_session
+        finally:
+            app.dependency_overrides.pop(get_agent_and_deps)
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _build(self) -> Agent:
+        agent: Agent = Agent(FunctionModel(stream_function=self._stream))
+
+        async def dummy_tool(arg: str) -> str:
+            if self.block_in_tool:
+                self.tool_entered.set()
+                await self.resume_tool_exec.wait()
+            return "dummy_tool_output"
+
+        agent.tool_plain(dummy_tool)
+        return agent
+
+    async def _stream(self, messages, info: AgentInfo):
+        self.calls.append(list(messages))
+        step = self._stream_steps[self._stream_step_index]
+        self._stream_step_index += 1
+        if isinstance(step, Exception):
+            raise step
+        yield step
 
 
 class _PersistenceAndCancellationTestBase(_BaseRouteTest):
     """Base for test classes that drive a real pydantic-ai Agent.
 
-    Shared assertion and extraction helpers (as static methods) plus
-    _install_real_agent_dep() for injecting a real Agent + mock session via
-    get_agent_and_deps. Subclasses provide class-specific stream functions
-    and agent factories as static methods.
+    Shared assertion and extraction helpers as static methods.
     """
+
+    @pytest.fixture(autouse=True)
+    def real_agent_dep(self, app, agent_record):
+        """Construct a FunctionModelTestAgent and install it via get_agent_and_deps override.
+
+        Exposes self.agent_record, self.mock_session, self.function_agent.
+        """
+        self.agent_record = agent_record
+        self.function_agent = FunctionModelTestAgent()
+        with self.function_agent.override_agent_and_deps_factory(app, agent_record) as mock_session:
+            self.mock_session = mock_session
+            yield
+
 
     @staticmethod
     def _list_persisted_messages(mock_persist_messages) -> list:
@@ -527,89 +628,9 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
         orphans = tool_call_ids - response_ids
         assert not orphans, f"Orphaned ToolCallPart IDs with no matching return: {orphans}"
 
-    @contextmanager
-    def _install_real_agent_dep(self, app, agent_record, test_agent_factory):
-        """Override get_agent_and_deps with a real Agent + mock session, popping on teardown.
-
-        agent_factory is called fresh inside the dependency on every request, so subclasses
-        can swap behavior between requests via instance state (e.g. the stream function).
-        Exposes self.agent_record and self.mock_session.
-        """
-        self.agent_record = agent_record
-        self.mock_session = self._make_mock_session()
-
-        async def _dep():
-            yield test_agent_factory(), make_deps(self.mock_session, agent_record)
-
-        app.dependency_overrides[get_agent_and_deps] = _dep
-        try:
-            yield
-        finally:
-            app.dependency_overrides.pop(get_agent_and_deps)
-
 
 class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
     """Persistence contract tests using a real pydantic-ai Agent + FunctionModel."""
-
-    @staticmethod
-    def _make_function_agent(stream_fn) -> Agent:
-        """Build a real pydantic-ai Agent backed by FunctionModel with a dummy tool."""
-        agent: Agent = Agent(FunctionModel(stream_function=stream_fn))
-
-        def dummy_tool(arg: str) -> str:
-            return "dummy_tool_output"
-
-        agent.tool_plain(dummy_tool)
-        return agent
-
-    @staticmethod
-    def _tool_call_delta(tool_call_id: str) -> DeltaToolCalls:
-        """A single dummy_tool call streaming delta."""
-        return DeltaToolCalls(
-            {0: DeltaToolCall(name="dummy_tool", json_args='{"arg": "dummy"}', tool_call_id=tool_call_id)}
-        )
-
-    @staticmethod
-    async def _two_step_stream(messages, info: AgentInfo):
-        """Step 1 → emit tool call; step 2 (after tool return) → yield final text."""
-        if _has_tool_return(messages):
-            yield "Turn complete."
-        else:
-            yield TestSendMessagePersistenceBehavior._tool_call_delta("tc-a1")
-
-    @staticmethod
-    async def _exception_after_tool_return_stream(messages, info: AgentInfo):
-        """Step 1 → emit tool call; step 2 → yield one text chunk then raise.
-
-        The leading yield is required: FunctionModel calls peek() during request_stream
-        __aenter__, which must succeed for setup to complete.  The exception on the
-        *next* __anext__ then propagates through the event iteration loop (where the
-        route's try/except can catch it) rather than during context-manager setup
-        (which bypasses it).
-        """
-        if _has_tool_return(messages):
-            yield "start..."  # let peek() succeed; exception fires on the next __anext__
-            raise RuntimeError("Simulated crash mid-stream")
-        yield TestSendMessagePersistenceBehavior._tool_call_delta("tc-b1")
-
-    @pytest.fixture(autouse=True)
-    def real_agent_dep(self, app, agent_record):
-        """Inject a real Agent + mock session via get_agent_and_deps override.
-
-        Exposes self.agent_record, self.mock_session.
-        Call self.set_stream_fn(fn) before the request to swap the stream function.
-        """
-        self._stream_fn = self._two_step_stream
-
-        def set_stream_fn(fn):
-            self._stream_fn = fn
-
-        self.set_stream_fn = set_stream_fn
-
-        with self._install_real_agent_dep(
-            app, agent_record, lambda: self._make_function_agent(self._stream_fn)
-        ):
-            yield
 
     async def test_happy_path_persists_full_message_list(self, client: AsyncClient):
         """
@@ -666,7 +687,7 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         Will fail with current implementation.  Goes green when the
         cancellation+improved-persistence implementation lands.
         """
-        self.set_stream_fn(self._exception_after_tool_return_stream)
+        self.function_agent.set_steps(FunctionModelTestAgent.CRASH_STEPS)
 
         events = await stream_and_collect(client, self.agent_record.id)
         event_types = [e["event"] for e in events]
@@ -699,37 +720,6 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
 
 
 # ---------------------------------------------------------------------------
-# Blocking-tool helpers (module-level)
-# Kept at module level — shared between TestCancellation AND the standalone
-# test_rendezvous_property function, which doesn't inherit from a test class.
-# ---------------------------------------------------------------------------
-
-async def _blocking_tool_stream(messages, info: AgentInfo):
-    """Step 1 → emit blocking_tool call; step 2 (after tool return) → yield final text."""
-    if _has_tool_return(messages):
-        yield "Done."
-    else:
-        yield DeltaToolCalls({0: DeltaToolCall(name="blocking_tool", json_args='{}', tool_call_id="tc-c1")})
-
-
-def _make_blocking_agent(tool_entered: asyncio.Event, release: asyncio.Event) -> Agent:
-    """Build a real Agent whose 'blocking_tool' signals entry and waits for release.
-
-    Used for deterministic mid-tool cancellation timing: await tool_entered to confirm
-    the tool is provably in-flight, then act (cancel/etc), then release.set() to unblock.
-    """
-    agent: Agent = Agent(FunctionModel(stream_function=_blocking_tool_stream))
-
-    async def blocking_tool() -> str:
-        tool_entered.set()
-        await release.wait()
-        return "blocking_tool_output"
-
-    agent.tool_plain(blocking_tool)
-    return agent
-
-
-# ---------------------------------------------------------------------------
 # Version constants for rendezvous regression guard
 # ---------------------------------------------------------------------------
 
@@ -755,15 +745,13 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
     """
 
     @pytest.fixture(autouse=True)
-    def real_agent_dep(self, app, agent_record):
-        """Inject a real blocking-tool Agent + mock session via get_agent_and_deps."""
-        self.tool_entered = asyncio.Event()
-        self.release = asyncio.Event()
+    def configure_blocking_agent(self, real_agent_dep):
+        """Enable blocking tool behavior for cancellation tests.
 
-        with self._install_real_agent_dep(
-            app, agent_record, lambda: _make_blocking_agent(self.tool_entered, self.release)
-        ):
-            yield
+        Runs after real_agent_dep (declared as dependency), so self.function_agent exists.
+        Tests access self.function_agent.tool_entered and .resume_tool_exec directly.
+        """
+        self.function_agent.block_in_tool = True
 
     @pytest.mark.xfail(
         strict=True,
@@ -792,13 +780,12 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         )
 
         # Wait until the tool is provably in-flight before sending cancel.
-        await asyncio.wait_for(self.tool_entered.wait(), timeout=5.0)
+        await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
 
-        # Deliver cancel (currently 404 — no route yet).
         cancel_response = await client.post(f"/agents/{self.agent_record.id}/cancel")
 
         # Always release so the stream task can finish regardless of cancel outcome.
-        self.release.set()
+        self.function_agent.resume_tool_exec.set()
         events = await asyncio.wait_for(stream_task, timeout=5.0)
 
         # --- Contract assertions (all RED without cancel implementation) ---
@@ -871,11 +858,10 @@ async def test_rendezvous_tool_does_not_start_before_event_consumed():
     If a pydantic-ai upgrade breaks this test, the cancellation strategy must be
     re-evaluated before shipping.
     """
-    tool_entered = asyncio.Event()
-    release = asyncio.Event()
-    release.set()  # release immediately; we only need the entry signal here
-
-    agent = _make_blocking_agent(tool_entered, release)
+    test_agent = FunctionModelTestAgent()
+    test_agent.block_in_tool = True
+    test_agent.resume_tool_exec.set()  # release immediately; we only need the entry signal here
+    agent = test_agent.agent
 
     async with asyncio.timeout(5.0):
         async with agent.run_stream_events("test", message_history=[]) as stream:
@@ -893,7 +879,7 @@ async def test_rendezvous_tool_does_not_start_before_event_consumed():
                 # must not have started (producer is blocked on the rendezvous send).
                 # Yield real time to the event loop to let the producer attempt to advance.
                 await asyncio.sleep(0.2)
-                assert not tool_entered.is_set(), (
+                assert not test_agent.tool_entered.is_set(), (
                     f"Rendezvous violated: blocking_tool started before "
                     f"FunctionToolCallEvent was consumed "
                     f"(pydantic-ai {_PYDANTIC_AI_VERSION}). "
@@ -912,8 +898,8 @@ async def test_rendezvous_tool_does_not_start_before_event_consumed():
             async for _ in stream:
                 pass
 
-    # After FunctionToolCallEvent consumed and release already set, tool should have run.
-    assert tool_entered.is_set(), (
+    # After FunctionToolCallEvent consumed and resume_tool_exec already set, tool should have run.
+    assert test_agent.tool_entered.is_set(), (
         "Tool must execute after FunctionToolCallEvent is consumed"
     )
 
