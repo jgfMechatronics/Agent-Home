@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -496,8 +497,17 @@ class FunctionModelTestAgent:
     COMPLETION = "Turn complete."
     CRASH      = RuntimeError("Simulated crash mid-stream")
 
+    TOOL_RETURN_VALUE = "dummy_tool_return"
+
     # --- Step sequences ---
     DEFAULT_STEPS = [TOOL_CALL, COMPLETION]
+    # DEFAULT_STEPS is what the *model* outputs. Below is what the *agent* outputs, IE what is returned by run_stream_events or similar
+    # Not raw chunks but the complete model messages (so what should be persisted, not necessarily what is streamed)
+    DEFAULT_EXPECTED_TOTAL_MODELMSGS: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name="dummy_tool", args='{"arg": "dummy"}', tool_call_id="tc-a1")]),
+        ModelRequest(parts=[ToolReturnPart(tool_name="dummy_tool", content=TOOL_RETURN_VALUE, tool_call_id="tc-a1")]),
+        ModelResponse(parts=[TextPart(content=COMPLETION)]),
+    ]
     CRASH_STEPS   = [TOOL_CALL, CRASH]
 
     def __init__(self) -> None:
@@ -549,7 +559,7 @@ class FunctionModelTestAgent:
             if self.block_in_tool:
                 self.tool_entered.set()
                 await self.resume_tool_exec.wait()
-            return "dummy_tool_output"
+            return self.TOOL_RETURN_VALUE
 
         agent.tool_plain(dummy_tool)
         return agent
@@ -628,6 +638,34 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
         orphans = tool_call_ids - response_ids
         assert not orphans, f"Orphaned ToolCallPart IDs with no matching return: {orphans}"
 
+    @staticmethod
+    def _assert_ModelMessage_list_eq(
+        actual: list[ModelMessage],
+        expected: list[ModelMessage],
+    ) -> None:
+        """Assert two ModelMessage lists are semantically equal, ignoring runtime fields (timestamps etc.)."""
+        assert len(actual) == len(expected), f"Message list length mismatch: {len(actual)} != {len(expected)}"
+        for i, (actual_msg, expected_msg) in enumerate(zip(actual, expected)):
+            assert type(actual_msg) is type(expected_msg), f"Message {i}: type mismatch {type(actual_msg)} != {type(expected_msg)}"
+            assert len(actual_msg.parts) == len(expected_msg.parts), f"Message {i}: part count mismatch"
+            for j, (actual_part, expected_part) in enumerate(zip(actual_msg.parts, expected_msg.parts)):
+                assert type(actual_part) is type(expected_part), f"Message {i} part {j}: type mismatch"
+                match expected_part:
+                    case UserPromptPart():
+                        assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
+                    case ToolCallPart():
+                        assert actual_part.tool_name == expected_part.tool_name, f"Message {i} part {j}: tool_name mismatch"
+                        assert actual_part.args == expected_part.args, f"Message {i} part {j}: args mismatch"
+                        assert actual_part.tool_call_id == expected_part.tool_call_id, f"Message {i} part {j}: tool_call_id mismatch"
+                    case ToolReturnPart():
+                        assert actual_part.tool_name == expected_part.tool_name, f"Message {i} part {j}: tool_name mismatch"
+                        assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
+                        assert actual_part.tool_call_id == expected_part.tool_call_id, f"Message {i} part {j}: tool_call_id mismatch"
+                    case TextPart():
+                        assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
+                    case _:
+                        assert actual_part == expected_part, f"Message {i} part {j}: equality mismatch"
+
 
 class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
     """Persistence contract tests using a real pydantic-ai Agent + FunctionModel."""
@@ -642,32 +680,32 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         A more detailed/stronger version of the basic persistence test in TestSendMessage.
         """
         fake_history = [ModelRequest(parts=[UserPromptPart(content="prior turn")])]
-        # TODO: Sanity assertion that the msg history actually made it into the agent. This is coupled to impl details
-        # pretty hard rn with no validation that coupling holds
         self.mock_deserialize_msgs.return_value = fake_history
+        USER_MSG = "You're not a real model!"
 
-        events = await stream_and_collect(client, self.agent_record.id)
+        events = await stream_and_collect(client, self.agent_record.id, USER_MSG)
         event_types = [e["event"] for e in events]
         assert "Error" not in event_types, f"Unexpected Error event: {events}"
+        # Sanity check: history + new user prompt combined into one ModelRequest by pydantic-ai
+        self._assert_ModelMessage_list_eq(
+            self.function_agent.calls[0],
+            [ModelRequest(parts=[UserPromptPart(content="prior turn"), UserPromptPart(content=USER_MSG)])],
+        )
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
-        user_reqs = self._messages_with_part(persisted_msgs_list, ModelRequest, UserPromptPart)
-        tool_resps = self._messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)
-        tool_return_reqs = self._messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)
-        text_resps = self._messages_with_part(persisted_msgs_list, ModelResponse, TextPart)
-
-        assert len(user_reqs) == 1, "Expected exactly one UserPrompt in persisted message list"
-        assert len(tool_resps) == 1, "Expected exactly one ToolCall response in persisted message list"
-        assert len(tool_return_reqs) == 1, "Expected exactly one ToolReturn request in persisted message list"
-        assert len(text_resps) == 1, "Expected exactly one final Text response in persisted message list"
-
-        causal_order = [persisted_msgs_list.index(m) for m in (user_reqs[0], tool_resps[0], tool_return_reqs[0], text_resps[0])]
-        assert causal_order == sorted(causal_order), "Messages are not in causal order in persisted message list"
+        expected_msg_list = [
+            ModelRequest(parts=[UserPromptPart(content=USER_MSG)]),
+        ] + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS
+        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
         self._assert_no_duplicates(persisted_msgs_list)
         self._assert_no_orphans(persisted_msgs_list)
 
+        # TODO: Broken comparison. Tries to match runtime stuff that will vary. pydantic also bundles new 
+        # user msg with history for first ModelRequest that the model actually sees so this will miss everything
+        # we might just want to get rid of this in favor of confirming this with our expected_msg_list which is clearly
+        # constructed to not include the history
         for h_msg in fake_history:
             assert h_msg not in persisted_msgs_list, f"History message leaked into persisted message list: {h_msg!r}"
 
@@ -678,14 +716,9 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         pytest.fail("TODO: Happy path doesn't test this. This is a real req based on TUI polling history.")
 
     async def test_persist_survives_mid_run_exception(self, client: AsyncClient):
-        """CONTRACT-DEFINING RED TEST.
-
-        Current behavior: exception → rollback, persist_messages never called.
+        """
         Desired behavior: persist the completed portion of the run (up to the crash),
         commit it, surface Error SSE — do NOT discard completed work.
-
-        Will fail with current implementation.  Goes green when the
-        cancellation+improved-persistence implementation lands.
         """
         self.function_agent.set_steps(FunctionModelTestAgent.CRASH_STEPS)
 
