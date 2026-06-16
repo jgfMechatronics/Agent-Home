@@ -17,3 +17,8 @@ Re-reviewed
 This has gotten to be a messy iteration so I'm just going to want to review vs main again once I *think* I'm done.
 
 Made it to reviewing TestSendMessagePersistenceBehavior
+
+Reworking the comparison a bit. Adding a helper to compare only the key parts of the lists.
+
+Left off reviewing the comparison helper and working through the rest of happy path test.
+_assert_ModelMessage_list_eq 

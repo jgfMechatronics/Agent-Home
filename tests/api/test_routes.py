@@ -38,11 +38,12 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 # Local
 from agent.factory import AgentNotFoundError
@@ -493,6 +494,9 @@ class FunctionModelTestAgent:
     """
 
     # --- Step constants (one value or exception per model invocation) ---
+    THINKING_TEXT = "If I think hard enough I will unravel the mysteries of the universe"
+    THINKING_STEP = DeltaThinkingCalls({0: DeltaThinkingPart(content_delta=THINKING_TEXT)})
+    
     TOOL_CALL  = DeltaToolCalls({0: DeltaToolCall(name="dummy_tool", json_args='{"arg": "dummy"}', tool_call_id="tc-a1")})
     COMPLETION = "Turn complete."
     CRASH      = RuntimeError("Simulated crash mid-stream")
@@ -500,11 +504,11 @@ class FunctionModelTestAgent:
     TOOL_RETURN_VALUE = "dummy_tool_return"
 
     # --- Step sequences ---
-    DEFAULT_STEPS = [TOOL_CALL, COMPLETION]
+    DEFAULT_STEPS = [[THINKING_STEP, TOOL_CALL], COMPLETION]
     # DEFAULT_STEPS is what the *model* outputs. Below is what the *agent* outputs, IE what is returned by run_stream_events or similar
     # Not raw chunks but the complete model messages (so what should be persisted, not necessarily what is streamed)
     DEFAULT_EXPECTED_TOTAL_MODELMSGS: list[ModelMessage] = [
-        ModelResponse(parts=[ToolCallPart(tool_name="dummy_tool", args='{"arg": "dummy"}', tool_call_id="tc-a1")]),
+        ModelResponse(parts=[ThinkingPart(content=THINKING_TEXT), ToolCallPart(tool_name="dummy_tool", args='{"arg": "dummy"}', tool_call_id="tc-a1")]),
         ModelRequest(parts=[ToolReturnPart(tool_name="dummy_tool", content=TOOL_RETURN_VALUE, tool_call_id="tc-a1")]),
         ModelResponse(parts=[TextPart(content=COMPLETION)]),
     ]
@@ -664,7 +668,8 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
                     case TextPart():
                         assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
                     case _:
-                        assert actual_part == expected_part, f"Message {i} part {j}: equality mismatch"
+                        assert actual_part == expected_part, (f"Message {i} part {j}: equality mismatch.\n" 
+                                                              "Comparison helper may not be accountinng for this type.")
 
 
 class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
@@ -694,11 +699,17 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
+        # Based on the construction of this list, this assertion checks:
+        # - expected content persisted
+        # - no dupes
+        # - no orphaned tool calls
+        # - old history not persisted
         expected_msg_list = [
             ModelRequest(parts=[UserPromptPart(content=USER_MSG)]),
         ] + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS
         self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
+        # These are now sanity checks due to strength of above hard coded comparison
         self._assert_no_duplicates(persisted_msgs_list)
         self._assert_no_orphans(persisted_msgs_list)
 

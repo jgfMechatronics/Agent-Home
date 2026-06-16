@@ -8,10 +8,12 @@
   ModelResponse carrying a ToolCallPart must NOT be persisted until its matching
   ToolReturnPart exists — i.e. defer the persistence point until the tool returns, so the
   call+return go in as a well-formed unit. (persist_messages' orphan sanitizer is a
-  failsafe against invalid histories; we should never actually be feeding it an orphan.)
+  failsafe against invalid histories; we should never actually be feeding it an orphan. If we persisted tool calls as we go w/ no return, persist would sanitize both the tool call and the return)
 - [ ] Persists even on mid-run exception or cancellation
 - [ ] Cancellation allows any active tool execution to complete
   - May be sensitive to PydanticAI internals w/o `agent.iter()` whatever
+  - We may find that this is an issue for longer running tools. If I press cancel and have to wait 2 minutes for the agent to be available again from a blocking tool call, that is probably not ideal
+    Consider this out of scope for now, complex to deal with. Ideally we would also abort the running tool rather than just unblocking the agent and let it run in the background. Not necessarily trivial with MCP considerations
 - [ ] Cancellation ends persisted chain w/ Cancellation notice (user msg containing `<system_message>content</system_message>` or similar)
 - [ ] Cancellation achieved through PydanticAI recommended method.
   - For `run_stream_events`: exit the async context manager
@@ -20,20 +22,7 @@
 - [ ] Cancellation works through /agents/{id}/cancel (which we will map to ACP session/cancel. Either at the server level, at the adapter level, etc. This is effectively a naming concern so OK to defer that detail)
 
 # Test Coverage (tests/api/test_routes.py)
-
-Tests are written first (TDD). Persistence-survival and cancel tests define the
-contract for the not-yet-written implementation, so they are RED/xfail until impl lands.
-
-| # | Requirement | Test(s) | State |
-|---|-------------|---------|-------|
-| 1 | No duplication across persistence points | `TestPersistenceAcrossInterruptions::test_happy_path_persists_full_message_union` (asserts `_assert_no_duplicates` on the persisted union) | GREEN (teeth come from the future as-you-go multi-point impl, where the identity check catches cursor re-persist) |
-| 1b | Doesn't re-persist pre-loaded message history | `test_happy_path_persists_full_message_union` (injects fake history via `deserialize`, asserts it's excluded from the union) | GREEN |
-| 2 | Persists every complete Model Message as you go, except orphaned tool calls | `test_happy_path...` (well-formed call+return pair, `_assert_no_orphans`); as-you-go incremental behavior is contract for impl | GREEN (happy path); incremental asserted at impl time |
-| 3 | Persists even on mid-run exception or cancellation | `test_persist_survives_mid_run_exception` (exception path) + `TestCancellation::test_graceful_cancel` (cancel path) | RED (exception, hard) / xfail (cancel) |
-| 4 | Cancellation allows active tool to complete | `test_graceful_cancel` (toolcall+toolreturn pair persisted, no final TextPart) + `test_rendezvous_tool_does_not_start_before_event_consumed` (guards the pyd rendezvous property the strategy relies on) | xfail (graceful) / GREEN (rendezvous guard) |
-| 5 | Cancellation notice persisted (`<system_message>` user msg) | `test_graceful_cancel` (asserts a `UserPromptPart` containing `<system_message>` in the union) | xfail |
-| 6 | Cancellation via PydanticAI recommended method | Mechanism is impl-specific (not asserted directly per plan); `test_rendezvous...` guards the library behavior our `run_stream_events` deferred-CM-exit strategy depends on | GREEN (guard) |
-| 7 | Cancellation via `/agents/{id}/cancel` | `test_graceful_cancel` (POSTs to the route, asserts 200) | xfail (route unimplemented → 404) |
+FILL IN
 
 RED vs xfail convention: **hard RED** when existing code violates a contract
 (`test_persist_survives_mid_run_exception` — persist-at-end discards on exception);
