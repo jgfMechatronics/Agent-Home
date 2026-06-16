@@ -853,17 +853,6 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
 
 
 # ---------------------------------------------------------------------------
-# Version constants for rendezvous regression guard
-# ---------------------------------------------------------------------------
-
-_PYDANTIC_AI_VERSION = importlib.metadata.version("pydantic-ai")
-# Rendezvous semantics confirmed on pydantic-ai 1.104.0 (PR #5313, merged May 2026).
-# If the rendezvous test starts failing after a pydantic-ai upgrade, our cancel
-# strategy must be re-evaluated before shipping.
-_RENDEZVOUS_MIN_VERSION = "1.104.0"
-
-
-# ---------------------------------------------------------------------------
 # TestCancellation
 # ---------------------------------------------------------------------------
 
@@ -972,6 +961,13 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 # ---------------------------------------------------------------------------
 # Rendezvous regression guard (standalone — no class fixtures needed)
 # ---------------------------------------------------------------------------
+_PYDANTIC_AI_VERSION = importlib.metadata.version("pydantic-ai")
+# Rendezvous semantics confirmed on pydantic-ai 1.104.0 (PR #5313, merged May 2026).
+# If the rendezvous test starts failing after a pydantic-ai upgrade, our cancel
+# strategy must be re-evaluated before shipping.
+_RENDEZVOUS_MIN_VERSION = "1.104.0"
+
+
 
 @pytest.mark.skipif(
     Version(_PYDANTIC_AI_VERSION) < Version(_RENDEZVOUS_MIN_VERSION),
