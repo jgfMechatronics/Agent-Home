@@ -968,7 +968,6 @@ _PYDANTIC_AI_VERSION = importlib.metadata.version("pydantic-ai")
 _RENDEZVOUS_MIN_VERSION = "1.104.0"
 
 
-
 @pytest.mark.skipif(
     Version(_PYDANTIC_AI_VERSION) < Version(_RENDEZVOUS_MIN_VERSION),
     reason=f"Rendezvous semantics not verified before pydantic-ai {_RENDEZVOUS_MIN_VERSION}",
