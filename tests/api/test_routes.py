@@ -495,35 +495,52 @@ class FunctionModelTestAgent:
     """
 
     
-    """
-    --- Step constants (one value or exception per model invocation) ---
-    https://pydantic.dev/docs/ai/api/models/function/#pydantic_ai.models.function.StreamFunctionDef claims we're being bad here, but can't *really* tell why its an issue
-    Its possible its just the Delta index collision we ran into below. Either way, the illict behavior is useful so we keep it for now
-    """
-    THINKING_TEXT  = "If I think hard enough I will unravel the mysteries of the universe"
-    THINKING_STEP  = DeltaThinkingCalls({0: DeltaThinkingPart(content=THINKING_TEXT)})
-    PRE_TOOL_TEXT  = "I'll look that up for you."
-    TOOL_CALL      = DeltaToolCalls({1: DeltaToolCall(name="dummy_tool", json_args='{"arg": "dummy"}', tool_call_id="tc-a1")})
+    # --- Dummy tool identity ---
+    # Couples the FunctionModel stream deltas, expected message parts, and the tool implementation.
+    # NOTE: the tool function name below in _build() must match DUMMY_TOOL_NAME.
+    DUMMY_TOOL_NAME    = "dummy_tool"
+    DUMMY_TOOL_ARGS    = '{"arg": "dummy"}'
+    DUMMY_TOOL_CALL_ID = "tc-a1"
+    TOOL_RETURN_VALUE  = "dummy_tool_return"
+
+    DUMMY_TOOL_CALL_PART  = ToolCallPart(tool_name=DUMMY_TOOL_NAME, args=DUMMY_TOOL_ARGS, tool_call_id=DUMMY_TOOL_CALL_ID)
+    DUMMY_TOOL_RETURN_PART = ToolReturnPart(tool_name=DUMMY_TOOL_NAME, content=TOOL_RETURN_VALUE, tool_call_id=DUMMY_TOOL_CALL_ID)
+
+    # --- Step constants (one value or exception per model invocation) ---
+    # https://pydantic.dev/docs/ai/api/models/function/#pydantic_ai.models.function.StreamFunctionDef claims we're being bad here, but can't *really* tell why its an issue
+    # Its possible its just the Delta index collision we ran into below. Either way, the illict behavior is useful so we keep it for now
+    # The different types (raw text, Deltas, etc) is just an artifact of what pydantic AI expects from FunctionModel
+    THINKING_TEXT   = "If I think hard enough I will unravel the mysteries of the universe"
+    THINKING_STEP   = DeltaThinkingCalls({0: DeltaThinkingPart(content=THINKING_TEXT)})
+    PRE_TOOL_TEXT   = "I'll look that up for you."
+    TOOL_CALL       = DeltaToolCalls({1: DeltaToolCall(name=DUMMY_TOOL_NAME, json_args=DUMMY_TOOL_ARGS, tool_call_id=DUMMY_TOOL_CALL_ID)})
     COMPLETION_TEXT = "Turn complete."
-    CRASH      = RuntimeError("Simulated crash mid-stream")
+    CRASH           = RuntimeError("Simulated crash mid-stream")
 
-    TOOL_RETURN_VALUE = "dummy_tool_return"
-
-    # --- Step sequences ---
+    # --- Step sequences and expected model messages ---
     # Each entry in the list results in one AsyncIterator. Lists are yielded during a single iterator, single items will be the only item in the iterator
     DEFAULT_STEPS = [[THINKING_STEP, PRE_TOOL_TEXT, TOOL_CALL], COMPLETION_TEXT]
     # DEFAULT_STEPS is what the *model* outputs. Below is what the *agent* outputs, IE what is returned by run_stream_events or similar
     # Not raw chunks but the complete model messages (so what should be persisted, not necessarily what is streamed)
     DEFAULT_EXPECTED_TOTAL_MODELMSGS: list[ModelMessage] = [
-        ModelResponse(parts=[ThinkingPart(content=THINKING_TEXT), TextPart(content=PRE_TOOL_TEXT), ToolCallPart(tool_name="dummy_tool", args='{"arg": "dummy"}', tool_call_id="tc-a1")]),
-        ModelRequest(parts=[ToolReturnPart(tool_name="dummy_tool", content=TOOL_RETURN_VALUE, tool_call_id="tc-a1")]),
+        ModelResponse(parts=[ThinkingPart(content=THINKING_TEXT), TextPart(content=PRE_TOOL_TEXT), DUMMY_TOOL_CALL_PART]),
+        ModelRequest(parts=[DUMMY_TOOL_RETURN_PART]),
         ModelResponse(parts=[TextPart(content=COMPLETION_TEXT)]),
     ]
-    CRASH_STEPS   = [TOOL_CALL, CRASH, COMPLETION_TEXT] # Completion text should NOT be reached due to crash, including it as a sanity check
+
+    CRASH_STEPS           = [TOOL_CALL, CRASH, COMPLETION_TEXT]  # Completion text should NOT be reached due to crash, including it as a sanity check
+    THREE_TOOL_CALL_STEPS = [TOOL_CALL, TOOL_CALL, TOOL_CALL, COMPLETION_TEXT]
+
+    # A single tool call/return pair — shared by CRASH_EXPECTED_PARTIAL_MODELMSGS and THREE_TOOL_CALL_EXPECTED_MSGS
+    EXPECTED_TOOL_PAIR: list[ModelMessage] = [
+        ModelResponse(parts=[DUMMY_TOOL_CALL_PART]),
+        ModelRequest(parts=[DUMMY_TOOL_RETURN_PART]),
+    ]
     # What should be persisted for CRASH_STEPS: tool call + tool return, no final text response
-    CRASH_EXPECTED_PARTIAL_MODELMSGS: list[ModelMessage] = [
-        ModelResponse(parts=[ToolCallPart(tool_name="dummy_tool", args='{"arg": "dummy"}', tool_call_id="tc-a1")]),
-        ModelRequest(parts=[ToolReturnPart(tool_name="dummy_tool", content=TOOL_RETURN_VALUE, tool_call_id="tc-a1")]),
+    CRASH_EXPECTED_PARTIAL_MODELMSGS: list[ModelMessage] = EXPECTED_TOOL_PAIR
+    # THREE_TOOL_CALL_STEPS: 3 tool call/return pairs followed by a final text response
+    THREE_TOOL_CALL_EXPECTED_MSGS: list[ModelMessage] = EXPECTED_TOOL_PAIR * 3 + [
+        ModelResponse(parts=[TextPart(content=COMPLETION_TEXT)]),
     ]
 
     def __init__(self) -> None:
@@ -532,10 +549,12 @@ class FunctionModelTestAgent:
         self._stream_steps = self.DEFAULT_STEPS
         # use to pause tool execution to test intermediate states
         self.block_in_tool = False
-        # Set when dummy_tool begins executing (tests can await this)
+        # Set when dummy_tool begins executing (tests can await this); cleared after each resume
         self.tool_entered = asyncio.Event()
         # Tests set this to let dummy_tool resume after blocking
         self.resume_tool_exec = asyncio.Event()
+        # Monotonically increasing — never reset; use to verify the tool ran at least once
+        self.tool_run_count = 0
         self._agent = self._build()
 
     def set_steps(self, steps) -> None:
@@ -572,9 +591,14 @@ class FunctionModelTestAgent:
         agent: Agent = Agent(FunctionModel(stream_function=self._stream))
 
         async def dummy_tool(arg: str) -> str:
+            self.tool_run_count += 1
             if self.block_in_tool:
                 self.tool_entered.set()
                 await self.resume_tool_exec.wait()
+
+                # Reset incase we have subsequent calls
+                self.tool_entered.clear()
+                self.resume_tool_exec.clear()
             return self.TOOL_RETURN_VALUE
 
         agent.tool_plain(dummy_tool)
@@ -735,16 +759,73 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         self._assert_no_duplicates(persisted_msgs_list)
         self._assert_no_orphans(persisted_msgs_list)
 
-        assert self.mock_session.commit.called, "Session must be committed on happy path"
         assert not self.mock_session.rollback.called, "Session must NOT be rolled back on happy path"
 
-    async def test_persists_as_complete_msgs_come_in(self):
-        pytest.fail("TODO: Happy path doesn't test this. This is a real req based on TUI polling history.")
+    def _get_messages_from_last_persist_call(self) -> list:
+        return self.mock_persist_messages.call_args_list[-1].kwargs["messages"]
+
+    async def test_persists_as_complete_msgs_come_in(self, client: AsyncClient):
+        """
+        Persistence happens incrementally: tool call + return pairs are committed as they
+        complete, not only at end-of-run.
+
+        Atomicity requirement: ToolCallPart and ToolReturnPart must always appear in the same
+        persist_messages call — the route must never persist a bare ToolCallPart without its
+        corresponding return (which would appear as an orphan in TUI history polling).
+        """
+        self.function_agent.set_steps(FunctionModelTestAgent.THREE_TOOL_CALL_STEPS)
+        self.function_agent.block_in_tool = True
+
+        stream_task = asyncio.create_task(stream_and_collect(client, self.agent_record.id))
+
+        # --- Tool 1: model emits ToolCallPart, tool is blocking ---
+        await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
+        assert self.mock_persist_messages.call_count == 0, (
+            "Tool call must not be persisted before its return is available (would create orphan)"
+        )
+        self.function_agent.resume_tool_exec.set()
+
+        # --- Tool 2: first pair complete, second blocking ---
+        await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
+        assert self.mock_persist_messages.call_count == 1, (
+            "First tool call/return pair should be persisted as soon as the return is available"
+        )
+        assert self.mock_session.commit.call_count == 1, "Route must commit after each persist"
+        self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
+        self.function_agent.resume_tool_exec.set()
+
+        # --- Tool 3: second pair complete, third blocking ---
+        await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
+        assert self.mock_persist_messages.call_count == 2, (
+            "Second tool call/return pair should be persisted as soon as the return is available"
+        )
+        assert self.mock_session.commit.call_count == 2, "Route must commit after each persist"
+        self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
+        self.function_agent.resume_tool_exec.set()
+
+        # --- Run complete ---
+        events = await asyncio.wait_for(stream_task, timeout=5.0)
+        assert "Error" not in [e["event"] for e in events], f"Unexpected Error event: {events}"
+
+        assert self.mock_persist_messages.call_count >= 3, (
+            "Third tool call/return pair must be persisted"
+        )
+        self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
+
+        # Aggregate: full flattened message list must be complete and well-formed (sanity check)
+        persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
+        expected_msg_list = [
+            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+        ] + FunctionModelTestAgent.THREE_TOOL_CALL_EXPECTED_MSGS
+        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
+        self._assert_no_orphans(persisted_msgs_list)
+        assert not self.mock_session.rollback.called, "Session must NOT be rolled back on happy path"
 
     async def test_persist_survives_mid_run_exception(self, client: AsyncClient):
         """
-        Desired behavior: persist the completed portion of the run (up to the crash),
-        commit it, surface Error SSE — do NOT discard completed work.
+        Completed work (tool call/return pair) is persisted and committed before the crash.
+        The route surfaces an Error SSE and calls rollback to clear any uncommitted state —
+        committed work is unaffected by the rollback.
         """
         self.function_agent.set_steps(FunctionModelTestAgent.CRASH_STEPS)
 
@@ -765,15 +846,9 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
 
         self._assert_no_orphans(persisted_msgs_list)  # sanity check
 
-        # TODO: We're gonna have to think this through. Current behavior is to roll back on exception. We will need to decide if we want that or not.
-        # One idea: Commit after every Complete ModelMessage is available to be committed, then roll back possibly bungled transactions with a rollback on exception
-        # if we go with above idea, change below to expected commit call count based on n valid model messages + whatever we want to commit for the error 
-        # (although that tangles with rollback of possibly bungled commits)
-        assert self.mock_session.commit.called, (
-            "Completed work must be committed even when the run crashes"
-        )
-        assert not self.mock_session.rollback.called, (
-            "Rollback discards completed work — must not roll back on mid-run exception"
+        # Completed work is committed before the crash, confirmed by "persist as you go test"; rollback clears any uncommitted state
+        assert self.mock_session.rollback.called, (
+            "Route must call rollback on exception to clear any uncommitted state"
         )
 
 
@@ -957,7 +1032,8 @@ async def test_rendezvous_tool_does_not_start_before_event_consumed():
                 pass
 
     # After FunctionToolCallEvent consumed and resume_tool_exec already set, tool should have run.
-    assert test_agent.tool_entered.is_set(), (
+    # Use tool_run_count (monotonically increasing) rather than tool_entered (cleared after each resume).
+    assert test_agent.tool_run_count == 1, (
         "Tool must execute after FunctionToolCallEvent is consumed"
     )
 

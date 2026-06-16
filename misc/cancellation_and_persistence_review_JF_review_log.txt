@@ -25,4 +25,6 @@ _assert_ModelMessage_list_eq review complete.
 
 happy path persists_full_message_list review complete
 
+test_persist_survives_mid_run_exception with some TODOs noted.
+
 
