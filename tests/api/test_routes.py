@@ -200,7 +200,8 @@ async def collect_sse_events(response: Response) -> list[dict]:
     return events
 
 
-async def stream_and_collect(client: AsyncClient, agent_id, message: str = "test") -> list[dict]:
+DEFAULT_USER_MESSAGE = "You're not a real LLM are you?"
+async def stream_and_collect(client: AsyncClient, agent_id, message: str = DEFAULT_USER_MESSAGE) -> list[dict]:
     """POST to messages endpoint, assert 200, return parsed SSE events.
     Reduces boilerplate in streaming tests.
     """
@@ -518,7 +519,12 @@ class FunctionModelTestAgent:
         ModelRequest(parts=[ToolReturnPart(tool_name="dummy_tool", content=TOOL_RETURN_VALUE, tool_call_id="tc-a1")]),
         ModelResponse(parts=[TextPart(content=COMPLETION_TEXT)]),
     ]
-    CRASH_STEPS   = [TOOL_CALL, CRASH]
+    CRASH_STEPS   = [TOOL_CALL, CRASH, COMPLETION_TEXT] # Completion text should NOT be reached due to crash, including it as a sanity check
+    # What should be persisted for CRASH_STEPS: tool call + tool return, no final text response
+    CRASH_EXPECTED_PARTIAL_MODELMSGS: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name="dummy_tool", args='{"arg": "dummy"}', tool_call_id="tc-a1")]),
+        ModelRequest(parts=[ToolReturnPart(tool_name="dummy_tool", content=TOOL_RETURN_VALUE, tool_call_id="tc-a1")]),
+    ]
 
     def __init__(self) -> None:
         self.calls: list[list] = []
@@ -703,16 +709,14 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         """
         fake_history = [ModelRequest(parts=[UserPromptPart(content="prior turn")])]
         self.mock_deserialize_msgs.return_value = fake_history
-        USER_MSG = "You're not a real model!"
-
-        events = await stream_and_collect(client, self.agent_record.id, USER_MSG)
+        events = await stream_and_collect(client, self.agent_record.id)
         event_types = [e["event"] for e in events]
         assert "Error" not in event_types, f"Unexpected Error event: {events}"
         # Sanity check: ensure history made it in 
         # history + new user prompt combined into one ModelRequest by pydantic-ai
         self._assert_ModelMessage_list_eq(
             self.function_agent.calls[0],
-            [ModelRequest(parts=[UserPromptPart(content="prior turn"), UserPromptPart(content=USER_MSG)])],
+            [ModelRequest(parts=[UserPromptPart(content="prior turn"), UserPromptPart(content=DEFAULT_USER_MESSAGE)])],
         )
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
@@ -723,7 +727,7 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         # - no orphaned tool calls
         # - old history not persisted
         expected_msg_list = [
-            ModelRequest(parts=[UserPromptPart(content=USER_MSG)]),
+            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
         ] + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS
         self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
@@ -748,24 +752,23 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         event_types = [e["event"] for e in events]
         assert "Error" in event_types, "Expected Error SSE after mid-run exception"
 
-        # --- All assertions below are RED with current impl ---
-
         assert self.mock_persist_messages.call_count >= 1, (
             "persist_messages must be called even when the run crashes mid-stream"
         )
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
-        tool_resps = self._messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)
-        tool_return_reqs = self._messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)
-        text_resps = self._messages_with_part(persisted_msgs_list, ModelResponse, TextPart)
+        expected_msg_list = [
+            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+        ] + FunctionModelTestAgent.CRASH_EXPECTED_PARTIAL_MODELMSGS
+        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
-        assert len(tool_resps) >= 1, "Completed tool call must appear in persisted message list"
-        assert len(tool_return_reqs) >= 1, "Completed tool return must appear in persisted message list"
-        assert len(text_resps) == 0, "No final text expected: crash before step 2 yielded text"
+        self._assert_no_orphans(persisted_msgs_list)  # sanity check
 
-        self._assert_no_orphans(persisted_msgs_list)
-
+        # TODO: We're gonna have to think this through. Current behavior is to roll back on exception. We will need to decide if we want that or not.
+        # One idea: Commit after every Complete ModelMessage is available to be committed, then roll back possibly bungled transactions with a rollback on exception
+        # if we go with above idea, change below to expected commit call count based on n valid model messages + whatever we want to commit for the error 
+        # (although that tangles with rollback of possibly bungled commits)
         assert self.mock_session.commit.called, (
             "Completed work must be committed even when the run crashes"
         )

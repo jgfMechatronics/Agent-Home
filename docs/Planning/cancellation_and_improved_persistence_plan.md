@@ -10,6 +10,7 @@
   call+return go in as a well-formed unit. (persist_messages' orphan sanitizer is a
   failsafe against invalid histories; we should never actually be feeding it an orphan. If we persisted tool calls as we go w/ no return, persist would sanitize both the tool call and the return)
 - [ ] Persists even on mid-run exception or cancellation
+  - Here it can go ahead and feed an orphaned tool call to persist_messages and let it just strip out the bad parts. This gives a more complete (and valid) record of what happened.
 - [ ] Cancellation allows any active tool execution to complete
   - May be sensitive to PydanticAI internals w/o `agent.iter()` whatever
   - We may find that this is an issue for longer running tools. If I press cancel and have to wait 2 minutes for the agent to be available again from a blocking tool call, that is probably not ideal

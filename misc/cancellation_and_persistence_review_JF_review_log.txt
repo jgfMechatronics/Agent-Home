@@ -22,3 +22,7 @@ Reworking the comparison a bit. Adding a helper to compare only the key parts of
 
 Left off reviewing the comparison helper and working through the rest of happy path test.
 _assert_ModelMessage_list_eq review complete.
+
+happy path persists_full_message_list review complete
+
+
