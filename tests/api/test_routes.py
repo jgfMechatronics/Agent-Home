@@ -493,24 +493,30 @@ class FunctionModelTestAgent:
             ...
     """
 
-    # --- Step constants (one value or exception per model invocation) ---
-    THINKING_TEXT = "If I think hard enough I will unravel the mysteries of the universe"
-    THINKING_STEP = DeltaThinkingCalls({0: DeltaThinkingPart(content_delta=THINKING_TEXT)})
     
-    TOOL_CALL  = DeltaToolCalls({0: DeltaToolCall(name="dummy_tool", json_args='{"arg": "dummy"}', tool_call_id="tc-a1")})
-    COMPLETION = "Turn complete."
+    """
+    --- Step constants (one value or exception per model invocation) ---
+    https://pydantic.dev/docs/ai/api/models/function/#pydantic_ai.models.function.StreamFunctionDef claims we're being bad here, but can't *really* tell why its an issue
+    Its possible its just the Delta index collision we ran into below. Either way, the illict behavior is useful so we keep it for now
+    """
+    THINKING_TEXT  = "If I think hard enough I will unravel the mysteries of the universe"
+    THINKING_STEP  = DeltaThinkingCalls({0: DeltaThinkingPart(content=THINKING_TEXT)})
+    PRE_TOOL_TEXT  = "I'll look that up for you."
+    TOOL_CALL      = DeltaToolCalls({1: DeltaToolCall(name="dummy_tool", json_args='{"arg": "dummy"}', tool_call_id="tc-a1")})
+    COMPLETION_TEXT = "Turn complete."
     CRASH      = RuntimeError("Simulated crash mid-stream")
 
     TOOL_RETURN_VALUE = "dummy_tool_return"
 
     # --- Step sequences ---
-    DEFAULT_STEPS = [[THINKING_STEP, TOOL_CALL], COMPLETION]
+    # Each entry in the list results in one AsyncIterator. Lists are yielded during a single iterator, single items will be the only item in the iterator
+    DEFAULT_STEPS = [[THINKING_STEP, PRE_TOOL_TEXT, TOOL_CALL], COMPLETION_TEXT]
     # DEFAULT_STEPS is what the *model* outputs. Below is what the *agent* outputs, IE what is returned by run_stream_events or similar
     # Not raw chunks but the complete model messages (so what should be persisted, not necessarily what is streamed)
     DEFAULT_EXPECTED_TOTAL_MODELMSGS: list[ModelMessage] = [
-        ModelResponse(parts=[ThinkingPart(content=THINKING_TEXT), ToolCallPart(tool_name="dummy_tool", args='{"arg": "dummy"}', tool_call_id="tc-a1")]),
+        ModelResponse(parts=[ThinkingPart(content=THINKING_TEXT), TextPart(content=PRE_TOOL_TEXT), ToolCallPart(tool_name="dummy_tool", args='{"arg": "dummy"}', tool_call_id="tc-a1")]),
         ModelRequest(parts=[ToolReturnPart(tool_name="dummy_tool", content=TOOL_RETURN_VALUE, tool_call_id="tc-a1")]),
-        ModelResponse(parts=[TextPart(content=COMPLETION)]),
+        ModelResponse(parts=[TextPart(content=COMPLETION_TEXT)]),
     ]
     CRASH_STEPS   = [TOOL_CALL, CRASH]
 
@@ -569,12 +575,21 @@ class FunctionModelTestAgent:
         return agent
 
     async def _stream(self, messages, info: AgentInfo):
+        """
+        Allows for multi-step single streams with setting _stream_steps to contain a list.
+        Behavior is: Stream events in a list in _stream_step_index as if they were one model invocation, then on next call move on to next item in _stream_step_index
+        This allows us to simulate model behavior across multiple invocations
+        """
         self.calls.append(list(messages))
         step = self._stream_steps[self._stream_step_index]
         self._stream_step_index += 1
         if isinstance(step, Exception):
             raise step
-        yield step
+        if isinstance(step, list):
+            for chunk in step:
+                yield chunk
+        else:
+            yield step
 
 
 class _PersistenceAndCancellationTestBase(_BaseRouteTest):
@@ -667,6 +682,8 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
                         assert actual_part.tool_call_id == expected_part.tool_call_id, f"Message {i} part {j}: tool_call_id mismatch"
                     case TextPart():
                         assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
+                    case ThinkingPart():
+                        assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
                     case _:
                         assert actual_part == expected_part, (f"Message {i} part {j}: equality mismatch.\n" 
                                                               "Comparison helper may not be accountinng for this type.")
@@ -691,7 +708,8 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         events = await stream_and_collect(client, self.agent_record.id, USER_MSG)
         event_types = [e["event"] for e in events]
         assert "Error" not in event_types, f"Unexpected Error event: {events}"
-        # Sanity check: history + new user prompt combined into one ModelRequest by pydantic-ai
+        # Sanity check: ensure history made it in 
+        # history + new user prompt combined into one ModelRequest by pydantic-ai
         self._assert_ModelMessage_list_eq(
             self.function_agent.calls[0],
             [ModelRequest(parts=[UserPromptPart(content="prior turn"), UserPromptPart(content=USER_MSG)])],
@@ -712,13 +730,6 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         # These are now sanity checks due to strength of above hard coded comparison
         self._assert_no_duplicates(persisted_msgs_list)
         self._assert_no_orphans(persisted_msgs_list)
-
-        # TODO: Broken comparison. Tries to match runtime stuff that will vary. pydantic also bundles new 
-        # user msg with history for first ModelRequest that the model actually sees so this will miss everything
-        # we might just want to get rid of this in favor of confirming this with our expected_msg_list which is clearly
-        # constructed to not include the history
-        for h_msg in fake_history:
-            assert h_msg not in persisted_msgs_list, f"History message leaked into persisted message list: {h_msg!r}"
 
         assert self.mock_session.commit.called, "Session must be committed on happy path"
         assert not self.mock_session.rollback.called, "Session must NOT be rolled back on happy path"
