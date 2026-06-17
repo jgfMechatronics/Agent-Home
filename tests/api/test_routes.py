@@ -808,14 +808,21 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
 
         # --- Tool 1: model emits ToolCallPart, tool is blocking ---
         await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
-        assert self.mock_persist_messages.call_count == 0, (
-            "Tool call must not be persisted before its return is available (would create orphan)"
+        # NOTE: user message may end up persisted together with first tool pair — adjust counts
+        # below if implementation batches them rather than persisting user message upfront.
+        assert self.mock_persist_messages.call_count == 1, (
+            "User message should be persisted before (or as) the first tool call completes"
+        )
+        assert self.mock_session.commit.call_count == 1, "Route must commit after persisting user message"
+        self._assert_ModelMessage_list_eq(
+            self._get_messages_from_last_persist_call(),
+            [ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)])],
         )
         self.function_agent.tool_entered.clear()  # consume signal before resuming to avoid stale wait
         self.function_agent.resume_tool_exec.set()
 
         # --- Tools 2 & 3:---
-        for i in range(1, 3):
+        for i in range(2, 4):
             await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
             assert self.mock_persist_messages.call_count == i, (
                 f"Tool call/return pair {i} should be persisted as soon as the return is available"
@@ -829,7 +836,7 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         events = await asyncio.wait_for(stream_task, timeout=5.0)
         assert "Error" not in [e["event"] for e in events], f"Unexpected Error event: {events}"
 
-        assert self.mock_persist_messages.call_count >= 3, (
+        assert self.mock_persist_messages.call_count == 4, (
             "Third tool call/return pair must be persisted"
         )
         self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
