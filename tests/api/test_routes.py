@@ -875,83 +875,44 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         """
         self.function_agent.block_in_tool = True
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "cancel route (POST /agents/{id}/cancel) and _cancel_signals mechanism "
-            "not yet implemented; xfail strict=True forces cleanup when impl lands"
-        ),
-    )
-
-    async def test_graceful_cancel(self, client: AsyncClient):
-        """CONTRACT: graceful cancel lets the in-flight tool complete, persists the
+    async def test_graceful_cancel_during_tool_exec(self, client: AsyncClient):
+        """
+        CONTRACT: graceful cancel lets the in-flight tool complete, persists the
         tool call+return pair and a cancellation notice, then commits — without rolling back.
 
         Covers requirements:
-          #4 — active tool is allowed to complete before cancel takes effect
-          #5 — cancellation notice wrapped in <system_message> tags is persisted
-          #7 — cancel is delivered via POST /agents/{id}/cancel
-
-        xfail: will pass once the cancel route and _cancel_signals mechanism land.
-        strict=True: when this test unexpectedly passes, pytest errors, forcing removal
-        of this marker.
+            — active tool is allowed to complete before cancel takes effect
+            — cancellation notice wrapped in <system_message> tags is persisted
+            — cancel is delivered via POST /agents/{id}/cancel
         """
         # Start the SSE stream as a background task so we can interleave cancel.
         stream_task = asyncio.create_task(
             stream_and_collect(client, self.agent_record.id)
         )
 
-        # Wait until the tool is provably in-flight before sending cancel.
         await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
 
         cancel_response = await client.post(f"/agents/{self.agent_record.id}/cancel")
-
-        # Always release so the stream task can finish regardless of cancel outcome.
-        self.function_agent.resume_tool_exec.set()
-        events = await asyncio.wait_for(stream_task, timeout=5.0)
-
-        # --- Contract assertions (all RED without cancel implementation) ---
 
         assert cancel_response.status_code == 200, (
             f"Cancel route must return 200; got {cancel_response.status_code}"
         )
 
-        assert self.mock_persist_messages.call_count >= 1, (
-            "persist_messages must be called even on graceful cancel"
-        )
+        # Resume to allow cancellation to be serviced
+        self.function_agent.resume_tool_exec.set()
+        events = await asyncio.wait_for(stream_task, timeout=5.0)
+
+        CANCEL_NOTICE = ModelRequest(parts=[UserPromptPart(content="<system_message>Turn cancelled by user.</system_message>")])
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
-
-        # Tool call + return pair (tool was allowed to complete — req #4).
-        assert len(self._messages_with_part(persisted_msgs_list, ModelResponse, ToolCallPart)) >= 1, (
-            "Tool call must be persisted on graceful cancel"
-        )
-        assert len(self._messages_with_part(persisted_msgs_list, ModelRequest, ToolReturnPart)) >= 1, (
-            "Tool return must be persisted — tool must complete before cancel takes effect"
-        )
+        expected_msg_list = [
+            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+        ] + FunctionModelTestAgent.EXPECTED_TOOL_PAIR + [CANCEL_NOTICE]
+        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
         self._assert_no_orphans(persisted_msgs_list)
 
-        # No final assistant text: post-tool model step must not run after cancel (req #4).
-        assert len(self._messages_with_part(persisted_msgs_list, ModelResponse, TextPart)) == 0, (
-            "Post-tool model step must not run after cancel"
-        )
-
-        # Cancellation notice persisted as <system_message> (req #5).
-        cancel_notices = [
-            m for m in persisted_msgs_list
-            if isinstance(m, ModelRequest)
-            and any(
-                isinstance(p, UserPromptPart) and "<system_message>" in p.content
-                for p in m.parts
-            )
-        ]
-        assert len(cancel_notices) >= 1, (
-            "A cancellation notice wrapped in <system_message> tags must be persisted"
-        )
-
-        # Commit, no rollback — completed work must not be discarded.
-        assert self.mock_session.commit.called, (
-            "Completed work must be committed on graceful cancel"
+        assert self.mock_session.commit.call_count == self.mock_persist_messages.call_count, (
+            "Every persist call must be followed by a commit — including cancel code path"
         )
         assert not self.mock_session.rollback.called, (
             "Must not rollback completed work on graceful cancel"

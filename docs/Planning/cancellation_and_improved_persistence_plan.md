@@ -15,20 +15,15 @@
   - May be sensitive to PydanticAI internals w/o `agent.iter()` whatever
   - We may find that this is an issue for longer running tools. If I press cancel and have to wait 2 minutes for the agent to be available again from a blocking tool call, that is probably not ideal
     Consider this out of scope for now, complex to deal with. Ideally we would also abort the running tool rather than just unblocking the agent and let it run in the background. Not necessarily trivial with MCP considerations
-- [ ] Cancellation ends persisted chain w/ Cancellation notice (user msg containing `<system_message>content</system_message>` or similar)
+- [xr] Cancellation ends persisted chain w/ Cancellation notice (user msg containing `<system_message>content</system_message>` or similar)
 - [ ] Cancellation achieved through PydanticAI recommended method.
   - For `run_stream_events`: exit the async context manager
   - Pyd AI #5313 is relevant
-  - The complexity of testing this one in an impl agnostic way may not be worth it. We can talk about it
+  - testing this is not worth it. We just need to make sure that we use the recommended method when implementing
 - [ ] Cancellation works through /agents/{id}/cancel (which we will map to ACP session/cancel. Either at the server level, at the adapter level, etc. This is effectively a naming concern so OK to defer that detail)
 
 # Test Coverage (tests/api/test_routes.py)
 FILL IN
-
-RED vs xfail convention: **hard RED** when existing code violates a contract
-(`test_persist_survives_mid_run_exception` — persist-at-end discards on exception);
-**xfail(strict=True)** when the infrastructure doesn't exist yet (cancel route +
-`_cancel_signals`). strict=True self-cleans: an unexpected pass errors, forcing marker removal.
 
 ## Open decision: cancel-orphan tool-call handling (`pytest.fail` marker)
 
@@ -53,8 +48,3 @@ call, **deliberately deferred**. It is parked as a standing `pytest.fail` marker
 `test_TODO_decide_cancel_orphan_tool_call_handling` — so the impl can't ship without
 resolving it. On resolution: make the decision, update this table, and replace the marker
 with the real persistence unit test.
-
-> Note: a `layer-1` regression guard (pinning that pyd appends the `ModelResponse` *before*
-> the event is consumed) was considered and **rejected** — it would false-alarm if a future
-> pyd change *eliminated* the orphan possibility (i.e., fail when things got safer). The
-> rendezvous guard is kept because it fails on a genuinely *dangerous* change.

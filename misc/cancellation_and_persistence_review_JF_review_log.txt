@@ -27,4 +27,6 @@ happy path persists_full_message_list review complete
 
 test_persist_survives_mid_run_exception with some TODOs noted.
 
+Reviewed test_persists_as_complete_msgs_come_in.
 
+Reviewed test_graceful_cancel_during_tool_exec
