@@ -9,6 +9,11 @@ Fixtures from conftest used here:
 - session: Test DB session (function-scoped, rolled back after each test)
 - agent_record: Pre-created agent for tests that need an existing agent
 - agent_with_blocks: Agent with memory blocks attached
+
+TODO: This test file is too big. We should split some of it into different files (like the detailed persistence and cancellation tests)
+And possibly consider this as a sign that the routes module has too many responsibilities. One option: move _handle_messages to a seperate file and
+test it directly, but then we could lose a lot of the integrationeyness of these tests. We could also split some key routes (like the ones that call _handle_messages)
+out into their own file and have the misc smaller routes in a seperate file
 """
 # Standard library
 import asyncio
