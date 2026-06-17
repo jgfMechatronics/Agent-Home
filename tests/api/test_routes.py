@@ -795,6 +795,9 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         Atomicity requirement: ToolCallPart and ToolReturnPart must always appear in the same
         persist_messages call — the route must never persist a bare ToolCallPart without its
         corresponding return (which would appear as an orphan in TUI history polling).
+        
+        TODO(low priority): Is there a gap in coverage here where the route might just be persisting the first tool pair over and over and we wouldn't
+        know since they're identical? In isolation, yes, but maybe the other tests preclude that possibility by having more unique contents 
         """
         self.function_agent.set_steps(FunctionModelTestAgent.THREE_TOOL_CALL_STEPS)
         self.function_agent.block_in_tool = True
@@ -809,25 +812,16 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         self.function_agent.tool_entered.clear()  # consume signal before resuming to avoid stale wait
         self.function_agent.resume_tool_exec.set()
 
-        # --- Tool 2: first pair complete, second blocking ---
-        await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
-        assert self.mock_persist_messages.call_count == 1, (
-            "First tool call/return pair should be persisted as soon as the return is available"
-        )
-        assert self.mock_session.commit.call_count == 1, "Route must commit after each persist"
-        self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
-        self.function_agent.tool_entered.clear()  # consume signal before resuming to avoid stale wait
-        self.function_agent.resume_tool_exec.set()
-
-        # --- Tool 3: second pair complete, third blocking ---
-        await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
-        assert self.mock_persist_messages.call_count == 2, (
-            "Second tool call/return pair should be persisted as soon as the return is available"
-        )
-        assert self.mock_session.commit.call_count == 2, "Route must commit after each persist"
-        self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
-        self.function_agent.tool_entered.clear()
-        self.function_agent.resume_tool_exec.set()
+        # --- Tools 2 & 3:---
+        for i in range(1, 3):
+            await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
+            assert self.mock_persist_messages.call_count == i, (
+                f"Tool call/return pair {i} should be persisted as soon as the return is available"
+            )
+            assert self.mock_session.commit.call_count == i, "Route must commit after each persist"
+            self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
+            self.function_agent.tool_entered.clear()  # consume signal before resuming to avoid stale wait
+            self.function_agent.resume_tool_exec.set()
 
         # --- Run complete ---
         events = await asyncio.wait_for(stream_task, timeout=5.0)
@@ -901,16 +895,9 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
     persist_messages eats it, or it never made it to the buffer at all.
     """
 
-    @pytest.fixture(autouse=True)
-    def configure_blocking_agent(self, real_agent_dep):
-        """Enable blocking tool behavior for cancellation tests.
+    CANCEL_NOTICE = ModelRequest(parts=[UserPromptPart(content="<system_message>Turn cancelled by user.</system_message>")])
 
-        Runs after real_agent_dep (declared as dependency), so self.function_agent exists.
-        Tests access self.function_agent.tool_entered and .resume_tool_exec directly.
-        """
-        self.function_agent.block_in_tool = True
-
-    async def test_graceful_cancel_during_tool_exec(self, client: AsyncClient):
+    async def test_cancel_during_tool_exec(self, client: AsyncClient):
         """
         CONTRACT: graceful cancel lets the in-flight tool complete, persists the
         tool call+return pair and a cancellation notice, then commits — without rolling back.
@@ -920,6 +907,9 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
             — cancellation notice wrapped in <system_message> tags is persisted
             — cancel is delivered via POST /agents/{id}/cancel
         """
+
+        self.function_agent.block_in_tool = True
+
         # Start the SSE stream as a background task so we can interleave cancel.
         stream_task = asyncio.create_task(
             stream_and_collect(client, self.agent_record.id)
@@ -937,12 +927,15 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         self.function_agent.resume_tool_exec.set()
         events = await asyncio.wait_for(stream_task, timeout=5.0)
 
-        CANCEL_NOTICE = ModelRequest(parts=[UserPromptPart(content="<system_message>Turn cancelled by user.</system_message>")])
-
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
-        expected_msg_list = [
-            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
-        ] + FunctionModelTestAgent.EXPECTED_TOOL_PAIR + [CANCEL_NOTICE]
+        
+        # We expect the default sequence except the cancel prevents us from reaching the COMPLETED chunk,
+        # and instead we get the cancel notice
+        expected_msg_list = (
+            [ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)])]
+            + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS[:-1]
+            + [self.CANCEL_NOTICE]
+        )
         self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
         self._assert_no_orphans(persisted_msgs_list)
 
@@ -986,7 +979,6 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 
         events = await asyncio.wait_for(stream_task, timeout=5.0)
 
-        cancel_notice = ModelRequest(parts=[UserPromptPart(content="<system_message>Turn cancelled by user.</system_message>")])
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
         # Aspirational: THINKING_STEP and PRE_TOOL_TEXT were both yielded before cancel was
@@ -1000,7 +992,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
                 ThinkingPart(content=FunctionModelTestAgent.THINKING_TEXT),
                 TextPart(content=FunctionModelTestAgent.PRE_TOOL_TEXT),
             ]),
-            cancel_notice,
+            self.CANCEL_NOTICE,
         ]
         self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
         assert self.mock_session.commit.call_count == self.mock_persist_messages.call_count, (
