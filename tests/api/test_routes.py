@@ -224,6 +224,7 @@ class TestSendMessage(_BaseRouteTest):
     """
     POST /agents/{agent_id}/messages — main streaming endpoint.
     TODO (Low priority): This test class got a bit confusing, consider simplifying if possible
+    TODO: Remove now redundant tests around persistence and commiting now that we have the stronger, more updated persistence/cancellation tests
     """
 
     @pytest.fixture(autouse=True)
