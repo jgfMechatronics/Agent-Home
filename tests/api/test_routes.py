@@ -1077,41 +1077,6 @@ async def test_rendezvous_tool_does_not_start_before_event_consumed():
         "Tool must execute after FunctionToolCallEvent is consumed"
     )
 
-
-async def test_TODO_decide_cancel_orphan_tool_call_handling():
-    """DECISION REQUIRED before the persist-on-cancel implementation ships.
-
-    When a cancel lands on a tool call that was *generated but never run*
-    (rendezvous guarantees the tool didn't start — see
-    test_rendezvous_tool_does_not_start_before_event_consumed), the tail of the
-    captured/persisted messages is a lone ToolCallPart with no matching
-    ToolReturnPart. We must choose ONE of:
-
-      (A) TRIM it in the cursor/persist logic — drop the lone ToolCallPart before
-          persisting; the tool is simply re-requested on the next turn. Preserves
-          any sibling text/thinking parts on that ModelResponse. Requires a unit
-          test of the trim/cursor logic.
-
-      (B) LET persist_messages EAT it — its orphan sanitizer already replaces an
-          unmatched ToolCallPart with an "[Orphaned tool call(s) dropped]" record,
-          keeping the history API-valid. Cheaper, but first verify the sanitizer
-          does not also discard accompanying text/thinking parts on the same
-          ModelResponse.
-
-    Note: if we select option B we will have some failures from _assert_no_orphans()
-
-    Both options yield API-valid history (no dangling tool_use), so this is a
-    narrative-cleanliness call, deferred deliberately. Resolve it, update the plan
-    doc's Test Coverage section, and REPLACE this marker with the real test.
-    """
-    pytest.fail(
-        "TODO: decide cancel-orphan tool-call handling (trim vs. let "
-        "persist_messages eat it), then replace this marker with the real "
-        "persistence unit test. "
-        "See docs/Planning/cancellation_and_improved_persistence_plan.md."
-    )
-
-
 class TestGetAgent:
     """GET /agents/{agent_id} — agent metadata."""
     
