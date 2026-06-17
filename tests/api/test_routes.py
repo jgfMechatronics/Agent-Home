@@ -22,7 +22,6 @@ from uuid import uuid4
 # Third-party
 import pytest
 import pytest_asyncio
-from packaging.version import Version
 from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient, Response
 from pydantic_ai import Agent, AgentRunResultEvent
@@ -555,8 +554,6 @@ class FunctionModelTestAgent:
         self.tool_entered = asyncio.Event()
         # Tests set this to let dummy_tool resume after blocking
         self.resume_tool_exec = asyncio.Event()
-        # Monotonically increasing — never reset; use to verify the tool ran at least once
-        self.tool_run_count = 0
         # use to pause stream emission to test mid-stream cancel timing
         self.block_in_stream = False
         # Set after each chunk is yielded; tests await this, then clear before resuming
@@ -599,7 +596,6 @@ class FunctionModelTestAgent:
         agent: Agent = Agent(FunctionModel(stream_function=self._stream))
 
         async def dummy_tool(arg: str) -> str:
-            self.tool_run_count += 1
             if self.block_in_tool:
                 self.tool_entered.set()
                 await self.resume_tool_exec.wait()
@@ -1006,17 +1002,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 # ---------------------------------------------------------------------------
 # Rendezvous regression guard (standalone — no class fixtures needed)
 # ---------------------------------------------------------------------------
-_PYDANTIC_AI_VERSION = importlib.metadata.version("pydantic-ai")
-# Rendezvous semantics confirmed on pydantic-ai 1.104.0 (PR #5313, merged May 2026).
-# If the rendezvous test starts failing after a pydantic-ai upgrade, our cancel
-# strategy must be re-evaluated before shipping.
-_RENDEZVOUS_MIN_VERSION = "1.104.0"
 
-
-@pytest.mark.skipif(
-    Version(_PYDANTIC_AI_VERSION) < Version(_RENDEZVOUS_MIN_VERSION),
-    reason=f"Rendezvous semantics not verified before pydantic-ai {_RENDEZVOUS_MIN_VERSION}",
-)
 async def test_rendezvous_tool_does_not_start_before_event_consumed():
     """Regression guard: pydantic-ai rendezvous semantics.
 
@@ -1026,14 +1012,14 @@ async def test_rendezvous_tool_does_not_start_before_event_consumed():
     and guarantee the tool has not started (and therefore cancel without orphaning it).
 
     Drives a real Agent directly (no HTTP route) to isolate the pydantic-ai behaviour.
-
-    Pinned to pydantic-ai {_PYDANTIC_AI_VERSION} — see _RENDEZVOUS_MIN_VERSION.
-    If a pydantic-ai upgrade breaks this test, the cancellation strategy must be
-    re-evaluated before shipping.
     """
+    _PYDANTIC_AI_VERSION = importlib.metadata.version("pydantic-ai")
+    # Rendezvous semantics previously confirmed on pydantic-ai 1.104.0
+    # If this test starts failing after a pydantic-ai upgrade, the cancel strategy must
+    # be re-evaluated before shipping.
+
     test_agent = FunctionModelTestAgent()
     test_agent.block_in_tool = True
-    test_agent.resume_tool_exec.set()  # release immediately; we only need the entry signal here
     agent = test_agent.agent
 
     async with asyncio.timeout(5.0):
@@ -1059,6 +1045,9 @@ async def test_rendezvous_tool_does_not_start_before_event_consumed():
                     f"Cancel strategy must be re-evaluated."
                 )
                 event = await events_iter.__anext__()
+            
+            await asyncio.wait_for(test_agent.tool_entered.wait(), timeout=2) # Tool should execute now that we popped the FunctionToolCallEvent off
+            test_agent.resume_tool_exec.set()
 
             assert pre_tool_event_seen, (
                 "No events appeared before FunctionToolCallEvent — "
@@ -1071,11 +1060,6 @@ async def test_rendezvous_tool_does_not_start_before_event_consumed():
             async for _ in stream:
                 pass
 
-    # After FunctionToolCallEvent consumed and resume_tool_exec already set, tool should have run.
-    # Use tool_run_count (monotonically increasing) rather than tool_entered (cleared after each resume).
-    assert test_agent.tool_run_count == 1, (
-        "Tool must execute after FunctionToolCallEvent is consumed"
-    )
 
 class TestGetAgent:
     """GET /agents/{agent_id} — agent metadata."""
