@@ -492,6 +492,8 @@ class FunctionModelTestAgent:
         # Inject into app
         with agent.override_agent_and_deps_factory(app, agent_record) as mock_session:
             ...
+    TODO(Low priority): The blocking/resuming exectuion in stream/tool is a little duplicatey and could be
+    cleaned up a bit with some common infrastructure and helpers to make it easier on callers
     """
 
     
@@ -555,6 +557,12 @@ class FunctionModelTestAgent:
         self.resume_tool_exec = asyncio.Event()
         # Monotonically increasing — never reset; use to verify the tool ran at least once
         self.tool_run_count = 0
+        # use to pause stream emission to test mid-stream cancel timing
+        self.block_in_stream = False
+        # Set after each chunk is yielded; tests await this, then clear before resuming
+        self.chunk_emitted = asyncio.Event()
+        # Tests set this to let _stream yield the next chunk
+        self.resume_stream = asyncio.Event()
         self._agent = self._build()
 
     def set_steps(self, steps) -> None:
@@ -604,6 +612,17 @@ class FunctionModelTestAgent:
         agent.tool_plain(dummy_tool)
         return agent
 
+    async def _block_after_chunk(self) -> None:
+        """
+        Signal that a chunk was emitted and pause until the test resumes us.
+        clearing of chunk_emitted is going to be redundant under most uses as caller needs to clear it
+        before waiting on it again to avoid immediately unblocking from a stale set.
+        """
+        self.chunk_emitted.set()
+        await self.resume_stream.wait()
+        self.resume_stream.clear()
+        self.chunk_emitted.clear()
+
     async def _stream(self, messages, info: AgentInfo):
         """
         Allows for multi-step single streams with setting _stream_steps to contain a list.
@@ -618,8 +637,12 @@ class FunctionModelTestAgent:
         if isinstance(step, list):
             for chunk in step:
                 yield chunk
+                if self.block_in_stream:
+                    await self._block_after_chunk()
         else:
             yield step
+            if self.block_in_stream:
+                await self._block_after_chunk()
 
 
 class _PersistenceAndCancellationTestBase(_BaseRouteTest):
@@ -783,6 +806,7 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         assert self.mock_persist_messages.call_count == 0, (
             "Tool call must not be persisted before its return is available (would create orphan)"
         )
+        self.function_agent.tool_entered.clear()  # consume signal before resuming to avoid stale wait
         self.function_agent.resume_tool_exec.set()
 
         # --- Tool 2: first pair complete, second blocking ---
@@ -792,6 +816,7 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         )
         assert self.mock_session.commit.call_count == 1, "Route must commit after each persist"
         self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
+        self.function_agent.tool_entered.clear()  # consume signal before resuming to avoid stale wait
         self.function_agent.resume_tool_exec.set()
 
         # --- Tool 3: second pair complete, third blocking ---
@@ -801,6 +826,7 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         )
         assert self.mock_session.commit.call_count == 2, "Route must commit after each persist"
         self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
+        self.function_agent.tool_entered.clear()
         self.function_agent.resume_tool_exec.set()
 
         # --- Run complete ---
@@ -864,6 +890,15 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
     precisely while the tool is in flight.
 
     test_graceful_cancel: xfail pending cancel route + _cancel_signals implementation.
+
+    Corner case — ToolCallPart buffered but not yet consumed as FunctionToolCallEvent:
+    pydantic-ai appends ModelResponse([ToolCallPart]) to its capture_run_messages buffer
+    BEFORE emitting FunctionToolCallEvent to the consumer. If cancel is serviced in this
+    narrow window, the captured list may contain a bare ToolCallPart with no return.
+    This is a non-issue: the route passes the captured list as-is to persist_messages,
+    which already has orphan sanitization logic and will drop the unpaired ToolCallPart.
+    No dedicated test needed — either the ToolCallPart ends up in the buffer and
+    persist_messages eats it, or it never made it to the buffer at all.
     """
 
     @pytest.fixture(autouse=True)
@@ -911,6 +946,63 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
         self._assert_no_orphans(persisted_msgs_list)
 
+        assert self.mock_session.commit.call_count == self.mock_persist_messages.call_count, (
+            "Every persist call must be followed by a commit — including cancel code path"
+        )
+        assert not self.mock_session.rollback.called, (
+            "Must not rollback completed work on graceful cancel"
+        )
+
+
+    async def test_cancel_during_text_streaming(self, client: AsyncClient):
+        """
+        ASPIRATIONAL: cancel received while the model is mid-text-streaming (after a completed
+        thinking step, before tool call) should preserve any fully-assembled model messages
+        that preceded the cancel.
+
+        Aspirational behavior: ThinkingPart (which completed before cancel) is persisted even
+        though TextPart + ToolCallPart were not yet complete.
+
+        If this test fails: pydantic-ai assembles all parts of a model step into one ModelResponse
+        only at step-end — so mid-step cancel means nothing from that step persists. In that case,
+        update expected_msg_list to [user_msg, cancel_notice] and document the limitation.
+        """
+        self.function_agent.block_in_stream = True
+        stream_task = asyncio.create_task(
+            stream_and_collect(client, self.agent_record.id)
+        )
+
+        # --- Let thinking chunk (chunk 1 of DEFAULT_STEPS step 1) through ---
+        await asyncio.wait_for(self.function_agent.chunk_emitted.wait(), timeout=5.0)
+        self.function_agent.chunk_emitted.clear()
+        self.function_agent.resume_stream.set()
+
+        # --- Text chunk (chunk 2) has been yielded — fire cancel before tool call (chunk 3) ---
+        await asyncio.wait_for(self.function_agent.chunk_emitted.wait(), timeout=5.0)
+        cancel_response = await client.post(f"/agents/{self.agent_record.id}/cancel")
+        assert cancel_response.status_code == 200
+        self.function_agent.chunk_emitted.clear()
+        self.function_agent.resume_stream.set()  # unblock so route can service the cancel
+
+        events = await asyncio.wait_for(stream_task, timeout=5.0)
+
+        cancel_notice = ModelRequest(parts=[UserPromptPart(content="<system_message>Turn cancelled by user.</system_message>")])
+        persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
+
+        # Aspirational: THINKING_STEP and PRE_TOOL_TEXT were both yielded before cancel was
+        # serviced, so both should be preserved in a partial ModelResponse.
+        # If this fails: pydantic-ai only assembles a ModelResponse at step-end (when ToolCallPart
+        # arrives) — mid-step cancel means nothing from that step persists.
+        # In that case update to [user_msg, cancel_notice] and document the limitation.
+        expected_msg_list = [
+            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+            ModelResponse(parts=[
+                ThinkingPart(content=FunctionModelTestAgent.THINKING_TEXT),
+                TextPart(content=FunctionModelTestAgent.PRE_TOOL_TEXT),
+            ]),
+            cancel_notice,
+        ]
+        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
         assert self.mock_session.commit.call_count == self.mock_persist_messages.call_count, (
             "Every persist call must be followed by a commit — including cancel code path"
         )
