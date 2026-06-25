@@ -12,7 +12,7 @@ import json
 import logging
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -550,8 +550,11 @@ async def handle_session_new(
     # Send response first so client knows session is ready
     send(response(msg["id"], {"sessionId": session_id}))
 
-    # Replay history as session/update notifications and set initial watermark
+    # Replay history as session/update notifications and set initial watermark.
+    # If no history exists, seed the watermark to now so polling fires immediately.
     await replay_history(state, session_id, client)
+    if state.last_message_ts is None:
+        state.last_message_ts = datetime.now(timezone.utc).replace(tzinfo=None)
 
     # Send available slash commands for client discovery
     await send_available_commands(state, session_id, client)
