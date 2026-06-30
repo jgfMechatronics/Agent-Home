@@ -162,65 +162,74 @@ async def test_build_deps_creates_acquires_and_releases_lock(
     assert not lock.locked()
 
 
-@pytest.mark.asyncio
-async def test_build_deps_acquires_and_releases_existing_lock(
-    agent_record: AgentRecord,
-    agent_app_states: dict,
-    session: AsyncSession,
-    mocker: MockerFixture,
-):
-    """build_deps should acquire and release the lock (verified via spy).
+class TestBuildDepsLockAndCancelBehavior:
+    """Verifies lock acquire/release (via spy) and cancel_requested clearing on teardown.
 
     Spy slot is pre-populated before factory construction so _get_or_create_agent_app_state
-    returns it as self._agent_app_state.
+    returns it as self._agent_app_state. Tests cover both normal and exception exit paths.
     """
-    lock = create_spied_lock(agent_record.id, agent_app_states, mocker)
-    factory = AgentFactory(agent_record.id, agent_app_states, session)
 
-    async with factory.build_deps() as deps:
-        assert lock.locked()
+    @pytest.fixture(autouse=True)
+    def _setup(
+        self,
+        agent_record: AgentRecord,
+        agent_app_states: dict[str, AgentAppState],
+        session: AsyncSession,
+        mocker: MockerFixture,
+    ):
+        self.lock = create_spied_lock(agent_record.id, agent_app_states, mocker)
+        self.factory = AgentFactory(agent_record.id, agent_app_states, session)
+        self.cancel_requested = agent_app_states[agent_record.id].cancel_requested
 
-    assert_lock_acquired_and_released(lock)
+    @pytest.mark.asyncio
+    async def test_normal_exit_releases_lock_and_clears_cancel(self):
+        """build_deps should release the lock and clear a pending cancel on normal exit."""
+        self.cancel_requested.set()
+
+        async with self.factory.build_deps():
+            assert self.lock.locked()
+
+        assert_lock_acquired_and_released(self.lock)
+        assert not self.cancel_requested.is_set()
+
+    @pytest.mark.asyncio
+    async def test_exception_exit_releases_lock_and_clears_cancel(self):
+        """build_deps should release the lock and clear a pending cancel even if an exception is raised."""
+        self.cancel_requested.set()
+
+        with pytest.raises(RuntimeError):
+            async with self.factory.build_deps():
+                raise RuntimeError("Intentional test error")
+
+        assert_lock_acquired_and_released(self.lock)
+        assert not self.cancel_requested.is_set()
 
 
 @pytest.mark.asyncio
-async def test_build_deps_releases_lock_on_exception(
-    agent_record: AgentRecord,
+async def test_build_deps_raises_releases_lock_and_clears_cancel_on_fetch_failure(
     agent_app_states: dict,
     session: AsyncSession,
     mocker: MockerFixture,
 ):
-    """build_deps should release the lock even if an exception is raised inside the context."""
-    lock = create_spied_lock(agent_record.id, agent_app_states, mocker)
-    factory = AgentFactory(agent_record.id, agent_app_states, session)
-
-    with pytest.raises(RuntimeError):
-        async with factory.build_deps() as deps:
-            raise RuntimeError("Intentional test error")
-
-    assert_lock_acquired_and_released(lock)
-
-
-@pytest.mark.asyncio
-async def test_build_deps_raises_and_releases_lock_on_fetch_failure(
-    agent_app_states: dict,
-    session: AsyncSession,
-    mocker: MockerFixture,
-):
-    """build_deps should raise for unknown agent_id AND release lock on failure.
+    """build_deps should raise for unknown agent_id AND release lock and clear cancel on failure.
 
     Design decision: lock-then-fetch. The lock must be acquired BEFORE the DB fetch
     to prevent concurrent runs from seeing stale state. This means if the fetch fails,
     the lock was already acquired and must be released via try/finally.
+    Uses NONEXISTENT_AGENT_ID (no agent_record fixture) — kept standalone for that reason.
     """
     lock = create_spied_lock(NONEXISTENT_AGENT_ID, agent_app_states, mocker)
     factory = AgentFactory(NONEXISTENT_AGENT_ID, agent_app_states, session)
+
+    cancel_requested = agent_app_states[NONEXISTENT_AGENT_ID].cancel_requested
+    cancel_requested.set()
 
     with pytest.raises(AgentNotFoundError):
         async with factory.build_deps() as deps:
             pass
 
     assert_lock_acquired_and_released(lock)
+    assert not cancel_requested.is_set()
 
 
 # --- build_deps concurrency tests ---
