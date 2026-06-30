@@ -192,8 +192,6 @@ async def cancel_agent_run(
     Returns 200 if the cancel signal was sent, 409 if no run is active.
 
     Redundant cancels (event already set) succeed and return 200.
-    Note: there may be a micro-race between lock acquisition and cancel_requested.clear() at run
-    start — a cancel arriving in that window will be discarded. This is acceptable for now.
     """
     slot = agent_app_states.get(agent_id)
     if slot is None or not slot.lock.locked():

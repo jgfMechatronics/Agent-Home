@@ -41,8 +41,8 @@ async def get_agent_and_deps(
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
-    factory = AgentFactory(agent_app_states, session)
-    async with factory.build_agent_and_deps(agent_id) as (agent, deps):
+    factory = AgentFactory(agent_id, agent_app_states, session)
+    async with factory.build_agent_and_deps() as (agent, deps):
         yield (agent, deps)
 
 
@@ -63,6 +63,6 @@ async def get_deps_dep(
     
     Has the best function name in the entire codebase
     """
-    factory = AgentFactory(agent_app_states, session)
-    async with factory.build_deps(agent_id) as deps:
+    factory = AgentFactory(agent_id, agent_app_states, session)
+    async with factory.build_deps() as deps:
         yield deps
