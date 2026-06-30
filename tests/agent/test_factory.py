@@ -110,8 +110,8 @@ def test_get_or_create_agent_app_state_returns_same_agent_app_state_for_same_id(
     assert isinstance(slot1, AgentAppState)
     assert isinstance(slot1.lock, asyncio.Lock)
     assert isinstance(slot1.cancel_requested, asyncio.Event)
-    assert not slot1.lock.locked
-    assert not slot1.cancel_requested.is_set
+    assert not slot1.lock.locked()
+    assert not slot1.cancel_requested.is_set()
 
 
 def test_get_or_create_agent_app_state_returns_different_agent_app_states_for_different_ids(agent_app_states: dict):
