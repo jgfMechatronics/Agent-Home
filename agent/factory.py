@@ -2,6 +2,13 @@
 Agent factory and dependency management — Section 3.1
 
 Provides per-request AgentFactory for acquiring agent locks, loading deps, and building agents.
+
+TODO: Consider the StatefulAgent class pattern, which would significantly shake the AgentFactory up
+StatefulAgent Pattern:
+  - Facade class owning a private pydantic-ai agent + member objects (MemorySystem, AgentRunner, etc.)
+  - "One object = one agent" — easier to reason about than scattered free functions + deps
+  - Related: ReadOnlyStatefulAgent for read-only routes (get_blocks, etc.) — no AgentRunner, read-only DB connection
+  - Could own lifespan. Lock acquisition/release and such. AgentFactory could then be an object which only exists long enough to construct a StatefulAgent, or could just be a free function
 """
 import asyncio
 from contextlib import asynccontextmanager
