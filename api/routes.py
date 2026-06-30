@@ -16,8 +16,8 @@ from pydantic_ai import Agent, AgentRunResultEvent
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record
-from agent.types import AgentDeps
-from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_deps_dep
+from agent.types import AgentAppState, AgentDeps
+from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_states, get_deps_dep
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
@@ -179,6 +179,26 @@ async def create_memory_block(
     except DuplicateBlockError as e:
         raise HTTPException(status_code=400, detail=f"Duplicate block: {e}") from e
     return MemoryBlockResponse.from_record(block)
+
+
+@router.post("/{agent_id}/cancel", status_code=202)
+async def cancel_agent_run(
+    agent_id: str,
+    agent_app_states: dict[str, AgentAppState] = Depends(get_agent_app_states),
+) -> None:
+    """Cancel an active agent run.
+
+    Sets the cancel_requested for the given agent if a run is currently active.
+    Returns 200 if the cancel signal was sent, 409 if no run is active.
+
+    Redundant cancels (event already set) succeed and return 200.
+    Note: there may be a micro-race between lock acquisition and cancel_requested.clear() at run
+    start — a cancel arriving in that window will be discarded. This is acceptable for now.
+    """
+    slot = agent_app_states.get(agent_id)
+    if slot is None or not slot.lock.locked():
+        raise HTTPException(status_code=409, detail=f"Agent {agent_id!r} has no active run")
+    slot.cancel_requested.set() # If there was a previous unserviced cancellation request, no harm in setting again
 
 
 @router.get("/{agent_id}/messages")

@@ -4,6 +4,7 @@ Agent domain types — Section 3.0
 Internal domain objects for the agent layer. API layer imports FROM here,
 not the reverse.
 """
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -13,6 +14,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from db.models import AgentRecord
+
+
+@dataclass
+class AgentAppState:
+    """Per-agent app-scoped state, held for the application lifetime.
+
+    Created lazily on first run per agent. Both fields are permanent — the lock
+    serializes concurrent requests, and the cancel_requested signals an in-flight
+    run to stop.
+    """
+    lock: asyncio.Lock
+    cancel_requested: asyncio.Event
 
 
 class AgentConfig(BaseModel):

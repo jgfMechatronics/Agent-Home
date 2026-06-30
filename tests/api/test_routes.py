@@ -906,6 +906,11 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 
     CANCEL_NOTICE = ModelRequest(parts=[UserPromptPart(content="<system_message>Turn cancelled by user.</system_message>")])
 
+    async def test_cancel_no_active_run_returns_409(self, client: AsyncClient):
+        """Cancel route returns 409 when no run is active for the given agent_id."""
+        response = await client.post(f"/agents/{self.agent_record.id}/cancel")
+        assert response.status_code == 409
+
     async def test_cancel_during_tool_exec(self, client: AsyncClient):
         """
         CONTRACT: graceful cancel lets the in-flight tool complete, persists the
@@ -928,8 +933,8 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 
         cancel_response = await client.post(f"/agents/{self.agent_record.id}/cancel")
 
-        assert cancel_response.status_code == 200, (
-            f"Cancel route must return 200; got {cancel_response.status_code}"
+        assert cancel_response.status_code == 202, (
+            f"Cancel route must return 202; got {cancel_response.status_code}"
         )
 
         # Resume to allow cancellation to be serviced
@@ -982,7 +987,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         # --- Text chunk (chunk 2) has been yielded — fire cancel before tool call (chunk 3) ---
         await asyncio.wait_for(self.function_agent.chunk_emitted.wait(), timeout=5.0)
         cancel_response = await client.post(f"/agents/{self.agent_record.id}/cancel")
-        assert cancel_response.status_code == 200
+        assert cancel_response.status_code == 202
         self.function_agent.chunk_emitted.clear()
         self.function_agent.resume_stream.set()  # unblock so route can service the cancel
 

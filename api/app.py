@@ -19,7 +19,6 @@ async def lifespan(app: FastAPI):
     try:
         await init_db(engine)
         app.state.engine = engine
-        app.state.agent_lock_reg = {}
         yield
     finally:
         await engine.dispose()
@@ -49,6 +48,7 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
 def _create_app() -> FastAPI:
     """Factory function for creating the FastAPI app. Enables fresh instances per test."""
     app = FastAPI(lifespan=lifespan)
+    app.state.agent_app_states = {}
     app.include_router(router)
     app.add_exception_handler(AgentNotFoundError, agent_not_found_handler)
     app.add_exception_handler(AgentLockedError, agent_locked_handler)
