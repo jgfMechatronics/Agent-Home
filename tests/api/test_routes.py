@@ -539,7 +539,7 @@ class FunctionModelTestAgent:
         ModelResponse(parts=[TextPart(content=COMPLETION_TEXT)]),
     ]
 
-    CRASH_STEPS           = [TOOL_CALL, CRASH, COMPLETION_TEXT]  # Completion text should NOT be reached due to crash, including it as a sanity check
+    CRASH_STEPS           = [TOOL_CALL, TOOL_CALL, CRASH, COMPLETION_TEXT]  # Two tool calls before crash; completion text should NOT be reached
     THREE_TOOL_CALL_STEPS = [TOOL_CALL, TOOL_CALL, TOOL_CALL, COMPLETION_TEXT]
 
     # A single tool call/return pair — shared by CRASH_EXPECTED_PARTIAL_MODELMSGS and THREE_TOOL_CALL_EXPECTED_MSGS
@@ -547,7 +547,9 @@ class FunctionModelTestAgent:
         ModelResponse(parts=[DUMMY_TOOL_CALL_PART]),
         ModelRequest(parts=[DUMMY_TOOL_RETURN_PART]),
     ]
-    # What should be persisted for CRASH_STEPS: tool call + tool return, no final text response
+    # What should be persisted for CRASH_STEPS: first tool pair only
+    # There's a funny pydantic AI timing thing where the crash occurs before the tool call result event for the prev
+    # model step is yielded. And our persistence is driven by events yeilded from pydantic's async generator.
     CRASH_EXPECTED_PARTIAL_MODELMSGS: list[ModelMessage] = EXPECTED_TOOL_PAIR
     # THREE_TOOL_CALL_STEPS: 3 tool call/return pairs followed by a final text response
     THREE_TOOL_CALL_EXPECTED_MSGS: list[ModelMessage] = EXPECTED_TOOL_PAIR * 3 + [
@@ -825,7 +827,9 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         self.function_agent.tool_entered.clear()  # consume signal before resuming to avoid stale wait
         self.function_agent.resume_tool_exec.set()
 
-        # --- Tools 2 & 3:---
+        # --- Check persistence of Tool pairs 1 & 2:---
+        # Every time we hit a tool_entered Event, the tool call which triggered that event is *not* available to persist yet
+        # So the number of expected persisted tool call/returns lags the number of times we've hit tool_entered by 1
         for i in range(2, 4):
             await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
             assert self.mock_persist_messages.call_count == i, (
@@ -836,14 +840,17 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
             self.function_agent.tool_entered.clear()  # consume signal before resuming to avoid stale wait
             self.function_agent.resume_tool_exec.set()
 
+        # The end of the final loop iter freed up the last tool call/return pair
+        self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
+
         # --- Run complete ---
         events = await asyncio.wait_for(stream_task, timeout=5.0)
         assert "Error" not in [e["event"] for e in events], f"Unexpected Error event: {events}"
 
-        assert self.mock_persist_messages.call_count == 4, (
-            "Third tool call/return pair must be persisted"
+        assert self.mock_persist_messages.call_count == 5, (
+            "Final model response must be persisted"
         )
-        self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
+        self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), [FunctionModelTestAgent.THREE_TOOL_CALL_EXPECTED_MSGS[-1]])
 
         # Aggregate: full flattened message list must be complete and well-formed (sanity check)
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
