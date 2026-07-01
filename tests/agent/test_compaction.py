@@ -12,6 +12,7 @@ aggressive as system prompt grows. It would probably be preferable for compactio
 frequent as the system prompt gets problematically large as opposed to more and more aggressive 
 where they're basically deleting all messages.
 """
+import logging
 import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
@@ -107,6 +108,14 @@ class TestIsCompactionNeeded:
         """Returns True only when total_tokens > soft_compaction_limit."""
         config = _make_config(soft_compaction_limit=10000)
         assert is_compaction_needed(total_tokens, config) is expected
+
+    def test_returns_false_and_warns_when_total_tokens_is_none(self, caplog):
+        """None total_tokens means no usage data was available; compaction is skipped with a warning."""
+        config = _make_config(soft_compaction_limit=10000)
+        with caplog.at_level(logging.WARNING, logger="agent.compaction"):
+            result = is_compaction_needed(None, config)
+        assert result is False
+        assert "total_tokens=None" in caplog.text
 
 
 # --- compact tests ---

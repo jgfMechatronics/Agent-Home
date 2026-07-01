@@ -3,17 +3,26 @@
 Handles context window management by advancing the message history pointer
 when token limits are exceeded.
 """
+import logging
+
 from agent.types import AgentConfig, AgentDeps
+
+logger = logging.getLogger(__name__)
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import deserialize_messages, load_messages
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 
 
-def is_compaction_needed(total_tokens: int, config: AgentConfig) -> bool:
+def is_compaction_needed(total_tokens: int | None, config: AgentConfig) -> bool:
     """Check if compaction should be triggered based on token count.
-    
+
     Returns True when total_tokens exceeds the soft_compaction_limit.
+    Returns False and logs a warning when total_tokens is None, which indicates
+    no usage data was available for the turn (unexpected in normal operation).
     """
+    if total_tokens is None:
+        logger.warning("is_compaction_needed called with total_tokens=None; skipping compaction")
+        return False
     return total_tokens > config.soft_compaction_limit
 
 
