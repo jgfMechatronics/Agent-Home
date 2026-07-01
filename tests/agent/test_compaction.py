@@ -55,7 +55,7 @@ async def _persist_messages_load_records(
     messages: list[ModelMessage],
 ) -> list[MessageRecord]:
     """Persist messages via the official persist_messages, then load and return the MessageRecords."""
-    await persist_messages(deps, messages, total_tokens=0)
+    await persist_messages(deps, messages)
     return await load_messages(deps.session, deps.agent_id)
 
 
