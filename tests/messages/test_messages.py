@@ -82,6 +82,14 @@ class TestPersistMessages(DBTestBase):
     Uses real in-memory DB. All tests share a session fixture from conftest.
     """
 
+    @pytest.fixture
+    def resp_with_usage(self):
+        """A ModelResponse with known usage data (30 in + 12 out = 42 total)."""
+        return ModelResponse(
+            parts=[TextPart(content="with usage")],
+            usage=RequestUsage(input_tokens=30, output_tokens=12),
+        )
+
     async def _persist_and_fetch(self, messages) -> list[MessageRecord]:
         await persist_messages(self.deps, messages)
         return await fetch_all_records(self.session, self.agent.id)
@@ -103,27 +111,39 @@ class TestPersistMessages(DBTestBase):
         assert len(restored) == 1
         assert restored[0] == req
 
-    async def test_total_tokens_persisted_per_model_response(self):
+    async def test_total_tokens_persisted_per_model_response(self, resp_with_usage):
         """total_tokens is extracted from ModelResponse.usage for each response row.
 
         ModelRequests always get None. ModelResponses get usage.total_tokens when usage has values,
         None when usage is default/empty (e.g. make_response() with no token data).
         """
-        resp_with_usage = ModelResponse(
-            parts=[TextPart(content="first")],
-            usage=RequestUsage(input_tokens=30, output_tokens=12),
-        )
-        expected_total_tokens = 42
         resp_no_usage = make_response("second")  # default RequestUsage() — all zeros, has_values() False
         records = await self._persist_and_fetch(
             [make_request(), resp_with_usage, make_request(), resp_no_usage, make_request(), resp_with_usage]
         )
-        assert records[0].total_tokens is None                      # ModelRequest
-        assert records[1].total_tokens == expected_total_tokens     # ModelResponse with real usage
-        assert records[2].total_tokens is None                      # ModelRequest
-        assert records[3].total_tokens is None                      # ModelResponse with no usage values
-        assert records[4].total_tokens is None                      # ModelRequest
-        assert records[5].total_tokens == expected_total_tokens     # ModelRespone with real usage
+        assert records[0].total_tokens is None                                # ModelRequest
+        assert records[1].total_tokens == resp_with_usage.usage.total_tokens  # ModelResponse with real usage
+        assert records[2].total_tokens is None                                # ModelRequest
+        assert records[3].total_tokens is None                                # ModelResponse with no usage values
+        assert records[4].total_tokens is None                                # ModelRequest
+        assert records[5].total_tokens == resp_with_usage.usage.total_tokens  # ModelResponse with real usage
+
+    async def test_returns_last_seen_total_tokens_when_sequence_ends_with_nones(self, resp_with_usage):
+        """When the sequence ends with messages that have no usage, the last seen non-None value is returned."""
+        result = await persist_messages(
+            self.deps,
+            [resp_with_usage, make_request(), make_response()],
+        )
+        assert result == resp_with_usage.usage.total_tokens
+
+    async def test_returns_last_total_tokens_when_multiple_responses_have_usage(self, resp_with_usage):
+        """When multiple responses have usage data, the last one's value is returned, not the first."""
+        resp_with_other_usage = ModelResponse(
+            parts=[TextPart(content="later")],
+            usage=RequestUsage(input_tokens=50, output_tokens=25),
+        )
+        result = await persist_messages(self.deps, [resp_with_usage, make_request(), resp_with_other_usage])
+        assert result == resp_with_other_usage.usage.total_tokens
 
     async def test_timestamp_set_on_all_records(self):
         request = make_request()
