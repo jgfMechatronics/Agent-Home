@@ -15,9 +15,11 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.usage import RequestUsage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,21 +77,21 @@ class DBTestBase:
 
 @pytest.mark.asyncio
 class TestPersistMessages(DBTestBase):
-    """Tests for persist_messages(deps, messages, total_tokens).
+    """Tests for persist_messages(deps, messages).
 
     Uses real in-memory DB. All tests share a session fixture from conftest.
     """
 
-    async def _persist_and_fetch(self, messages, total_tokens=10) -> list[MessageRecord]:
-        await persist_messages(self.deps, messages, total_tokens=total_tokens)
+    async def _persist_and_fetch(self, messages) -> list[MessageRecord]:
+        await persist_messages(self.deps, messages)
         return await fetch_all_records(self.session, self.agent.id)
 
     async def test_creates_one_record_per_message(self):
-        records = await self._persist_and_fetch([make_request(), make_response()], total_tokens=100)
+        records = await self._persist_and_fetch([make_request(), make_response()])
         assert len(records) == 2
 
     async def test_sets_type_from_message_class(self):
-        records = await self._persist_and_fetch([make_request(), make_response()], total_tokens=100)
+        records = await self._persist_and_fetch([make_request(), make_response()])
         assert records[0].type == "ModelRequest"
         assert records[1].type == "ModelResponse"
 
@@ -101,14 +103,27 @@ class TestPersistMessages(DBTestBase):
         assert len(restored) == 1
         assert restored[0] == req
 
-    async def test_total_tokens_on_final_row_only(self):
-        records = await self._persist_and_fetch(
-            [make_request(), make_response(), make_request(), make_response()], total_tokens=42
+    async def test_total_tokens_persisted_per_model_response(self):
+        """total_tokens is extracted from ModelResponse.usage for each response row.
+
+        ModelRequests always get None. ModelResponses get usage.total_tokens when usage has values,
+        None when usage is default/empty (e.g. make_response() with no token data).
+        """
+        resp_with_usage = ModelResponse(
+            parts=[TextPart(content="first")],
+            usage=RequestUsage(input_tokens=30, output_tokens=12),
         )
-        # Only the last record gets total_tokens
-        for r in records[:-1]:
-            assert r.total_tokens is None
-        assert records[-1].total_tokens == 42
+        expected_total_tokens = 42
+        resp_no_usage = make_response("second")  # default RequestUsage() — all zeros, has_values() False
+        records = await self._persist_and_fetch(
+            [make_request(), resp_with_usage, make_request(), resp_no_usage, make_request(), resp_with_usage]
+        )
+        assert records[0].total_tokens is None                      # ModelRequest
+        assert records[1].total_tokens == expected_total_tokens     # ModelResponse with real usage
+        assert records[2].total_tokens is None                      # ModelRequest
+        assert records[3].total_tokens is None                      # ModelResponse with no usage values
+        assert records[4].total_tokens is None                      # ModelRequest
+        assert records[5].total_tokens == expected_total_tokens     # ModelRespone with real usage
 
     async def test_timestamp_set_on_all_records(self):
         request = make_request()
@@ -125,7 +140,7 @@ class TestPersistMessages(DBTestBase):
             assert r.agent_id == self.agent.id
 
     async def test_empty_messages_list_is_noop(self):
-        records = await self._persist_and_fetch([], total_tokens=0)
+        records = await self._persist_and_fetch([])
         assert records == []
 
     @pytest.mark.parametrize("pair_fn", [make_tool_pair, make_retry_pair])
@@ -134,7 +149,7 @@ class TestPersistMessages(DBTestBase):
         whether the response is a ToolReturnPart (success) or RetryPromptPart (ModelRetry)."""
         response_with_call, request_with_response = pair_fn()
 
-        records = await self._persist_and_fetch([response_with_call, request_with_response], total_tokens=20)
+        records = await self._persist_and_fetch([response_with_call, request_with_response])
 
         assert len(records) == 2
         assert records[0].type == "ModelResponse"
@@ -161,9 +176,9 @@ class TestPersistMessages(DBTestBase):
         my_first_expected_msg = make_request("my msg")
         my_second_expected_msg = make_request("my second msg")
         
-        await persist_messages(other_deps, [expected_other_msg], total_tokens=5)
-        await persist_messages(self.deps, [my_first_expected_msg], total_tokens=5)
-        await persist_messages(self.deps, [my_second_expected_msg], total_tokens=5)
+        await persist_messages(other_deps, [expected_other_msg])
+        await persist_messages(self.deps, [my_first_expected_msg])
+        await persist_messages(self.deps, [my_second_expected_msg])
 
         my_records = await fetch_all_records(self.session, self.agent.id)
         other_records = await fetch_all_records(self.session, other_agent.id)
@@ -196,7 +211,7 @@ class TestPersistMessages(DBTestBase):
     async def _assert_orphan_replaced(self, orphan_msg, orphaned_part_type, expected_error):
         """Persist a single orphaned tool message and assert it was replaced with the expected
         error record, with a summary warning appended at the end of the chain."""
-        records = await self._persist_and_fetch([orphan_msg], total_tokens=5)
+        records = await self._persist_and_fetch([orphan_msg])
         assert len(records) == 2  # positional error + summary warning
 
         # Original orphaned message was dropped — no record should contain the orphaned part type
@@ -258,7 +273,7 @@ class TestPersistMessages(DBTestBase):
             return original_dump(messages_arg)
 
         with patch.object(ModelMessagesTypeAdapter, "dump_json", side_effect=controlled_dump):
-            await persist_messages(self.deps, [good, bad, good2], total_tokens=10)
+            await persist_messages(self.deps, [good, bad, good2])
 
         records = await fetch_all_records(self.session, self.agent.id)
         assert len(records) == 4  # good, positional error, good2, summary warning
@@ -285,7 +300,7 @@ class TestPersistMessages(DBTestBase):
         """If a new message's timestamp is older than the last DB record, it should be
         bumped forward to preserve chronological order, and a warning should be logged."""
         # Persist a first message normally
-        await persist_messages(self.deps, [make_request("first")], total_tokens=5)
+        await persist_messages(self.deps, [make_request("first")])
 
         # Force that record's timestamp into the far future
         records = await fetch_all_records(self.session, self.agent.id)
@@ -295,7 +310,7 @@ class TestPersistMessages(DBTestBase):
 
         # Persist a second message — its natural timestamp will be far older
         with caplog.at_level(logging.WARNING):
-            await persist_messages(self.deps, [make_response("second")], total_tokens=5)
+            await persist_messages(self.deps, [make_response("second")])
 
         records = await fetch_all_records(self.session, self.agent.id)
         assert len(records) == 2
@@ -316,7 +331,7 @@ class TestLoadMessages(DBTestBase):
 
     async def test_returns_all_messages_when_no_start_timestamp(self):
         messages = [make_request(), make_response(), make_request(), make_response()]
-        await persist_messages(self.deps, messages, total_tokens=50)
+        await persist_messages(self.deps, messages)
         records = await load_messages(self.session, self.agent.id)
         assert deserialize_messages(records) == messages
 
@@ -326,14 +341,14 @@ class TestLoadMessages(DBTestBase):
 
     async def test_start_timestamp_filters_inclusive(self):
         early = [make_request("early"), make_response("early reply")]
-        await persist_messages(self.deps, early, total_tokens=10)
+        await persist_messages(self.deps, early)
 
         # Record the cutoff timestamp before persisting the second batch
         cutoff_record = (await fetch_all_records(self.session, self.agent.id))[-1]
         cutoff = cutoff_record.timestamp
         await asyncio.sleep(0.1) # ensure timestamp unique from early
         late = [make_request("late"), make_response("late reply")]
-        await persist_messages(self.deps, late, total_tokens=10)
+        await persist_messages(self.deps, late)
 
         records = await load_messages(self.session, self.agent.id, start_timestamp=cutoff)
         # Should include the cutoff record and everything after (inclusive)
@@ -346,7 +361,7 @@ class TestLoadMessages(DBTestBase):
         await asyncio.sleep(0.005)
         msg3 = make_request("third")
         messages = [msg1, msg2, msg3]
-        await persist_messages(self.deps, messages, total_tokens=10)
+        await persist_messages(self.deps, messages)
         records = await load_messages(self.session, self.agent.id)
         timestamps = [r.timestamp for r in records]
         assert timestamps == sorted(timestamps)
@@ -362,22 +377,22 @@ class TestLoadMessages(DBTestBase):
         await self.session.flush()
         other_deps = make_deps(self.session, other_agent)
 
-        await persist_messages(self.deps, [make_request(), make_response()], total_tokens=10)
-        await persist_messages(other_deps, [make_request(), make_response()], total_tokens=10)
+        await persist_messages(self.deps, [make_request(), make_response()])
+        await persist_messages(other_deps, [make_request(), make_response()])
 
         records = await load_messages(self.session, self.agent.id)
         assert len(records) == 2
         assert all(r.agent_id == self.agent.id for r in records)
 
     async def test_returns_list_of_message_records(self):
-        await persist_messages(self.deps, [make_request()], total_tokens=5)
+        await persist_messages(self.deps, [make_request()])
         records = await load_messages(self.session, self.agent.id)
         assert len(records) == 1
         assert isinstance(records[0], MessageRecord)
 
     async def test_start_timestamp_ahead_of_all_messages_returns_empty(self):
         """When start_timestamp is later than every message, the result is empty."""
-        await persist_messages(self.deps, [make_request(), make_response()], total_tokens=10)
+        await persist_messages(self.deps, [make_request(), make_response()])
         far_future = datetime(9999, 12, 31, 23, 59, 59)
         records = await load_messages(self.session, self.agent.id, start_timestamp=far_future)
         assert records == []
@@ -458,7 +473,7 @@ class TestRoundTrip(DBTestBase):
 
     async def test_request_response_round_trip(self):
         original = [make_request("round-trip me"), make_response("got it")]
-        await persist_messages(self.deps, original, total_tokens=20)
+        await persist_messages(self.deps, original)
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)
 
@@ -466,7 +481,7 @@ class TestRoundTrip(DBTestBase):
 
     async def test_tool_pair_round_trip(self):
         response_with_call, request_with_return = make_tool_pair()
-        await persist_messages(self.deps, [response_with_call, request_with_return], total_tokens=15)
+        await persist_messages(self.deps, [response_with_call, request_with_return])
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)
 
