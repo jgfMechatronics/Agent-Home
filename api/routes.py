@@ -12,7 +12,8 @@ from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic_ai import Agent, AgentRunResultEvent
+from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
+from pydantic_ai.messages import ToolCallPart
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record
@@ -66,25 +67,32 @@ async def _handle_message(agent: Agent, deps: AgentDeps, user_prompt: str) -> As
     records = await load_messages(deps.session, deps.agent_id, start_timestamp=deps.context_window_start)
     message_history = deserialize_messages(records)
 
-    # TODO: Exceptions raised during run_stream_events result in entire turn being discarded.
-    # this was discovered with "UnexpectedModelBehavior" due to excess retries
-    async for event in agent.run_stream_events(user_prompt=user_prompt,
-                                                message_history=message_history,
-                                                deps=deps):
-        yield map_to_sse(event)
+    with capture_run_messages() as messages:
+        async with agent.run_stream_events(user_prompt=user_prompt,
+                                            message_history=message_history,
+                                            deps=deps) as stream:
+            last_persisted_idx = len(message_history) # track what we have persisted from messages
+            last_total_tokens_value = None
 
-        if isinstance(event, AgentRunResultEvent):
-            final_result = event.result
-            input_tokens = final_result.usage().input_tokens
-            await persist_messages(deps=deps,
-                                    messages=final_result.new_messages(),
-                                    input_tokens=input_tokens)
+            async for event in stream:
+                yield map_to_sse(event)
 
-            # commit before compaction — if compaction fails, the turn may still be valid
-            await deps.commit_changes_refresh_agent_record()
+                if len(messages) > last_persisted_idx:
+                    # avoid persisting tool call before return comes in
+                    if not isinstance(messages[-1].parts[-1], ToolCallPart):
+                        total_tokens = await persist_messages(deps=deps, messages=messages[last_persisted_idx:])
+                        await deps.commit_changes_refresh_agent_record()
+                        last_persisted_idx = len(messages)
+                        
+                        if total_tokens is not None:
+                            last_total_tokens_value = total_tokens
 
-            if is_compaction_needed(input_tokens, deps.config):
-                await compact(deps, input_tokens)
+                if isinstance(event, AgentRunResultEvent):
+                    # commit before compaction — if compaction fails, the turn may still be valid
+                    await deps.commit_changes_refresh_agent_record()
+
+                    if is_compaction_needed(last_total_tokens_value, deps.config):
+                        await compact(deps, last_total_tokens_value)
 
 
 # --- Routes ---

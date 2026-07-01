@@ -108,11 +108,15 @@ def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | N
     """
     agent = Mock()
 
-    async def _stream(*args, **kwargs):
+    async def _gen():
         for event in (events or []):
             yield event
         if raises_mid_stream is not None:
             raise raises_mid_stream
+
+    @asynccontextmanager
+    async def _stream(*args, **kwargs):
+        yield _gen()
 
     agent.run_stream_events = _stream
     return agent
