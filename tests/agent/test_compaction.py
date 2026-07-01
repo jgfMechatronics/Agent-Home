@@ -2,7 +2,7 @@
 
 Tests is_compaction_needed and compact functions.
 
-compact(deps, input_tokens) receives the total input_tokens from the API response.
+compact(deps, total_tokens) receives the total_tokens from the API response.
 It estimates system prompt tokens from char count, calculates message tokens,
 and advances context_window_start to hit the target percentage.
 
@@ -55,7 +55,7 @@ async def _persist_messages_load_records(
     messages: list[ModelMessage],
 ) -> list[MessageRecord]:
     """Persist messages via the official persist_messages, then load and return the MessageRecords."""
-    await persist_messages(deps, messages, input_tokens=0)
+    await persist_messages(deps, messages, total_tokens=0)
     return await load_messages(deps.session, deps.agent_id)
 
 
@@ -96,17 +96,17 @@ async def _make_agent_with_messages(
 # --- is_compaction_needed tests ---
 
 class TestIsCompactionNeeded:
-    """Tests for is_compaction_needed(input_tokens, config)."""
+    """Tests for is_compaction_needed(total_tokens, config)."""
 
-    @pytest.mark.parametrize("input_tokens,expected", [
+    @pytest.mark.parametrize("total_tokens,expected", [
         (10001, True),   # over limit
         (10000, False),  # at limit
         (5000, False),   # under limit
     ])
-    def test_threshold_behavior(self, input_tokens, expected):
-        """Returns True only when input_tokens > soft_compaction_limit."""
+    def test_threshold_behavior(self, total_tokens, expected):
+        """Returns True only when total_tokens > soft_compaction_limit."""
         config = _make_config(soft_compaction_limit=10000)
-        assert is_compaction_needed(input_tokens, config) is expected
+        assert is_compaction_needed(total_tokens, config) is expected
 
 
 # --- compact tests ---
@@ -117,7 +117,7 @@ class CompactTestBase:
     
     Token math for tests:
     - System prompt tokens ≈ len(compiled_system_prompt) / 4
-    - Message tokens = input_tokens - system_prompt_tokens
+    - Message tokens = total_tokens - system_prompt_tokens
     - Avg tokens per message = message_tokens / message_count
     """
 
@@ -128,7 +128,7 @@ class CompactTestBase:
         limit: int,
         target: float,
         msg_count: int,
-        input_tokens: int,
+        total_tokens: int,
     ):
         """Set up test scenario with specified compaction parameters."""
         config = _make_config(soft_compaction_limit=limit, compaction_target_percentage=target)
@@ -138,7 +138,7 @@ class CompactTestBase:
         self.agent = data["agent"]
         self.messages = data["messages"]
         self.deps = data["deps"]
-        self.input_tokens = input_tokens
+        self.total_tokens = total_tokens
 
 class TestCompactCommon(CompactTestBase):
     """Tests with standard config: 500 limit, 0.5 target, 10 messages, 1100 tokens."""
@@ -147,20 +147,20 @@ class TestCompactCommon(CompactTestBase):
 
     @pytest_asyncio.fixture(autouse=True)
     async def setup(self, session: AsyncSession):
-        await self._setup(session, limit=500, target=0.5, msg_count=self.MSG_COUNT, input_tokens=1100)
+        await self._setup(session, limit=500, target=0.5, msg_count=self.MSG_COUNT, total_tokens=1100)
 
     async def test_advances_context_window_start(self, session: AsyncSession):
         """compact advances context_window_start pointer in DB."""
         assert self.agent.context_window_start is None  # Initially null
         
-        await compact(self.deps, input_tokens=self.input_tokens)
+        await compact(self.deps, total_tokens=self.total_tokens)
         
         await session.refresh(self.agent)
         assert self.agent.context_window_start is not None
 
     async def test_does_not_delete_messages(self, session: AsyncSession):
         """compact does NOT delete any messages — pointer only."""
-        await compact(self.deps, input_tokens=self.input_tokens)
+        await compact(self.deps, total_tokens=self.total_tokens)
         
         # Verify all messages still exist in DB via count query
         result = await session.execute(
@@ -177,7 +177,7 @@ class TestCompactCommon(CompactTestBase):
         
         spy = mocker.spy(compaction_module, "compile_system_prompt")
         
-        await compact(self.deps, input_tokens=self.input_tokens)
+        await compact(self.deps, total_tokens=self.total_tokens)
         
         spy.assert_called_once_with(self.deps)
 
@@ -187,9 +187,9 @@ class TestCompactEdgeCases(CompactTestBase):
 
     async def test_minimum_history_guard_preserves_recent_messages(self, session: AsyncSession):
         """compact never evicts the most recent 4 messages."""
-        await self._setup(session, limit=100, target=0.01, msg_count=10, input_tokens=5000)
+        await self._setup(session, limit=100, target=0.01, msg_count=10, total_tokens=5000)
         
-        await compact(self.deps, input_tokens=self.input_tokens)
+        await compact(self.deps, total_tokens=self.total_tokens)
         
         await session.refresh(self.agent)
         
@@ -199,9 +199,9 @@ class TestCompactEdgeCases(CompactTestBase):
 
     async def test_no_op_with_four_or_fewer_messages(self, session: AsyncSession):
         """compact is a no-op when agent has 4 or fewer messages in context."""
-        await self._setup(session, limit=100, target=0.1, msg_count=4, input_tokens=5000)
+        await self._setup(session, limit=100, target=0.1, msg_count=4, total_tokens=5000)
         
-        await compact(self.deps, input_tokens=self.input_tokens)
+        await compact(self.deps, total_tokens=self.total_tokens)
         
         await session.refresh(self.agent)
         # Should remain None — nothing to compact
@@ -210,16 +210,16 @@ class TestCompactEdgeCases(CompactTestBase):
     async def test_targets_percentage_of_limit(self, session: AsyncSession):
         """compact targets compaction_target_percentage of soft_compaction_limit.
         
-        Setup: 400 char prompt ≈ 100 tokens, 20 messages, input_tokens=2100
+        Setup: 400 char prompt ≈ 100 tokens, 20 messages, total_tokens=2100
         → message_tokens = 2100 - 100 = 2000, avg = 100 tok/msg
         
         Target: 50% of 2000 limit = 1000 tokens
         System prompt = 100, so message budget = 900 tokens = ~9 messages
         Should keep ~8-10 messages (well above the 4-message guard)
         """
-        await self._setup(session, limit=2000, target=0.5, msg_count=20, input_tokens=2100)
+        await self._setup(session, limit=2000, target=0.5, msg_count=20, total_tokens=2100)
         
-        await compact(self.deps, input_tokens=self.input_tokens)
+        await compact(self.deps, total_tokens=self.total_tokens)
         
         await session.refresh(self.agent)
         
@@ -277,7 +277,7 @@ class TestCompactToolPairAtomicity:
         response), which would orphan it from records[5] (tool call):
 
             no system prompt → sys_tokens = 0
-            10 messages, input_tokens = 1250,  avg = 125 tok/msg
+            10 messages, total_tokens = 1250,  avg = 125 tok/msg
 
             soft_compaction_limit = 1000,  compaction_target_percentage = 0.5
             target_tokens = 0.5 × 1000 = 500
@@ -294,7 +294,7 @@ class TestCompactToolPairAtomicity:
         assert any(isinstance(p, ToolCallPart) for p in call_record.parts)
         assert any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in return_record.parts)
 
-        await compact(data["deps"], input_tokens=1250)
+        await compact(data["deps"], total_tokens=1250)
 
         await session.refresh(data["agent"])
         assert data["agent"].context_window_start == data["records"][5].timestamp

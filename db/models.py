@@ -97,7 +97,7 @@ class MessageRecord(Base):
     __table_args__ = (
         # Primary access pattern: load history by agent in timestamp order
         Index("ix_message_agent_timestamp", "agent_id", "timestamp"),
-        # # Type queries (e.g. find last ModelResponse with input_tokens) — timestamp DESC intent,
+        # # Type queries (e.g. find last ModelResponse with total_tokens) — timestamp DESC intent,
         # # SQLite optimises both directions from a single index
         # Comment this back in if the use pattern emerges
         # Index("ix_message_agent_type_timestamp", "agent_id", "type", "timestamp"),
@@ -109,7 +109,7 @@ class MessageRecord(Base):
     # We may later want to make this more custom/useful, stuff like "Summary", "ToolCall", "ToolResponse"
     type: Mapped[str]
     content: Mapped[str]  # TEXT storing serialized ModelMessage JSON — not deserialized by SQLAlchemy
-    input_tokens: Mapped[int | None]
+    total_tokens: Mapped[int | None]  # sum of input + output tokens for the LLM request associated with this message; None for ModelRequests and error rows
     # TODO: add an integer sequence number (per-agent ordinal) so message position has an
     # unambiguous index. Timestamp is used as a de-facto positional index in several places
     # (e.g. AgentRecord.context_window_start, compaction walk-back, message ordering in general) but timestamps really aren't

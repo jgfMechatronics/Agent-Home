@@ -187,8 +187,8 @@ def _handle_serialization_error(
 # Functions
 # ---------------------------------------------------------------------------
 
-async def persist_messages(deps: AgentDeps, messages: list[ModelMessage], input_tokens: int) -> None:
-    """Save each ModelMessage as its own row; set input_tokens on the final row only.
+async def persist_messages(deps: AgentDeps, messages: list[ModelMessage], total_tokens: int) -> None:
+    """Save each ModelMessage as its own row; set total_tokens on the final row only.
 
     Pre-processing:
     - Orphaned tool calls/returns (unmatched ToolCallPart or ToolReturnPart) are replaced with an error ModelResponse.
@@ -223,7 +223,7 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage], input_
             agent_id=deps.agent_id,
             type=msg_type,
             content=content,
-            input_tokens=input_tokens if i == last_idx else None,
+            total_tokens=total_tokens if i == last_idx else None,
             timestamp=curr_timestamp,
         )
         deps.session.add(record)
@@ -243,7 +243,7 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage], input_
             agent_id=deps.agent_id,
             type="ModelResponse",
             content=warning_content,
-            input_tokens=None,
+            total_tokens=None,
             timestamp=warn_ts,
         ))
 

@@ -24,7 +24,7 @@ PARTIAL_MEMORY_BLOCK_FIELDS = {
 PARTIAL_MESSAGE_FIELDS = {
     "type": "ModelRequest",
     "content": "{}",
-    "input_tokens": None,
+    "total_tokens": None,
 }
 
 
@@ -197,21 +197,21 @@ async def test_memory_block_unique_constraints_per_agent(session: AsyncSession, 
 # --- MessageRecord ---
 
 async def test_message_record_stores_all_fields(session: AsyncSession, message_record: MessageRecord):
-    message_record.input_tokens = 150  # use a non-null value to verify integer persistence
+    message_record.total_tokens = 150  # use a non-null value to verify integer persistence
     fields = {
         "agent_id": message_record.agent_id,
         "type": message_record.type,
         "content": message_record.content,
-        "input_tokens": message_record.input_tokens,
+        "total_tokens": message_record.total_tokens,
         "timestamp": message_record.timestamp,
     }
     await assert_round_trips(session, message_record, fields)
 
 
-async def test_message_input_tokens_nullable(session: AsyncSession, message_record: MessageRecord):
-    """input_tokens may be NULL — only set on the final response row that closes a run."""
-    message_record.input_tokens = None
-    await assert_round_trips(session, message_record, {"input_tokens": None})
+async def test_message_total_tokens_nullable(session: AsyncSession, message_record: MessageRecord):
+    """total_tokens may be NULL — only set on the final response row that closes a run."""
+    message_record.total_tokens = None
+    await assert_round_trips(session, message_record, {"total_tokens": None})
 
 
 async def test_message_content_stores_nested_json(session: AsyncSession, message_record: MessageRecord):
