@@ -77,5 +77,5 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
         return
 
     deps.context_window_start = messages[-n_msg_to_keep].timestamp
-    await deps.session.flush()
     await compile_system_prompt(deps)
+    await deps.commit_changes_refresh_agent_record()

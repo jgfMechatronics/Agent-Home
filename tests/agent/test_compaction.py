@@ -163,14 +163,14 @@ class TestCompactCommon(CompactTestBase):
         assert self.agent.context_window_start is None  # Initially null
         
         await compact(self.deps, total_tokens=self.total_tokens)
-        
+
         await session.refresh(self.agent)
         assert self.agent.context_window_start is not None
 
     async def test_does_not_delete_messages(self, session: AsyncSession):
         """compact does NOT delete any messages — pointer only."""
         await compact(self.deps, total_tokens=self.total_tokens)
-        
+
         # Verify all messages still exist in DB via count query
         result = await session.execute(
             select(func.count()).select_from(MessageRecord).where(
@@ -201,10 +201,8 @@ class TestCompactEdgeCases(CompactTestBase):
         await compact(self.deps, total_tokens=self.total_tokens)
         
         await session.refresh(self.agent)
-        
-        # The 4 most recent messages should still be in context
-        fourth_from_last = self.messages[-4]
-        assert self.agent.context_window_start <= fourth_from_last.timestamp
+        await session.refresh(self.messages[-4])
+        assert self.agent.context_window_start <= self.messages[-4].timestamp
 
     async def test_no_op_with_four_or_fewer_messages(self, session: AsyncSession):
         """compact is a no-op when agent has 4 or fewer messages in context."""
@@ -231,6 +229,8 @@ class TestCompactEdgeCases(CompactTestBase):
         await compact(self.deps, total_tokens=self.total_tokens)
         
         await session.refresh(self.agent)
+        for m in self.messages:
+            await session.refresh(m)
         
         # Count messages still in context (timestamp >= context_window_start)
         in_context = [m for m in self.messages if m.timestamp >= self.agent.context_window_start]
@@ -306,4 +306,5 @@ class TestCompactToolPairAtomicity:
         await compact(data["deps"], total_tokens=1250)
 
         await session.refresh(data["agent"])
+        await session.refresh(data["records"][5])
         assert data["agent"].context_window_start == data["records"][5].timestamp
