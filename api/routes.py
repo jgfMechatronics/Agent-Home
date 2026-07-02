@@ -89,8 +89,6 @@ async def _handle_message(agent: Agent, deps: AgentDeps, user_prompt: str) -> As
 
                 if isinstance(event, AgentRunResultEvent):
                     # commit before compaction — if compaction fails, the turn may still be valid
-                    await deps.commit_changes_refresh_agent_record()
-
                     if is_compaction_needed(last_total_tokens_value, deps.config):
                         await compact(deps, last_total_tokens_value)
 

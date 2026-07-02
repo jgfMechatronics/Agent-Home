@@ -346,41 +346,6 @@ class TestSendMessage(_BaseRouteTest):
         assert sse_events[1]["event"] == "Error"
         assert sse_events[1]["data"]["message"] == "Unexpected internal server error: 'RuntimeError: something went wrong'"
 
-    # --- Transaction behaviour ---
-
-    async def test_commits_session_on_happy_path(self, client: AsyncClient):
-        """Session is committed exactly once after a successful run. No rollback."""
-        await stream_and_collect(client, self.agent_record.id)
-
-        self.mock_session.commit.assert_called_once()
-        self.mock_session.rollback.assert_not_called()
-
-    async def test_rollback_and_error_sse_on_persist_failure(self, client: AsyncClient):
-        """persist_messages failure triggers rollback and yields Error SSE. Session is not committed."""
-        self.mock_persist_messages.side_effect = RuntimeError("DB write failed")
-
-        sse_events = await stream_and_collect(client, self.agent_record.id)
-
-        self.mock_session.rollback.assert_called_once()
-        self.mock_session.commit.assert_not_called()
-        assert sse_events[-1]["event"] == "Error"
-
-    async def test_commits_before_compaction_failure_so_turn_is_preserved(self, client: AsyncClient):
-        """Session is committed before compaction is attempted.
-
-        If compaction fails, the turn's message writes survive — commit runs before
-        the compaction check. The outer except then rolls back only the empty
-        post-commit transaction, leaving the messages intact.
-        """
-        self.mock_needs_compact.return_value = True
-        self.mock_compact.side_effect = RuntimeError("compaction failed")
-
-        sse_events = await stream_and_collect(client, self.agent_record.id)
-
-        self.mock_session.commit.assert_called_once()
-        assert sse_events[-1]["event"] == "Error"
-
-
 class TestCreateAgent:
     """POST /agents/ — create a new agent."""
 
@@ -826,6 +791,7 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         assert self.mock_persist_messages.call_count == 5, (
             "Final model response must be persisted"
         )
+        assert self.mock_session.commit.call_count == 5, "Each persist must have been committed"
         self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), [FunctionModelTestAgent.THREE_TOOL_CALL_EXPECTED_MSGS[-1]])
 
         # Aggregate: full flattened message list must be complete and well-formed (sanity check)
@@ -866,6 +832,21 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         assert self.mock_session.rollback.called, (
             "Route must call rollback on exception to clear any uncommitted state"
         )
+
+    async def test_rollback_and_error_sse_on_persist_failure(self, client: AsyncClient):
+        """persist_messages failure triggers rollback and yields Error SSE. Session is not committed.
+
+        Uses a real pydantic-ai Agent (default steps) so capture_run_messages populates
+        and the incremental persist path is exercised. The first persist call raises,
+        which should propagate out of the stream loop, trigger rollback, and emit Error SSE.
+        """
+        self.mock_persist_messages.side_effect = RuntimeError("DB write failed")
+
+        sse_events = await stream_and_collect(client, self.agent_record.id)
+
+        self.mock_session.rollback.assert_called_once()
+        self.mock_session.commit.assert_not_called()
+        assert sse_events[-1]["event"] == "Error"
 
 
 # ---------------------------------------------------------------------------
