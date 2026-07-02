@@ -51,6 +51,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThink
 
 # Local
 from agent.factory import AgentNotFoundError
+from agent.types import AgentAppState
 from api.fastapi_deps import get_agent_and_deps, get_deps_dep, get_session_dep
 from agent.crud import create_agent_record
 from conftest import make_deps
@@ -244,9 +245,12 @@ class TestSendMessage(_BaseRouteTest):
         TODO: Test gap, we don't actually test that the pyddantic AI agent is contructed for the loop with the expected inputs
         IE we could not pass the right deps, pass the wrong message history, etc. Pretty sure we also don't check that the right
         method is called on the agent. We already have a mock agent so we can just use that.
+        TODO: This is a cleanup for when we refactor this test suite, its disjointed with how we mock the agent in persistence
+        and cancellation tests. Can we just use the FunctionModelTestAgent for everything?
         """
         self.agent_record = agent_record
         self.mock_session = _make_mock_session()
+        app.state.agent_app_states[agent_record.id] = AgentAppState()
 
         def _configure(events=None, raise_exc=None, raises_mid_stream=None):
             async def _mock_dep():
@@ -264,6 +268,7 @@ class TestSendMessage(_BaseRouteTest):
         yield
 
         app.dependency_overrides.pop(get_agent_and_deps)
+        del app.state.agent_app_states[agent_record.id]
 
     @pytest.mark.parametrize("events_factory,expected_types", [
         pytest.param(TEXT_STREAM, ["PartStartEvent", "PartDeltaEvent", "AgentRunResultEvent"], id="text-stream"),
@@ -488,10 +493,11 @@ class FunctionModelTestAgent:
         ModelResponse(parts=[DUMMY_TOOL_CALL_PART]),
         ModelRequest(parts=[DUMMY_TOOL_RETURN_PART]),
     ]
-    # What should be persisted for CRASH_STEPS: first tool pair only
-    # There's a funny pydantic AI timing thing where the crash occurs before the tool call result event for the prev
-    # model step is yielded. And our persistence is driven by events yeilded from pydantic's async generator.
-    CRASH_EXPECTED_PARTIAL_MODELMSGS: list[ModelMessage] = EXPECTED_TOOL_PAIR
+    # What should be persisted for CRASH_STEPS: both tool pairs.
+    # FunctionToolResultEvent fires after each tool completes, before the next step starts.
+    # Our route persists the tool pair atomically on FunctionToolResultEvent, so both pairs
+    # are committed before the crash hits on step 3.
+    CRASH_EXPECTED_PARTIAL_MODELMSGS: list[ModelMessage] = EXPECTED_TOOL_PAIR * 2
     # THREE_TOOL_CALL_STEPS: 3 tool call/return pairs followed by a final text response
     THREE_TOOL_CALL_EXPECTED_MSGS: list[ModelMessage] = EXPECTED_TOOL_PAIR * 3 + [
         ModelResponse(parts=[TextPart(content=COMPLETION_TEXT)]),
@@ -528,18 +534,29 @@ class FunctionModelTestAgent:
     def override_agent_and_deps_factory(self, app: FastAPI, agent_record):
         """
         Install this agent in app's dep overrides; restore previous override on exit.
-        yields the mock_session used to construct the agent and deps
+        Yields the mock_session used to construct the agent and deps.
+
+        Also creates an AgentAppState and injects it into app.state.agent_app_states,
+        and acquires the lock for the dep lifetime — mirroring what AgentFactory does.
+
+        If we need to emulate more of the actual thing we're overriding than this,
+        we should just make the override use a real factory with a FunctionModelAgent model or something.
         """
         mock_session = _make_mock_session()
+        agent_app_state = AgentAppState()
+        app.state.agent_app_states[agent_record.id] = agent_app_state
 
         async def _make_agent_and_deps():
-            yield self._agent, make_deps(mock_session, agent_record)
+            async with agent_app_state.lock:
+                yield self._agent, make_deps(mock_session, agent_record)
+                agent_app_state.cancel_requested.clear()
 
         app.dependency_overrides[get_agent_and_deps] = _make_agent_and_deps
         try:
             yield mock_session
         finally:
             app.dependency_overrides.pop(get_agent_and_deps)
+            del app.state.agent_app_states[agent_record.id]
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -931,16 +948,13 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 
     async def test_cancel_during_text_streaming(self, client: AsyncClient):
         """
-        ASPIRATIONAL: cancel received while the model is mid-text-streaming (after a completed
-        thinking step, before tool call) should preserve any fully-assembled model messages
-        that preceded the cancel.
+        Cancel received while the model is mid-text-streaming (after a completed thinking step,
+        before the tool call chunk arrives).
 
-        Aspirational behavior: ThinkingPart (which completed before cancel) is persisted even
-        though TextPart + ToolCallPart were not yet complete.
-
-        If this test fails: pydantic-ai assembles all parts of a model step into one ModelResponse
-        only at step-end — so mid-step cancel means nothing from that step persists. In that case,
-        update expected_msg_list to [user_msg, cancel_notice] and document the limitation.
+        pydantic-ai assembles all parts of a model step into a single ModelResponse only at
+        step-end (i.e. when all chunks for that step have been yielded). Mid-step cancel means
+        nothing from that in-progress step is in captured messages yet — only the user request
+        and the cancel notice are persisted.
         """
         self.function_agent.block_in_stream = True
         stream_task = asyncio.create_task(
@@ -963,17 +977,10 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
-        # Aspirational: THINKING_STEP and PRE_TOOL_TEXT were both yielded before cancel was
-        # serviced, so both should be preserved in a partial ModelResponse.
-        # If this fails: pydantic-ai only assembles a ModelResponse at step-end (when ToolCallPart
-        # arrives) — mid-step cancel means nothing from that step persists.
-        # In that case update to [user_msg, cancel_notice] and document the limitation.
+        # pydantic-ai assembles all parts of a step into one ModelResponse only at step-end.
+        # Cancel fired mid-step means nothing from that in-progress step is in captured messages.
         expected_msg_list = [
             ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
-            ModelResponse(parts=[
-                ThinkingPart(content=FunctionModelTestAgent.THINKING_TEXT),
-                TextPart(content=FunctionModelTestAgent.PRE_TOOL_TEXT),
-            ]),
             self.CANCEL_NOTICE,
         ]
         self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
