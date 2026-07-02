@@ -33,7 +33,7 @@ class AgentConfig(BaseModel):
     Agent configuration stored as JSON in AgentRecord.agent_config.
     
     Required fields:
-    - model_name: The LLM model to use (e.g., "claude-haiku-4-5")
+    - model_name: The LLM to use (e.g., "claude-haiku-4-5")
     - tool_names: List of tool names the agent can use
     - soft_compaction_limit: Token threshold for triggering compaction
     
