@@ -41,7 +41,7 @@ NONEXISTENT_AGENT_ID = "nonexistent-agent-id-12345"
 def create_spied_lock(agent_id: str, agent_app_states: dict, mocker: MockerFixture) -> asyncio.Lock:
     """Create a lock, register it in an AgentAppState slot, and spy on acquire/release."""
     lock = asyncio.Lock()
-    agent_app_states[agent_id] = AgentAppState(lock, asyncio.Event())
+    agent_app_states[agent_id] = AgentAppState(lock=lock)
     mocker.spy(lock, "acquire")
     mocker.spy(lock, "release")
     return lock

@@ -63,7 +63,7 @@ class AgentFactory:
         """Get or create an AgentAppState entry for the given agent_id."""
         # TODO: Memory leak on garbage agent_IDs or if there are a TON of registered agents being invoked
         if agent_id not in agent_app_states:
-            agent_app_states[agent_id] = AgentAppState(asyncio.Lock(), asyncio.Event())
+            agent_app_states[agent_id] = AgentAppState()
         return agent_app_states[agent_id]
 
     @asynccontextmanager
