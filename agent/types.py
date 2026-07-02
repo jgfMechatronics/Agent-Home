@@ -24,8 +24,8 @@ class AgentAppState:
     serializes concurrent requests, and the cancel_requested signals an in-flight
     run to stop.
     """
-    lock: asyncio.Lock
-    cancel_requested: asyncio.Event
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    cancel_requested: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class AgentConfig(BaseModel):
@@ -42,7 +42,7 @@ class AgentConfig(BaseModel):
     - is_deletable: Whether agent can be deleted (default False)
     """
     model_config = ConfigDict(extra="forbid") # TODO: What is this?
-    
+
     model_name: str
     tool_names: list[str]
     soft_compaction_limit: int
