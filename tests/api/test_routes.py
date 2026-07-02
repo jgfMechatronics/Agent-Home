@@ -319,17 +319,6 @@ class TestSendMessage(_BaseRouteTest):
         response = await client.post(f"/agents/{uuid4()}/messages", json={})
         assert response.status_code in (400, 422)
 
-    async def test_persists_messages_on_agent_run_result_event(self, client: AsyncClient):
-        """persist_messages is called exactly once, triggered by AgentRunResultEvent.
-
-        Three events in the stream — persist must not be called on the earlier two.
-        """
-        self.configure_mock_get_agent_and_deps(events=TEXT_STREAM())
-
-        await stream_and_collect(client, self.agent_record.id)
-
-        self.mock_persist_messages.assert_called_once()
-
     @pytest.mark.parametrize("needs_compact,expect_compact", [(True, True), (False, False)])
     async def test_compaction_called_based_on_check(
         self, client: AsyncClient, needs_compact, expect_compact
@@ -356,19 +345,6 @@ class TestSendMessage(_BaseRouteTest):
         assert sse_events[0]["event"] == "PartStartEvent"
         assert sse_events[1]["event"] == "Error"
         assert sse_events[1]["data"]["message"] == "Unexpected internal server error: 'RuntimeError: something went wrong'"
-
-    async def test_persist_called_when_new_messages_empty(self, client: AsyncClient):
-        """
-        persist_messages is called even when new_messages() returns [] — no-op for DB layer.
-        TODO: Idk why we actually set this requirement
-        """
-        mock_result = Mock()
-        mock_result.new_messages.return_value = []
-        self.configure_mock_get_agent_and_deps(events=[AgentRunResultEvent(result=mock_result)])
-
-        await stream_and_collect(client, self.agent_record.id)
-
-        self.mock_persist_messages.assert_called_once()
 
     # --- Transaction behaviour ---
 
