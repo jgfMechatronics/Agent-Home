@@ -13,7 +13,7 @@ from typing import Any, AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import FunctionToolResultEvent, ModelRequest, ToolCallPart, ToolReturnPart, UserPromptPart
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record
@@ -63,7 +63,10 @@ async def get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
     return record
 
 
-async def _handle_message(agent: Agent, deps: AgentDeps, user_prompt: str) -> AsyncGenerator[ServerSentEvent, None]:
+async def _handle_message(agent: Agent,
+                          deps: AgentDeps,
+                          agent_app_state: AgentAppState,
+                          user_prompt: str) -> AsyncGenerator[ServerSentEvent, None]:
     records = await load_messages(deps.session, deps.agent_id, start_timestamp=deps.context_window_start)
     message_history = deserialize_messages(records)
 
@@ -77,15 +80,34 @@ async def _handle_message(agent: Agent, deps: AgentDeps, user_prompt: str) -> As
             async for event in stream:
                 yield map_to_sse(event)
 
-                if len(messages) > last_persisted_idx:
+                if isinstance(event, FunctionToolResultEvent) and isinstance(event.part, ToolReturnPart):
+                    # pydantic-ai adds the ToolReturn to the captured messages list only
+                    # when step N+1 starts, not when FunctionToolResultEvent is yielded. Persist the tool pair atomically
+                    # from the event data directly, so we don't lose it on cancel.
+                    tool_return_msg = ModelRequest(parts=[event.part])
+                    total_tokens = await persist_messages(
+                        deps=deps, messages=list(messages[last_persisted_idx:]) + [tool_return_msg]
+                    )
+                    await deps.commit_changes_refresh_agent_record()
+                    last_persisted_idx = len(messages) + 1  # +1 accounts for tool_return_msg not yet in messages
+                    if total_tokens is not None:
+                        last_total_tokens_value = total_tokens
+                elif len(messages) > last_persisted_idx:
                     # avoid persisting tool call before return comes in
                     if not isinstance(messages[-1].parts[-1], ToolCallPart):
                         total_tokens = await persist_messages(deps=deps, messages=messages[last_persisted_idx:])
                         await deps.commit_changes_refresh_agent_record()
                         last_persisted_idx = len(messages)
-                        
                         if total_tokens is not None:
                             last_total_tokens_value = total_tokens
+
+                if agent_app_state.cancel_requested.is_set():
+                    cancel_notice = ModelRequest(parts=[UserPromptPart(
+                        content="<system_message>Turn cancelled by user.</system_message>"
+                    )])
+                    await persist_messages(deps=deps, messages=[cancel_notice])
+                    await deps.commit_changes_refresh_agent_record()
+                    return
 
                 if isinstance(event, AgentRunResultEvent):
                     # commit before compaction — if compaction fails, the turn may still be valid
@@ -100,12 +122,18 @@ async def send_message(
     agent_id: str,
     body: MessageRequest,
     agent_and_deps: tuple[Agent, AgentDeps] = Depends(get_agent_and_deps),
+    agent_app_states: dict[str, AgentAppState] = Depends(get_agent_app_states),
 ) -> AsyncGenerator[ServerSentEvent, None]:
     """TODO: Agent run should still be able to complete and persist in the event that client disconnects"""
     # AgentNotFoundError / AgentLockedError are translated to HTTP 404/503 by get_agent_and_deps
-    agent, deps = agent_and_deps
+    agent, deps = agent_and_deps # This would be inside the try/except but cleanup assumes we have deps
+
     try:
-        async for event in _handle_message(agent, deps, body.message):
+        agent_app_state = agent_app_states[agent_id]
+        async for event in _handle_message(agent=agent,
+                                           deps=deps, 
+                                           agent_app_state=agent_app_state,
+                                           user_prompt=body.message):
             yield event
     except Exception as e:
         # TODO (low priority): put more thought into logging strategy (log levels, handler chain, structured logging)
