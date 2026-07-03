@@ -3,21 +3,30 @@
 Handles context window management by advancing the message history pointer
 when token limits are exceeded.
 """
+import logging
+
 from agent.types import AgentConfig, AgentDeps
+
+logger = logging.getLogger(__name__)
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import deserialize_messages, load_messages
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 
 
-def is_compaction_needed(input_tokens: int, config: AgentConfig) -> bool:
+def is_compaction_needed(total_tokens: int | None, config: AgentConfig) -> bool:
     """Check if compaction should be triggered based on token count.
-    
-    Returns True when input_tokens exceeds the soft_compaction_limit.
+
+    Returns True when total_tokens exceeds the soft_compaction_limit.
+    Returns False and logs a warning when total_tokens is None, which indicates
+    no usage data was available for the turn (unexpected in normal operation).
     """
-    return input_tokens > config.soft_compaction_limit
+    if total_tokens is None:
+        logger.warning("is_compaction_needed called with total_tokens=None; skipping compaction")
+        return False
+    return total_tokens > config.soft_compaction_limit
 
 
-async def compact(deps: AgentDeps, input_tokens: int) -> None:
+async def compact(deps: AgentDeps, total_tokens: int) -> None:
     """Advance context_window_start to reduce context size.
     
     Estimates system prompt tokens from character count, calculates average
@@ -42,7 +51,7 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
     # TODO (low priority): we may eventually want a more sophisticated way to estiamte tokens, and some sort of 
     # check and loop on resulting in-context message token count to be more accurate if we find it necessary
     sys_tokens = len(deps.compiled_system_prompt or "") / 4
-    msg_tokens = input_tokens - sys_tokens
+    msg_tokens = total_tokens - sys_tokens
     avg_tokens_per_msg = msg_tokens / len(messages)
     if avg_tokens_per_msg <= 0:
         return  # System prompt dominates token budget — can't estimate, skip this turn
@@ -68,5 +77,5 @@ async def compact(deps: AgentDeps, input_tokens: int) -> None:
         return
 
     deps.context_window_start = messages[-n_msg_to_keep].timestamp
-    await deps.session.flush()
     await compile_system_prompt(deps)
+    await deps.commit_changes_refresh_agent_record()
