@@ -4,4 +4,4 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/.venv/bin/activate"
-exec agent-home-acp "$@"
+exec agent-home-acp "$@" 2>/tmp/acp-bridge.err

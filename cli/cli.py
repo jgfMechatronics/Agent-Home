@@ -415,8 +415,12 @@ async def cmd_history(state: CLIState, client: httpx.AsyncClient, args: list[str
             else:
                 output(state, f"\n--- Message History ({len(messages)} messages) ---\n")
                 for msg in messages:
-                    kind = msg.get("kind", "unknown")
-                    parts = msg.get("parts", [])
+                    try:
+                        parsed = json.loads(msg.get("content", "{}"))
+                    except (json.JSONDecodeError, TypeError):
+                        parsed = {}
+                    kind = parsed.get("kind", msg.get("kind", "unknown"))
+                    parts = parsed.get("parts", [])
                     role = "User" if kind == "request" else "Assistant"
                     output(state, f"**{role}:**")
 

@@ -349,6 +349,8 @@ async def cancel_agent_run(
     Redundant cancels (event already set) succeed and return 200.
     """
     slot = agent_app_states.get(agent_id)
+    logger.info("cancel_agent_run: agent_id=%r known_ids=%r slot=%r locked=%r",
+                agent_id, list(agent_app_states.keys()), slot, slot.lock.locked() if slot else None)
     if slot is None or not slot.lock.locked():
         raise HTTPException(status_code=409, detail=f"Agent {agent_id!r} has no active run")
     slot.cancel_requested.set() # If there was a previous unserviced cancellation request, no harm in setting again

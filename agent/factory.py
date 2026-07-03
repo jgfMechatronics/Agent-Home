@@ -94,6 +94,7 @@ class AgentFactory:
             # run so this ambiguity goes away.
             self._agent_app_state.cancel_requested.clear()
             self._agent_app_state.lock.release()
+            import logging; logging.getLogger(__name__).info("build_deps finally: lock released for agent_id=%r", self._agent_id)
 
 
     @asynccontextmanager
