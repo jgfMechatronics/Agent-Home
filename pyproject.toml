@@ -24,12 +24,16 @@ test = [
     "pytest-mock",
 ]
 
-[tool.pytest.ini_options]
+[tool.pytest]
+markers = ["note: important info/caveats about tests"]
 asyncio_mode = "auto"
 pythonpath = [".", "tests"]
 
 [tool.pyright]
 extraPaths = ["."]
 
+[project.scripts]
+agent-home-acp = "acp.__main__:cli"
+
 [tool.hatch.build.targets.wheel]
-packages = ["api", "agent", "memory", "messages", "db"]
+packages = ["api", "agent", "memory", "messages", "db", "acp"]

@@ -374,6 +374,21 @@ class TestLoadMessages(DBTestBase):
         # Should include the cutoff record and everything after (inclusive)
         assert deserialize_messages(records) == [early[1]] + late
 
+    async def test_start_timestamp_filters_exclusive(self):
+        """start_exclusive=True excludes the cutoff record itself."""
+        early = [make_request("early"), make_response("early reply")]
+        await persist_messages(self.deps, early)
+
+        cutoff_record = (await fetch_all_records(self.session, self.agent.id))[-1]
+        cutoff = cutoff_record.timestamp
+        await asyncio.sleep(0.1)  # ensure timestamp unique from early
+        late = [make_request("late"), make_response("late reply")]
+        await persist_messages(self.deps, late)
+
+        records = await load_messages(self.session, self.agent.id, start_timestamp=cutoff, start_exclusive=True)
+        # Cutoff record excluded — only late messages returned
+        assert deserialize_messages(records) == late
+
     async def test_results_in_chronological_order(self):
         msg1 = make_request("first")
         await asyncio.sleep(0.005) # Ensure distinct timestamps
