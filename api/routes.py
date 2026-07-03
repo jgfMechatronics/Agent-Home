@@ -224,7 +224,7 @@ async def cancel_agent_run(
     """Cancel an active agent run.
 
     Sets the cancel_requested for the given agent if a run is currently active.
-    Returns 200 if the cancel signal was sent, 409 if no run is active.
+    Returns 202 if the cancel signal was sent, 409 if no run is active.
 
     Redundant cancels (event already set) succeed and return 200.
     """
