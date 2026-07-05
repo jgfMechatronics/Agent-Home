@@ -74,7 +74,12 @@ async def _handle_message(agent: Agent,
         async with agent.run_stream_events(user_prompt=user_prompt,
                                             message_history=message_history,
                                             deps=deps) as stream:
-            last_persisted_idx = len(message_history) # track what we have persisted from messages
+            last_persisted_idx = len(message_history)  # track what we have persisted from messages
+            # When history ends with ModelRequest, pydantic-ai merges the new user prompt into it.
+            # This shifts captured message indices by 1 — adjust cursor to avoid skipping content.
+            # TODO: Proper fix: migrate to agent.iter() which handles this cleanly
+            if message_history and isinstance(message_history[-1], ModelRequest):
+                last_persisted_idx -= 1
             last_total_tokens_value = None
 
             async for event in stream:

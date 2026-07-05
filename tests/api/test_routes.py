@@ -526,6 +526,14 @@ class FunctionModelTestAgent:
         self._stream_steps = steps
         self._stream_step_index = 0
 
+    def reset_for_new_run(self) -> None:
+        """Reset state for a subsequent run. Call between multi-run tests."""
+        self._stream_step_index = 0
+        self.tool_entered.clear()
+        self.resume_tool_exec.clear()
+        self.chunk_emitted.clear()
+        self.resume_stream.clear()
+
     @property
     def agent(self) -> Agent:
         return self._agent
@@ -896,17 +904,11 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         response = await client.post(f"/agents/{self.agent_record.id}/cancel")
         assert response.status_code == 409
 
-    async def test_cancel_during_tool_exec(self, client: AsyncClient):
+    async def _do_cancel_during_tool_exec(self, client: AsyncClient) -> None:
+        """Execute cancel-during-tool scenario with full assertions.
+        
+        Reusable helper for tests that need this scenario as a building block.
         """
-        CONTRACT: graceful cancel lets the in-flight tool complete, persists the
-        tool call+return pair and a cancellation notice, then commits — without rolling back.
-
-        Covers requirements:
-            — active tool is allowed to complete before cancel takes effect
-            — cancellation notice wrapped in <system_message> tags is persisted
-            — cancel is delivered via POST /agents/{id}/cancel
-        """
-
         self.function_agent.block_in_tool = True
 
         # Start the SSE stream as a background task so we can interleave cancel.
@@ -924,7 +926,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 
         # Resume to allow cancellation to be serviced
         self.function_agent.resume_tool_exec.set()
-        events = await asyncio.wait_for(stream_task, timeout=5.0)
+        await asyncio.wait_for(stream_task, timeout=5.0)
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
         
@@ -944,6 +946,40 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         assert not self.mock_session.rollback.called, (
             "Must not rollback completed work on graceful cancel"
         )
+
+    async def test_cancel_during_tool_exec(self, client: AsyncClient):
+        """
+        CONTRACT: graceful cancel lets the in-flight tool complete, persists the
+        tool call+return pair and a cancellation notice, then commits — without rolling back.
+
+        Covers requirements:
+            — active tool is allowed to complete before cancel takes effect
+            — cancellation notice wrapped in <system_message> tags is persisted
+            — cancel is delivered via POST /agents/{id}/cancel
+        """
+        await self._do_cancel_during_tool_exec(client)
+
+    async def test_subsequent_run_after_cancel(self, client: AsyncClient):
+        """
+        After a cancel, subsequent runs must work correctly.
+
+        Covers:
+            — cancel_requested state is cleared after run completes
+            — persistence cursor adjustment accounts for pydantic-ai merging the
+              trailing ModelRequest (cancel notice) with the next user prompt
+        """
+        # Phase 1: Cancel run
+        await self._do_cancel_during_tool_exec(client)
+        post_cancel_history = self._list_persisted_messages(self.mock_persist_messages)
+
+        # Reset state for phase 2
+        self.mock_persist_messages.reset_mock()
+        self.mock_session.reset_mock()
+        self.function_agent.reset_for_new_run()
+        self.mock_deserialize_msgs.return_value = post_cancel_history
+
+        # Phase 2: Another run with post-cancel history — should pass same assertions
+        await self._do_cancel_during_tool_exec(client)
 
 
     async def test_cancel_during_text_streaming(self, client: AsyncClient):
