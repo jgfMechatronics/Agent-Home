@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.messages import FunctionToolResultEvent, ModelMessage, ModelRequest, ToolCallPart, ToolReturnPart, UserPromptPart
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record
@@ -33,6 +34,7 @@ from api.schemas import (
 )
 from memory.block_crud import DuplicateBlockError, create_block, get_blocks
 from memory.system_prompt_compilation import compile_system_prompt
+from db.models import MessageRecord
 from messages.messages import deserialize_messages, load_messages, persist_messages
 from agent.compaction import compact, is_compaction_needed
 
@@ -385,3 +387,16 @@ async def get_messages(
         MessageItem(id=m.id, type=m.type, content=m.content, timestamp=m.timestamp)
         for m in messages
     ])
+
+
+# ⚠️ THIS ROUTE IS EXPERIMENTAL TOOLING — ONLY INTENDED FOR THE Prototype/MinimaxM3ViaAnthropic BRANCH.
+# DO NOT MERGE TO MAIN.
+@router.delete("/{agent_id}/messages", status_code=204)
+async def clear_message_history(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session_dep),
+) -> None:
+    """Delete all conversation history for an agent. Experimental reset convenience for attractor testing."""
+    await get_agent_record_or_404(session, agent_id)
+    await session.execute(delete(MessageRecord).where(MessageRecord.agent_id == agent_id))
+    await session.commit()

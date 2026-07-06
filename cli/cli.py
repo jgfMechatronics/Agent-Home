@@ -33,7 +33,10 @@ import httpx
 # --- Configuration ---
 
 DEFAULT_SERVER_URL = "http://localhost:8000"
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+_MINIMAX_BASE_URL = "minimax"
+_using_minimax = _MINIMAX_BASE_URL in os.environ.get("ANTHROPIC_BASE_URL", "").lower()
+DEFAULT_MODEL = "MiniMax-M3" if _using_minimax else "claude-haiku-4-5-20251001"
+DEFAULT_THINKING_ENABLED = "false" if _using_minimax else "true"
 DEFAULT_SOFT_COMPACTION_LIMIT = 80000
 DEFAULT_MEMORY_TOOLS = ["memory_replace", "memory_insert"]
 
@@ -170,7 +173,7 @@ def run_config_wizard(state: CLIState) -> dict:
     is_deletable_str = prompt_with_default(state, "Is deletable (true/false)", "false")
     is_deletable = is_deletable_str.lower() in ("true", "yes", "1")
     
-    thinking_str = prompt_with_default(state, "Enable thinking (true/false)", "true")
+    thinking_str = prompt_with_default(state, "Enable thinking (true/false)", DEFAULT_THINKING_ENABLED)
     thinking_enabled = thinking_str.lower() in ("true", "yes", "1")
 
     default_tools = ", ".join(DEFAULT_MEMORY_TOOLS)
@@ -684,6 +687,13 @@ async def main() -> None:
         output(state, "Type '/help' for commands, '/quit' to exit.\n")
     
     async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(f"{state.server_url}/health")
+            response.raise_for_status()
+        except Exception as e:
+            output(state, f"Health check failed — is the server running at {state.server_url}?\n  {e}")
+            sys.exit(1)
+
         while True:
             try:
                 if state.headless:

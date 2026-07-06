@@ -110,14 +110,17 @@ class AgentFactory:
         async with self.build_deps() as deps:
             model = get_model(deps.config.model_name)
             
+            # MiniMax uses "adaptive" thinking; Anthropic uses "enabled" + budget_tokens
+            thinking_params = (
+                {"anthropic_thinking": {"type": "adaptive"}, "max_tokens": 16000}
+                if _is_minimax_model(deps.config.model_name)
+                else {"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000}, "max_tokens": 16000}
+            )
             model_settings = AnthropicModelSettings(
                 anthropic_cache_instructions=True,
                 anthropic_cache_tool_definitions=True,
                 anthropic_cache_messages=True,
-                # Anthropic requires max_tokens > budget_tokens when thinking is enabled
-                **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
-                    "max_tokens": 16000}
-                   if deps.config.thinking_enabled else {}),
+                **(thinking_params if deps.config.thinking_enabled else {}),
             )
             agent = Agent(model,
                           instructions=get_system_prompt,
@@ -134,15 +137,23 @@ class AgentFactory:
 # AnthropicModelName is defined as str | Literal['claude-...', ...]. The str union arm is an
 # escape hatch for forward compatibility — we want only the known Literal values for validation.
 _literal_type = next(arg for arg in get_args(AnthropicModelName) if get_origin(arg) is Literal)
-_VALID_MODEL_NAMES: frozenset[str] = frozenset(get_args(_literal_type))
+_VALID_ANTHROPIC_MODEL_NAMES: frozenset[str] = frozenset(get_args(_literal_type))
+
+
+def _is_minimax_model(model_name: str) -> bool:
+    return model_name.startswith("MiniMax-")
 
 
 def get_model(model_name: str) -> AnthropicModel:
     """Map a model name string to a Pydantic AI model instance.
-    
-    Raises ValueError for unknown or unsupported model names.
+
+    MiniMax models (MiniMax-*) are passed through directly — they reach us via
+    ANTHROPIC_BASE_URL redirect and the Anthropic SDK doesn't validate the model name.
+
+    Raises ValueError for unknown non-MiniMax model names.
     """
-    #TODO: JF Review
-    if model_name not in _VALID_MODEL_NAMES:
-        raise ValueError(f"Unsupported model name: {model_name!r}. Must be one of: {sorted(_VALID_MODEL_NAMES)}")
+    if _is_minimax_model(model_name):
+        return AnthropicModel(model_name)
+    if model_name not in _VALID_ANTHROPIC_MODEL_NAMES:
+        raise ValueError(f"Unsupported model name: {model_name!r}. Must be one of: {sorted(_VALID_ANTHROPIC_MODEL_NAMES)}")
     return AnthropicModel(model_name)
