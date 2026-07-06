@@ -74,12 +74,13 @@ async def _handle_message(agent: Agent,
         async with agent.run_stream_events(user_prompt=user_prompt,
                                             message_history=message_history,
                                             deps=deps) as stream:
-            last_persisted_idx = len(message_history)  # track what we have persisted from messages
+            new_message_idx = len(message_history)  # track what we have persisted already from messages
+
             # When history ends with ModelRequest, pydantic-ai merges the new user prompt into it.
             # This shifts captured message indices by 1 — adjust cursor to avoid skipping content.
             # TODO: Proper fix: migrate to agent.iter() which handles this cleanly
-            if message_history and isinstance(message_history[-1], ModelRequest):
-                last_persisted_idx -= 1
+            # if message_history and isinstance(message_history[-1], ModelRequest):
+            #     new_message_idx -= 1
             last_total_tokens_value = None
 
             async for event in stream:
@@ -97,14 +98,14 @@ async def _handle_message(agent: Agent,
                     # from the event data directly, so we don't lose it on cancel
                     # The last two gating conditions are a sanity check: Ensure the tool return is NOT available but the tool call IS
                     tool_return_msg = ModelRequest(parts=[event.part])
-                    messages_to_persist = messages[last_persisted_idx:] + [tool_return_msg]
-                elif (len(messages) > last_persisted_idx) and not isinstance(last_part_of_last_msg, ToolCallPart):
-                    messages_to_persist = messages[last_persisted_idx:]
+                    messages_to_persist = messages[new_message_idx:] + [tool_return_msg]
+                elif (len(messages) > new_message_idx) and not isinstance(last_part_of_last_msg, ToolCallPart):
+                    messages_to_persist = messages[new_message_idx:]
 
                 if messages_to_persist:
                     total_tokens = await persist_messages(deps=deps, messages=messages_to_persist)
                     await deps.commit_changes_refresh_agent_record()
-                    last_persisted_idx += len(messages_to_persist)
+                    new_message_idx += len(messages_to_persist)
                     if total_tokens is not None:
                         last_total_tokens_value = total_tokens
 

@@ -904,7 +904,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         response = await client.post(f"/agents/{self.agent_record.id}/cancel")
         assert response.status_code == 409
 
-    async def _do_cancel_during_tool_exec(self, client: AsyncClient) -> None:
+    async def _test_cancel_during_tool_exec(self, client: AsyncClient) -> None:
         """Execute cancel-during-tool scenario with full assertions.
         
         Reusable helper for tests that need this scenario as a building block.
@@ -957,7 +957,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
             — cancellation notice wrapped in <system_message> tags is persisted
             — cancel is delivered via POST /agents/{id}/cancel
         """
-        await self._do_cancel_during_tool_exec(client)
+        await self._test_cancel_during_tool_exec(client)
 
     async def test_subsequent_run_after_cancel(self, client: AsyncClient):
         """
@@ -969,17 +969,17 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
               trailing ModelRequest (cancel notice) with the next user prompt
         """
         # Phase 1: Cancel run
-        await self._do_cancel_during_tool_exec(client)
+        await self._test_cancel_during_tool_exec(client)
         post_cancel_history = self._list_persisted_messages(self.mock_persist_messages)
 
-        # Reset state for phase 2
+        # Reset state for phase 2, set deserialize to return history from previous run
         self.mock_persist_messages.reset_mock()
         self.mock_session.reset_mock()
         self.function_agent.reset_for_new_run()
         self.mock_deserialize_msgs.return_value = post_cancel_history
 
         # Phase 2: Another run with post-cancel history — should pass same assertions
-        await self._do_cancel_during_tool_exec(client)
+        await self._test_cancel_during_tool_exec(client)
 
 
     async def test_cancel_during_text_streaming(self, client: AsyncClient):
