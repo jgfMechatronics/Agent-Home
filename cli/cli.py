@@ -36,7 +36,7 @@ DEFAULT_SERVER_URL = "http://localhost:8000"
 _MINIMAX_BASE_URL = "minimax"
 _using_minimax = _MINIMAX_BASE_URL in os.environ.get("ANTHROPIC_BASE_URL", "").lower()
 DEFAULT_MODEL = "MiniMax-M3" if _using_minimax else "claude-haiku-4-5-20251001"
-DEFAULT_THINKING_ENABLED = "false" if _using_minimax else "true"
+DEFAULT_THINKING_ENABLED = "true"
 DEFAULT_SOFT_COMPACTION_LIMIT = 80000
 DEFAULT_MEMORY_TOOLS = ["memory_replace", "memory_insert"]
 

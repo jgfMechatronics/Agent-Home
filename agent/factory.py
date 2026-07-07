@@ -110,9 +110,9 @@ class AgentFactory:
         async with self.build_deps() as deps:
             model = get_model(deps.config.model_name)
             
-            # MiniMax uses "adaptive" thinking; Anthropic uses "enabled" + budget_tokens
+            # MiniMax uses "adaptive" or "high" thinking; Anthropic uses "enabled" + budget_tokens
             thinking_params = (
-                {"anthropic_thinking": {"type": "adaptive"}, "max_tokens": 16000}
+                {"anthropic_thinking": {"type": "high"}, "max_tokens": 24000}
                 if _is_minimax_model(deps.config.model_name)
                 else {"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000}, "max_tokens": 16000}
             )
