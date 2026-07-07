@@ -38,10 +38,10 @@ NONEXISTENT_AGENT_ID = "nonexistent-agent-id-12345"
 
 # --- Helpers ---
 
-def create_spied_lock(agent_id: str, agent_app_states: dict, mocker: MockerFixture) -> asyncio.Lock:
+def create_spied_lock(agent_id: str, agent_app_state_reg: dict, mocker: MockerFixture) -> asyncio.Lock:
     """Create a lock, register it in an AgentAppState slot, and spy on acquire/release."""
     lock = asyncio.Lock()
-    agent_app_states[agent_id] = AgentAppState(lock=lock)
+    agent_app_state_reg[agent_id] = AgentAppState(lock=lock)
     mocker.spy(lock, "acquire")
     mocker.spy(lock, "release")
     return lock
@@ -56,7 +56,7 @@ def assert_lock_acquired_and_released(lock: asyncio.Lock) -> None:
 # --- Fixtures ---
 
 @pytest.fixture
-def agent_app_states() -> dict[str, AgentAppState]:
+def agent_app_state_reg() -> dict[str, AgentAppState]:
     """
     Fresh agent state registry for each test.
     A fixture that returns an empty dict is a bit ridiculous but it helps with documentation
@@ -68,9 +68,9 @@ def agent_app_states() -> dict[str, AgentAppState]:
 
 
 @pytest.fixture
-def agent_factory(agent_record: AgentRecord, agent_app_states: dict, session: AsyncSession) -> AgentFactory:
-    """Per-agent, per-request AgentFactory with agent_id, agent_app_states, and session bound."""
-    return AgentFactory(agent_record.id, agent_app_states, session)
+def agent_factory(agent_record: AgentRecord, agent_app_state_reg: dict, session: AsyncSession) -> AgentFactory:
+    """Per-agent, per-request AgentFactory with agent_id, agent_app_state_reg, and session bound."""
+    return AgentFactory(agent_record.id, agent_app_state_reg, session)
 
 
 # --- get_model tests (module-level function) ---
@@ -100,11 +100,11 @@ def test_get_model_raises_for_invalid_name(invalid_name: str):
 # --- AgentFactory._get_or_create_agent_app_state tests ---
 
 # NOTE: We're testing internals too much here. If we stick with the AgentFactory pattern, just test the construction and its side effects
-def test_get_or_create_agent_app_state_returns_same_agent_app_state_for_same_id(agent_app_states: dict):
+def test_get_or_create_agent_app_state_returns_same_agent_app_state_for_same_id(agent_app_state_reg: dict):
     """_get_or_create_agent_app_state should return the same AgentAppState for the same agent_id."""
     # testing static method so no need to use the fixture which gives an object
-    slot1 = AgentFactory._get_or_create_agent_app_state(agent_app_states, "agent-123")
-    slot2 = AgentFactory._get_or_create_agent_app_state(agent_app_states, "agent-123")
+    slot1 = AgentFactory._get_or_create_agent_app_state(agent_app_state_reg, "agent-123")
+    slot2 = AgentFactory._get_or_create_agent_app_state(agent_app_state_reg, "agent-123")
 
     assert slot1 is slot2
     assert isinstance(slot1, AgentAppState)
@@ -114,10 +114,10 @@ def test_get_or_create_agent_app_state_returns_same_agent_app_state_for_same_id(
     assert not slot1.cancel_requested.is_set()
 
 
-def test_get_or_create_agent_app_state_returns_different_agent_app_states_for_different_ids(agent_app_states: dict):
+def test_get_or_create_agent_app_state_returns_different_agent_app_state_reg_for_different_ids(agent_app_state_reg: dict):
     """_get_or_create_agent_app_state should return different AgentAppState instances for different agent_ids."""
-    slot_a = AgentFactory._get_or_create_agent_app_state(agent_app_states, "agent-aaa")
-    slot_b = AgentFactory._get_or_create_agent_app_state(agent_app_states, "agent-bbb")
+    slot_a = AgentFactory._get_or_create_agent_app_state(agent_app_state_reg, "agent-aaa")
+    slot_b = AgentFactory._get_or_create_agent_app_state(agent_app_state_reg, "agent-bbb")
 
     assert slot_a is not slot_b
     assert isinstance(slot_a, AgentAppState)
@@ -144,15 +144,15 @@ async def test_build_deps_yields_deps_with_expected_fields(
 async def test_build_deps_creates_acquires_and_releases_lock(
     agent_factory: AgentFactory,
     agent_record: AgentRecord,
-    agent_app_states: dict,
+    agent_app_state_reg: dict,
 ):
     """build_deps should acquire lock before yield, release after exit.
 
     agent_app_state for particular agent is created at AgentFactory construction, so the "creates" part of this test is really
     testing the AgentFactory constructor
     """
-    assert agent_record.id in agent_app_states
-    lock = agent_app_states[agent_record.id].lock
+    assert agent_record.id in agent_app_state_reg
+    lock = agent_app_state_reg[agent_record.id].lock
     assert not lock.locked()
 
     async with agent_factory.build_deps() as deps:
@@ -173,13 +173,13 @@ class TestBuildDepsLockAndCancelBehavior:
     def _setup(
         self,
         agent_record: AgentRecord,
-        agent_app_states: dict[str, AgentAppState],
+        agent_app_state_reg: dict[str, AgentAppState],
         session: AsyncSession,
         mocker: MockerFixture,
     ):
-        self.lock = create_spied_lock(agent_record.id, agent_app_states, mocker)
-        self.factory = AgentFactory(agent_record.id, agent_app_states, session)
-        self.cancel_requested = agent_app_states[agent_record.id].cancel_requested
+        self.lock = create_spied_lock(agent_record.id, agent_app_state_reg, mocker)
+        self.factory = AgentFactory(agent_record.id, agent_app_state_reg, session)
+        self.cancel_requested = agent_app_state_reg[agent_record.id].cancel_requested
 
     @pytest.mark.asyncio
     async def test_normal_exit_releases_lock_and_clears_cancel(self):
@@ -207,7 +207,7 @@ class TestBuildDepsLockAndCancelBehavior:
 
 @pytest.mark.asyncio
 async def test_build_deps_raises_releases_lock_and_clears_cancel_on_fetch_failure(
-    agent_app_states: dict,
+    agent_app_state_reg: dict,
     session: AsyncSession,
     mocker: MockerFixture,
 ):
@@ -218,10 +218,10 @@ async def test_build_deps_raises_releases_lock_and_clears_cancel_on_fetch_failur
     the lock was already acquired and must be released via try/finally.
     Uses NONEXISTENT_AGENT_ID (no agent_record fixture) — kept standalone for that reason.
     """
-    lock = create_spied_lock(NONEXISTENT_AGENT_ID, agent_app_states, mocker)
-    factory = AgentFactory(NONEXISTENT_AGENT_ID, agent_app_states, session)
+    lock = create_spied_lock(NONEXISTENT_AGENT_ID, agent_app_state_reg, mocker)
+    factory = AgentFactory(NONEXISTENT_AGENT_ID, agent_app_state_reg, session)
 
-    cancel_requested = agent_app_states[NONEXISTENT_AGENT_ID].cancel_requested
+    cancel_requested = agent_app_state_reg[NONEXISTENT_AGENT_ID].cancel_requested
     cancel_requested.set()
 
     with pytest.raises(AgentNotFoundError):
@@ -261,7 +261,7 @@ async def test_build_deps_concurrent_same_agent_blocks(
 
 @pytest.mark.asyncio
 async def test_build_deps_concurrent_different_agents_no_block(
-    agent_app_states: dict,
+    agent_app_state_reg: dict,
     session: AsyncSession,
 ):
     """
@@ -282,8 +282,8 @@ async def test_build_deps_concurrent_different_agents_no_block(
     session.add_all([agent_a, agent_b])
     await session.flush()
 
-    factory_a = AgentFactory(agent_a.id, agent_app_states, session)
-    factory_b = AgentFactory(agent_b.id, agent_app_states, session)
+    factory_a = AgentFactory(agent_a.id, agent_app_state_reg, session)
+    factory_b = AgentFactory(agent_b.id, agent_app_state_reg, session)
 
     execution_order = []
 
@@ -321,11 +321,11 @@ class TestBuildAgentAndDeps:
         self,
         agent_factory: AgentFactory,
         agent_record: AgentRecord,
-        agent_app_states: dict,
+        agent_app_state_reg: dict,
     ):
         self.factory = agent_factory
         self.agent_record = agent_record
-        self.agent_app_states = agent_app_states
+        self.agent_app_state_reg = agent_app_state_reg
         with patch("agent.factory.get_tools_for_agent", return_value=[]):
             yield
 
@@ -338,9 +338,9 @@ class TestBuildAgentAndDeps:
     async def test_holds_lock(self):
         """build_agent_and_deps should hold the lock for the duration of the context."""
         async with self.factory.build_agent_and_deps() as (agent, deps):
-            assert self.agent_app_states[self.agent_record.id].lock.locked()
+            assert self.agent_app_state_reg[self.agent_record.id].lock.locked()
 
-        assert not self.agent_app_states[self.agent_record.id].lock.locked()
+        assert not self.agent_app_state_reg[self.agent_record.id].lock.locked()
 
     async def test_uses_correct_model(self):
         """Constructed agent should use the model from agent_config.model_name."""

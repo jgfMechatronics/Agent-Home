@@ -56,7 +56,7 @@ class TestLifespan:
         self.mock_init_db.assert_called_once_with(self.mock_db_engine)
 
         assert self.app.state.engine is self.mock_db_engine
-        assert self.app.state.agent_app_states == {}
+        assert self.app.state.agent_app_state_reg == {}
         # teardown asserts cleanup activity
 
     async def test_init_db_failure_still_disposes(self):

@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record
 from agent.types import AgentAppState, AgentDeps
-from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_states, get_deps_dep
+from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_deps_dep
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
@@ -133,14 +133,14 @@ async def send_message(
     agent_id: str,
     body: MessageRequest,
     agent_and_deps: tuple[Agent, AgentDeps] = Depends(get_agent_and_deps),
-    agent_app_states: dict[str, AgentAppState] = Depends(get_agent_app_states),
+    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> AsyncGenerator[ServerSentEvent, None]:
     """TODO: Agent run should still be able to complete and persist in the event that client disconnects"""
     # AgentNotFoundError / AgentLockedError are translated to HTTP 404/503 by get_agent_and_deps
     agent, deps = agent_and_deps # This would be inside the try/except but cleanup assumes we have deps
 
     try:
-        agent_app_state = agent_app_states[agent_id]
+        agent_app_state = agent_app_state_reg[agent_id]
         async for event in _handle_message(agent=agent,
                                            deps=deps, 
                                            agent_app_state=agent_app_state,
@@ -229,7 +229,7 @@ async def create_memory_block(
 @router.post("/{agent_id}/cancel", status_code=202)
 async def cancel_agent_run(
     agent_id: str,
-    agent_app_states: dict[str, AgentAppState] = Depends(get_agent_app_states),
+    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> None:
     """Cancel an active agent run.
 
@@ -238,7 +238,7 @@ async def cancel_agent_run(
 
     Redundant cancels (event already set) succeed and return 202.
     """
-    slot = agent_app_states.get(agent_id)
+    slot = agent_app_state_reg.get(agent_id)
     if slot is None or not slot.lock.locked():
         raise HTTPException(status_code=409, detail=f"Agent {agent_id!r} has no active run")
     slot.cancel_requested.set() # If there was a previous unserviced cancellation request, no harm in setting again

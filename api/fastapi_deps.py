@@ -17,9 +17,9 @@ from db.connection import get_session
 from pydantic_ai import Agent
 
 
-def get_agent_app_states(request: Request) -> dict[str, AgentAppState]:
+def get_agent_app_state_reg(request: Request) -> dict[str, AgentAppState]:
     """FastAPI dependency: returns the app-wide agent state registry from app.state."""
-    return request.app.state.agent_app_states
+    return request.app.state.agent_app_state_reg
 
 
 async def get_session_dep(request: Request) -> AsyncIterator[AsyncSession]:
@@ -31,7 +31,7 @@ async def get_session_dep(request: Request) -> AsyncIterator[AsyncSession]:
 async def get_agent_and_deps(
     agent_id: str,
     session: AsyncSession = Depends(get_session_dep),
-    agent_app_states: dict[str, AgentAppState] = Depends(get_agent_app_states),
+    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> AsyncIterator[tuple[Agent, AgentDeps]]:
     """FastAPI yield dependency: acquires agent lock, yields (Agent, AgentDeps).
 
@@ -41,7 +41,7 @@ async def get_agent_and_deps(
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
-    factory = AgentFactory(agent_id, agent_app_states, session)
+    factory = AgentFactory(agent_id, agent_app_state_reg, session)
     async with factory.build_agent_and_deps() as (agent, deps):
         yield (agent, deps)
 
@@ -49,7 +49,7 @@ async def get_agent_and_deps(
 async def get_deps_dep(
     agent_id: str,
     session: AsyncSession = Depends(get_session_dep),
-    agent_app_states: dict[str, AgentAppState] = Depends(get_agent_app_states),
+    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> AsyncIterator[AgentDeps]:
     """
     FastAPI yield dependency: acquires agent lock, yields AgentDeps (without building Agent).
@@ -63,6 +63,6 @@ async def get_deps_dep(
     
     Has the best function name in the entire codebase
     """
-    factory = AgentFactory(agent_id, agent_app_states, session)
+    factory = AgentFactory(agent_id, agent_app_state_reg, session)
     async with factory.build_deps() as deps:
         yield deps

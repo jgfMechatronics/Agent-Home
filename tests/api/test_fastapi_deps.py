@@ -24,13 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError
 from agent.types import AgentAppState, AgentDeps
-from api.fastapi_deps import get_agent_and_deps, get_agent_app_states, get_deps_dep, get_session_dep
+from api.fastapi_deps import get_agent_and_deps, get_agent_app_state_reg, get_deps_dep, get_session_dep
 
 
 # --- Fixtures ---
 
 @pytest.fixture
-def agent_app_states() -> dict:
+def agent_app_state_reg() -> dict:
     """Empty agent state registry for each test."""
     return {}
 
@@ -50,7 +50,7 @@ def captured() -> dict:
 async def _build_test_client(
     route,
     session: AsyncSession,
-    agent_app_states: dict,
+    agent_app_state_reg: dict,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Minimal FastAPI test app with session and agent state registry overridden, as an AsyncClient.
 
@@ -67,7 +67,7 @@ async def _build_test_client(
         yield session
 
     app.dependency_overrides[get_session_dep] = _override_session
-    app.dependency_overrides[get_agent_app_states] = lambda: agent_app_states
+    app.dependency_overrides[get_agent_app_state_reg] = lambda: agent_app_state_reg
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -78,7 +78,7 @@ async def _build_test_client(
 @pytest_asyncio.fixture
 async def agent_and_deps_client(
     session: AsyncSession,
-    agent_app_states: dict,
+    agent_app_state_reg: dict,
     captured: dict,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Test client wired to get_agent_and_deps — route captures both Agent and AgentDeps."""
@@ -90,14 +90,14 @@ async def agent_and_deps_client(
             raise exc
         return {}
 
-    async with _build_test_client(_route, session, agent_app_states) as client:
+    async with _build_test_client(_route, session, agent_app_state_reg) as client:
         yield client
 
 
 @pytest_asyncio.fixture
 async def deps_only_client(
     session: AsyncSession,
-    agent_app_states: dict,
+    agent_app_state_reg: dict,
     captured: dict,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Test client wired to get_deps_dep — route captures AgentDeps only (no Agent)."""
@@ -107,7 +107,7 @@ async def deps_only_client(
             raise exc
         return {}
 
-    async with _build_test_client(_route, session, agent_app_states) as client:
+    async with _build_test_client(_route, session, agent_app_state_reg) as client:
         yield client
 
 
@@ -257,14 +257,14 @@ class TestGetDepsDep:
 
 # These two test classes are a little disjointed with above as they were written later, but it lets us be more unit-testey
 class TestGetAgentAppStates:
-    """get_agent_app_states: returns the app-wide agent state registry from request.app.state."""
+    """get_agent_app_state_reg: returns the app-wide agent state registry from request.app.state."""
 
-    def test_returns_app_state_agent_app_states(self):
+    def test_returns_app_state_agent_app_state_reg(self):
         """Returns exactly the agent state registry stored on app.state."""
         mock_request = MagicMock()
         registry = {"agent-1": MagicMock(spec=AgentAppState)}
-        mock_request.app.state.agent_app_states = registry
-        assert get_agent_app_states(mock_request) is registry
+        mock_request.app.state.agent_app_state_reg = registry
+        assert get_agent_app_state_reg(mock_request) is registry
 
 
 class TestGetSessionDep:

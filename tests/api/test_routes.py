@@ -250,7 +250,7 @@ class TestSendMessage(_BaseRouteTest):
         """
         self.agent_record = agent_record
         self.mock_session = _make_mock_session()
-        app.state.agent_app_states[agent_record.id] = AgentAppState()
+        app.state.agent_app_state_reg[agent_record.id] = AgentAppState()
 
         def _configure(events=None, raise_exc=None, raises_mid_stream=None):
             async def _mock_dep():
@@ -268,7 +268,7 @@ class TestSendMessage(_BaseRouteTest):
         yield
 
         app.dependency_overrides.pop(get_agent_and_deps)
-        del app.state.agent_app_states[agent_record.id]
+        del app.state.agent_app_state_reg[agent_record.id]
 
     @pytest.mark.parametrize("events_factory,expected_types", [
         pytest.param(TEXT_STREAM, ["PartStartEvent", "PartDeltaEvent", "AgentRunResultEvent"], id="text-stream"),
@@ -545,7 +545,7 @@ class FunctionModelTestAgent:
         Install this agent in app's dep overrides; restore previous override on exit.
         Yields the mock_session used to construct the agent and deps.
 
-        Also creates an AgentAppState and injects it into app.state.agent_app_states,
+        Also creates an AgentAppState and injects it into app.state.agent_app_state_reg,
         and acquires the lock for the dep lifetime — mirroring what AgentFactory does.
 
         If we need to emulate more of the actual thing we're overriding than this,
@@ -553,7 +553,7 @@ class FunctionModelTestAgent:
         """
         mock_session = _make_mock_session()
         agent_app_state = AgentAppState()
-        app.state.agent_app_states[agent_record.id] = agent_app_state
+        app.state.agent_app_state_reg[agent_record.id] = agent_app_state
 
         async def _make_agent_and_deps():
             async with agent_app_state.lock:
@@ -565,7 +565,7 @@ class FunctionModelTestAgent:
             yield mock_session
         finally:
             app.dependency_overrides.pop(get_agent_and_deps)
-            del app.state.agent_app_states[agent_record.id]
+            del app.state.agent_app_state_reg[agent_record.id]
 
     # ------------------------------------------------------------------
     # Private helpers

@@ -40,7 +40,7 @@ class AgentLockedError(Exception):
 class AgentFactory:
     """Per-agent, per-request factory for building agents with locking.
 
-    Constructed via FastAPI Depends with agent_id, session, and agent_app_states bound.
+    Constructed via FastAPI Depends with agent_id, session, and agent_app_state bound.
     Resolves (or creates) the agent's AppState entry at construction time, so the registry
     reference can be discarded after __init__. Routes call build_agent_and_deps() or
     build_deps() for clean interface.
@@ -52,19 +52,19 @@ class AgentFactory:
 
     LOCK_TIMEOUT_SECONDS: int = 60
 
-    def __init__(self, agent_id: str, agent_app_states: dict[str, AgentAppState], session: AsyncSession):
+    def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState], session: AsyncSession):
         """Resolve (or create) the agent slot from the registry, then discard the registry ref."""
         self._agent_id = agent_id
-        self._agent_app_state = self._get_or_create_agent_app_state(agent_app_states, agent_id)
+        self._agent_app_state = self._get_or_create_agent_app_state(agent_app_state_reg, agent_id)
         self._session = session  # TODO: session also lives and is passed around in deps. ref spaghetti?
 
     @staticmethod
-    def _get_or_create_agent_app_state(agent_app_states: dict[str, AgentAppState], agent_id: str) -> AgentAppState:
+    def _get_or_create_agent_app_state(agent_app_state_reg: dict[str, AgentAppState], agent_id: str) -> AgentAppState:
         """Get or create an AgentAppState entry for the given agent_id."""
         # TODO: Memory leak on garbage agent_IDs or if there are a TON of registered agents being invoked
-        if agent_id not in agent_app_states:
-            agent_app_states[agent_id] = AgentAppState()
-        return agent_app_states[agent_id]
+        if agent_id not in agent_app_state_reg:
+            agent_app_state_reg[agent_id] = AgentAppState()
+        return agent_app_state_reg[agent_id]
 
     @asynccontextmanager
     async def build_deps(self) -> AsyncIterator[AgentDeps]:
