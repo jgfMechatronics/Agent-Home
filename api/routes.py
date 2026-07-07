@@ -238,10 +238,10 @@ async def cancel_agent_run(
 
     Redundant cancels (event already set) succeed and return 202.
     """
-    slot = agent_app_state_reg.get(agent_id)
-    if slot is None or not slot.lock.locked():
+    agent_app_state = agent_app_state_reg.get(agent_id)
+    if agent_app_state is None or not agent_app_state.lock.locked():
         raise HTTPException(status_code=409, detail=f"Agent {agent_id!r} has no active run")
-    slot.cancel_requested.set() # If there was a previous unserviced cancellation request, no harm in setting again
+    agent_app_state.cancel_requested.set() # If there was a previous unserviced cancellation request, no harm in setting again
 
 
 @router.get("/{agent_id}/messages")
