@@ -15,13 +15,11 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
-    ModelMessage,
     ModelRequest,
     ModelResponse,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 

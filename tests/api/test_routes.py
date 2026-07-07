@@ -933,7 +933,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         await asyncio.wait_for(stream_task, timeout=5.0)
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
-        
+
         # We expect the default sequence except the cancel prevents us from reaching the COMPLETED chunk,
         # and instead we get the cancel notice
         expected_msg_list = (
@@ -971,7 +971,6 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
             — cancel_requested state is cleared after run completes
             — persistence doesn't break from any funny business with the cancellation notice.
         """
-        # Phase 1: Cancel run
         await self._test_cancel_during_tool_exec(client)
         post_cancel_history = []
         for i in range(3):
