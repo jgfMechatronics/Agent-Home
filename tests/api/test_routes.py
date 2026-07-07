@@ -351,6 +351,7 @@ class TestSendMessage(_BaseRouteTest):
         assert sse_events[1]["event"] == "Error"
         assert sse_events[1]["data"]["message"] == "Unexpected internal server error: 'RuntimeError: something went wrong'"
 
+
 class TestCreateAgent:
     """POST /agents/ — create a new agent."""
 
@@ -897,7 +898,10 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
     persist_messages eats it, or it never made it to the buffer at all.
     """
 
-    CANCEL_NOTICE = ModelRequest(parts=[UserPromptPart(content="<system_message>Turn cancelled by user.</system_message>")])
+    # NOTE: Ideally this would be a ModelRequest (user message), but pydantic-ai merges consecutive
+    # ModelRequests, breaking cursor-based persistence. Using ModelResponse avoids the merge.
+    # Consider switching back after migrating to agent.iter().
+    CANCEL_NOTICE = ModelResponse(parts=[TextPart(content="<system_message>Turn cancelled by user.</system_message>")])
 
     async def test_cancel_no_active_run_returns_409(self, client: AsyncClient):
         """Cancel route returns 409 when no run is active for the given agent_id."""
@@ -959,28 +963,27 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         """
         await self._test_cancel_during_tool_exec(client)
 
-    async def test_subsequent_run_after_cancel(self, client: AsyncClient):
+    async def test_multiple_runs_with_cancellation(self, client: AsyncClient):
         """
         After a cancel, subsequent runs must work correctly.
 
         Covers:
             — cancel_requested state is cleared after run completes
-            — persistence cursor adjustment accounts for pydantic-ai merging the
-              trailing ModelRequest (cancel notice) with the next user prompt
+            — persistence doesn't break from any funny business with the cancellation notice.
         """
         # Phase 1: Cancel run
         await self._test_cancel_during_tool_exec(client)
-        post_cancel_history = self._list_persisted_messages(self.mock_persist_messages)
+        post_cancel_history = []
+        for i in range(3):
+            post_cancel_history.extend(self._list_persisted_messages(self.mock_persist_messages))
 
-        # Reset state for phase 2, set deserialize to return history from previous run
-        self.mock_persist_messages.reset_mock()
-        self.mock_session.reset_mock()
-        self.function_agent.reset_for_new_run()
-        self.mock_deserialize_msgs.return_value = post_cancel_history
+            self.mock_persist_messages.reset_mock()
+            self.mock_session.reset_mock()
+            self.function_agent.reset_for_new_run()
+            self.mock_deserialize_msgs.return_value = post_cancel_history
 
-        # Phase 2: Another run with post-cancel history — should pass same assertions
-        await self._test_cancel_during_tool_exec(client)
-
+            # Another run with post-cancel history — should pass same assertions even with accumualted history
+            await self._test_cancel_during_tool_exec(client)
 
     async def test_cancel_during_text_streaming(self, client: AsyncClient):
         """

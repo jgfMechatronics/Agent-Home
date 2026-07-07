@@ -13,7 +13,16 @@ from typing import Any, AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
-from pydantic_ai.messages import FunctionToolResultEvent, ModelMessage, ModelRequest, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import (
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record
@@ -75,12 +84,6 @@ async def _handle_message(agent: Agent,
                                             message_history=message_history,
                                             deps=deps) as stream:
             new_message_idx = len(message_history)  # track what we have persisted already from messages
-
-            # When history ends with ModelRequest, pydantic-ai merges the new user prompt into it.
-            # This shifts captured message indices by 1 — adjust cursor to avoid skipping content.
-            # TODO: Proper fix: migrate to agent.iter() which handles this cleanly
-            # if message_history and isinstance(message_history[-1], ModelRequest):
-            #     new_message_idx -= 1
             last_total_tokens_value = None
 
             async for event in stream:
@@ -110,7 +113,10 @@ async def _handle_message(agent: Agent,
                         last_total_tokens_value = total_tokens
 
                 if agent_app_state.cancel_requested.is_set():
-                    cancel_notice = ModelRequest(parts=[UserPromptPart(
+                    # NOTE: Ideally this would be a ModelRequest (user message), but pydantic-ai merges
+                    # consecutive ModelRequests, breaking cursor-based persistence. Using ModelResponse
+                    # avoids the merge. Consider switching back after migrating to agent.iter().
+                    cancel_notice = ModelResponse(parts=[TextPart(
                         content="<system_message>Turn cancelled by user.</system_message>"
                     )])
                     await persist_messages(deps=deps, messages=[cancel_notice])
