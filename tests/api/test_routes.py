@@ -637,7 +637,6 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
             self.mock_session = mock_session
             yield
 
-
     @staticmethod
     def _list_persisted_messages(mock_persist_messages) -> list:
         """Concatenate messages from all persist_messages calls, in call order."""
