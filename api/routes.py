@@ -236,7 +236,7 @@ async def cancel_agent_run(
     Sets the cancel_requested for the given agent if a run is currently active.
     Returns 202 if the cancel signal was sent, 409 if no run is active.
 
-    Redundant cancels (event already set) succeed and return 200.
+    Redundant cancels (event already set) succeed and return 202.
     """
     slot = agent_app_states.get(agent_id)
     if slot is None or not slot.lock.locked():

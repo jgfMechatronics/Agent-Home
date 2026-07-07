@@ -6,11 +6,11 @@ when token limits are exceeded.
 import logging
 
 from agent.types import AgentConfig, AgentDeps
-
-logger = logging.getLogger(__name__)
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import deserialize_messages, load_messages
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+
+logger = logging.getLogger(__name__)
 
 
 def is_compaction_needed(total_tokens: int | None, config: AgentConfig) -> bool:
