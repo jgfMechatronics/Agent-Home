@@ -4,6 +4,7 @@ Agent domain types — Section 3.0
 Internal domain objects for the agent layer. API layer imports FROM here,
 not the reverse.
 """
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -15,12 +16,24 @@ if TYPE_CHECKING:
     from db.models import AgentRecord
 
 
+@dataclass
+class AgentAppState:
+    """Per-agent app-scoped state, held for the application lifetime.
+
+    Created lazily on first run per agent. Both fields are permanent — the lock
+    serializes concurrent requests, and the cancel_requested signals an in-flight
+    run to stop.
+    """
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    cancel_requested: asyncio.Event = field(default_factory=asyncio.Event)
+
+
 class AgentConfig(BaseModel):
     """
     Agent configuration stored as JSON in AgentRecord.agent_config.
     
     Required fields:
-    - model_name: The LLM model to use (e.g., "claude-haiku-4-5")
+    - model_name: The LLM to use (e.g., "claude-haiku-4-5")
     - tool_names: List of tool names the agent can use
     - soft_compaction_limit: Token threshold for triggering compaction
     
@@ -29,7 +42,7 @@ class AgentConfig(BaseModel):
     - is_deletable: Whether agent can be deleted (default False)
     """
     model_config = ConfigDict(extra="forbid") # TODO: What is this?
-    
+
     model_name: str
     tool_names: list[str]
     soft_compaction_limit: int

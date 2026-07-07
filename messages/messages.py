@@ -187,8 +187,13 @@ def _handle_serialization_error(
 # Functions
 # ---------------------------------------------------------------------------
 
-async def persist_messages(deps: AgentDeps, messages: list[ModelMessage], input_tokens: int) -> None:
-    """Save each ModelMessage as its own row; set input_tokens on the final row only.
+async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int | None:
+    """Save each ModelMessage as its own row; set total_tokens from ModelResponse.usage where available.
+
+    total_tokens is extracted from each ModelResponse's usage (input + output tokens for that request).
+    Set to None for ModelRequests and for ModelResponses with no token data (usage has all-zero fields).
+
+    Returns the last non-None total_tokens seen across all messages, or None if no usage data was found.
 
     Pre-processing:
     - Orphaned tool calls/returns (unmatched ToolCallPart or ToolReturnPart) are replaced with an error ModelResponse.
@@ -199,13 +204,13 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage], input_
       forward by 1 microsecond and a warning is logged.
     """
     if not messages:
-        return
+        return None
 
     messages, errors = _replace_orphaned_tool_messages(messages)
     last_timestamp = await _get_last_timestamp(deps.session, deps.agent_id)
-    last_idx = len(messages) - 1
+    last_total_tokens: int | None = None
 
-    for i, msg in enumerate(messages):
+    for msg in messages:
         try:
             # NOTE: The per msg serialization allows us to eliminate specific messages which have serialization failures,
             # but likely costs us some performance. This is an optimization opportunity: could have happy path try serializing the whole
@@ -219,11 +224,14 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage], input_
         curr_timestamp = _bump_timestamp_if_needed(_message_timestamp(msg), last_timestamp, deps.agent_id)
         last_timestamp = curr_timestamp
 
+        msg_total_tokens = msg.usage.total_tokens if isinstance(msg, ModelResponse) and msg.usage.has_values() else None
+        if msg_total_tokens is not None:
+            last_total_tokens = msg_total_tokens
         record = MessageRecord(
             agent_id=deps.agent_id,
             type=msg_type,
             content=content,
-            input_tokens=input_tokens if i == last_idx else None,
+            total_tokens=msg_total_tokens,
             timestamp=curr_timestamp,
         )
         deps.session.add(record)
@@ -243,11 +251,12 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage], input_
             agent_id=deps.agent_id,
             type="ModelResponse",
             content=warning_content,
-            input_tokens=None,
+            total_tokens=None,
             timestamp=warn_ts,
         ))
 
     await deps.session.flush()
+    return last_total_tokens
 
 
 async def load_messages(

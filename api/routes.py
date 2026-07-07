@@ -12,12 +12,20 @@ from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic_ai import Agent, AgentRunResultEvent
+from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
+from pydantic_ai.messages import (
+    FunctionToolResultEvent,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record
-from agent.types import AgentDeps
-from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_deps_dep
+from agent.types import AgentAppState, AgentDeps
+from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_deps_dep
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
@@ -62,29 +70,60 @@ async def get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
     return record
 
 
-async def _handle_message(agent: Agent, deps: AgentDeps, user_prompt: str) -> AsyncGenerator[ServerSentEvent, None]:
+async def _handle_message(agent: Agent,
+                          deps: AgentDeps,
+                          agent_app_state: AgentAppState,
+                          user_prompt: str) -> AsyncGenerator[ServerSentEvent, None]:
     records = await load_messages(deps.session, deps.agent_id, start_timestamp=deps.context_window_start)
     message_history = deserialize_messages(records)
 
-    # TODO: Exceptions raised during run_stream_events result in entire turn being discarded.
-    # this was discovered with "UnexpectedModelBehavior" due to excess retries
-    async for event in agent.run_stream_events(user_prompt=user_prompt,
-                                                message_history=message_history,
-                                                deps=deps):
-        yield map_to_sse(event)
+    with capture_run_messages() as messages:
+        async with agent.run_stream_events(user_prompt=user_prompt,
+                                            message_history=message_history,
+                                            deps=deps) as stream:
+            new_message_idx = len(message_history)  # track what we have persisted already from messages
+            last_total_tokens_value = None
 
-        if isinstance(event, AgentRunResultEvent):
-            final_result = event.result
-            input_tokens = final_result.usage().input_tokens
-            await persist_messages(deps=deps,
-                                    messages=final_result.new_messages(),
-                                    input_tokens=input_tokens)
+            async for event in stream:
+                yield map_to_sse(event)
 
-            # commit before compaction — if compaction fails, the turn may still be valid
-            await deps.commit_changes_refresh_agent_record()
+                messages_to_persist = []
+                last_part_of_last_msg = messages[-1].parts[-1] if messages else None
 
-            if is_compaction_needed(input_tokens, deps.config):
-                await compact(deps, input_tokens)
+                if (isinstance(event, FunctionToolResultEvent)
+                    and isinstance(event.part, ToolReturnPart)
+                    and not isinstance(last_part_of_last_msg, ToolReturnPart)
+                    and isinstance(last_part_of_last_msg, ToolCallPart)):
+                    # As of 1.97.0, pydantic-ai adds the ToolReturn to the captured messages list only
+                    # when the next step starts, not when FunctionToolResultEvent is yielded. Persist the tool pair atomically
+                    # from the event data directly, so we don't lose it on cancel
+                    # The last two gating conditions are a sanity check: Ensure the tool return is NOT available but the tool call IS
+                    tool_return_msg = ModelRequest(parts=[event.part])
+                    messages_to_persist = messages[new_message_idx:] + [tool_return_msg]
+                elif (len(messages) > new_message_idx) and not isinstance(last_part_of_last_msg, ToolCallPart):
+                    messages_to_persist = messages[new_message_idx:]
+
+                if messages_to_persist:
+                    total_tokens = await persist_messages(deps=deps, messages=messages_to_persist)
+                    await deps.commit_changes_refresh_agent_record()
+                    new_message_idx += len(messages_to_persist)
+                    if total_tokens is not None:
+                        last_total_tokens_value = total_tokens
+
+                if agent_app_state.cancel_requested.is_set():
+                    # NOTE: Ideally this would be a ModelRequest (user message), but pydantic-ai merges
+                    # consecutive ModelRequests, breaking cursor-based persistence. Using ModelResponse
+                    # avoids the merge. Consider switching back after migrating to agent.iter().
+                    cancel_notice = ModelResponse(parts=[TextPart(
+                        content="<system_message>Turn cancelled by user.</system_message>"
+                    )])
+                    await persist_messages(deps=deps, messages=[cancel_notice])
+                    await deps.commit_changes_refresh_agent_record()
+                    return
+
+                if isinstance(event, AgentRunResultEvent):
+                    if is_compaction_needed(last_total_tokens_value, deps.config):
+                        await compact(deps, last_total_tokens_value)
 
 
 # --- Routes ---
@@ -94,12 +133,18 @@ async def send_message(
     agent_id: str,
     body: MessageRequest,
     agent_and_deps: tuple[Agent, AgentDeps] = Depends(get_agent_and_deps),
+    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> AsyncGenerator[ServerSentEvent, None]:
     """TODO: Agent run should still be able to complete and persist in the event that client disconnects"""
     # AgentNotFoundError / AgentLockedError are translated to HTTP 404/503 by get_agent_and_deps
-    agent, deps = agent_and_deps
+    agent, deps = agent_and_deps # This would be inside the try/except but cleanup assumes we have deps
+
     try:
-        async for event in _handle_message(agent, deps, body.message):
+        agent_app_state = agent_app_state_reg[agent_id]
+        async for event in _handle_message(agent=agent,
+                                           deps=deps, 
+                                           agent_app_state=agent_app_state,
+                                           user_prompt=body.message):
             yield event
     except Exception as e:
         # TODO (low priority): put more thought into logging strategy (log levels, handler chain, structured logging)
@@ -179,6 +224,24 @@ async def create_memory_block(
     except DuplicateBlockError as e:
         raise HTTPException(status_code=400, detail=f"Duplicate block: {e}") from e
     return MemoryBlockResponse.from_record(block)
+
+
+@router.post("/{agent_id}/cancel", status_code=202)
+async def cancel_agent_run(
+    agent_id: str,
+    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
+) -> None:
+    """Cancel an active agent run.
+
+    Sets the cancel_requested for the given agent if a run is currently active.
+    Returns 202 if the cancel signal was sent, 409 if no run is active.
+
+    Redundant cancels (event already set) succeed and return 202.
+    """
+    agent_app_state = agent_app_state_reg.get(agent_id)
+    if agent_app_state is None or not agent_app_state.lock.locked():
+        raise HTTPException(status_code=409, detail=f"Agent {agent_id!r} has no active run")
+    agent_app_state.cancel_requested.set() # If there was a previous unserviced cancellation request, no harm in setting again
 
 
 @router.get("/{agent_id}/messages")

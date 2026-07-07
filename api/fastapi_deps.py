@@ -6,21 +6,20 @@ app.py and db/connection.py remain free of FastAPI route concerns.
 Domain exceptions (AgentNotFoundError, AgentLockedError) are translated to HTTP responses
 by app-level exception handlers registered in api/app.py — not caught here.
 """
-import asyncio
 from typing import AsyncIterator
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory
-from agent.types import AgentDeps
+from agent.types import AgentAppState, AgentDeps
 from db.connection import get_session
 from pydantic_ai import Agent
 
 
-def get_lock_reg(request: Request) -> dict[str, asyncio.Lock]:
-    """FastAPI dependency: returns the app-wide agent lock registry from app.state."""
-    return request.app.state.agent_lock_reg
+def get_agent_app_state_reg(request: Request) -> dict[str, AgentAppState]:
+    """FastAPI dependency: returns the app-wide agent state registry from app.state."""
+    return request.app.state.agent_app_state_reg
 
 
 async def get_session_dep(request: Request) -> AsyncIterator[AsyncSession]:
@@ -32,7 +31,7 @@ async def get_session_dep(request: Request) -> AsyncIterator[AsyncSession]:
 async def get_agent_and_deps(
     agent_id: str,
     session: AsyncSession = Depends(get_session_dep),
-    lock_reg: dict[str, asyncio.Lock] = Depends(get_lock_reg),
+    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> AsyncIterator[tuple[Agent, AgentDeps]]:
     """FastAPI yield dependency: acquires agent lock, yields (Agent, AgentDeps).
 
@@ -42,15 +41,15 @@ async def get_agent_and_deps(
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
-    factory = AgentFactory(lock_reg, session)
-    async with factory.build_agent_and_deps(agent_id) as (agent, deps):
+    factory = AgentFactory(agent_id, agent_app_state_reg, session)
+    async with factory.build_agent_and_deps() as (agent, deps):
         yield (agent, deps)
 
 
 async def get_deps_dep(
     agent_id: str,
     session: AsyncSession = Depends(get_session_dep),
-    lock_reg: dict[str, asyncio.Lock] = Depends(get_lock_reg),
+    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> AsyncIterator[AgentDeps]:
     """
     FastAPI yield dependency: acquires agent lock, yields AgentDeps (without building Agent).
@@ -64,6 +63,6 @@ async def get_deps_dep(
     
     Has the best function name in the entire codebase
     """
-    factory = AgentFactory(lock_reg, session)
-    async with factory.build_deps(agent_id) as deps:
+    factory = AgentFactory(agent_id, agent_app_state_reg, session)
+    async with factory.build_deps() as deps:
         yield deps
