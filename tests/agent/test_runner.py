@@ -10,8 +10,13 @@ import asyncio
 import importlib.metadata
 import json
 from contextlib import contextmanager
+from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
 
 # Third-party
+import pytest
+from fastapi import FastAPI, HTTPException
+from httpx import AsyncClient, Response
 from pydantic_ai import Agent, AgentRunResultEvent
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
@@ -30,12 +35,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
-from fastapi import HTTPException
-from httpx import Response
 
 # Local
 from agent.types import AgentAppState
 from api.fastapi_deps import get_agent_and_deps
+from conftest import make_deps, make_mock_agent, _make_mock_session
+from db.models import AgentRecord
 
 # --- Module-level test data ---
 
