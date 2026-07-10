@@ -1,8 +1,12 @@
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
+import pytest
 import pytest_asyncio
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
 
 # Prevent AnthropicModel construction from failing in tests that don't make real API calls
@@ -11,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from agent.types import AgentConfig, AgentDeps
+from api.fastapi_deps import get_session_dep
 from db.models import AgentRecord, Base, MemoryBlockRecord
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
@@ -194,3 +199,74 @@ async def agent_with_blocks(session: AsyncSession):
     await session.flush()
     
     return {"agent": agent, "blocks": blocks}
+
+
+# ---------------------------------------------------------------------------
+# Shared route test helpers and fixtures
+# Used by both tests/api/test_routes.py and tests/agent/test_runner.py
+# ---------------------------------------------------------------------------
+
+def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | None = None) -> Mock:
+    """Create a mock agent whose run_stream_events yields the given events.
+
+    The mock is a plain async generator, matching Pydantic AI's current API.
+    If raises_mid_stream is set, the exception is raised after all events are yielded.
+    """
+    agent = Mock()
+
+    async def _gen():
+        for event in (events or []):
+            yield event
+        if raises_mid_stream is not None:
+            raise raises_mid_stream
+
+    @asynccontextmanager
+    async def _stream(*args, **kwargs):
+        yield _gen()
+
+    agent.run_stream_events = _stream
+    return agent
+
+
+def _make_mock_session() -> Mock:
+    """Build a mock AsyncSession with async commit/rollback/refresh."""
+    session = Mock()
+    session.commit = AsyncMock()
+    session.rollback = AsyncMock()
+    session.refresh = AsyncMock()
+    return session
+
+
+@pytest.fixture
+def app() -> FastAPI:
+    """Fresh app instance per test — avoids state contamination."""
+    from api.app import _create_app
+    return _create_app()
+
+
+@pytest_asyncio.fixture
+async def client(app: FastAPI) -> AsyncClient:
+    """Async HTTP client bound to the test app.
+
+    raise_app_exceptions=False so that app-level Exception handlers (ServerErrorMiddleware)
+    just return the 500 response rather than re-raising into the test.
+    """
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test"
+    ) as c:
+        yield c
+
+
+@pytest.fixture(autouse=True)
+def override_db_session(app: FastAPI, session: AsyncSession):
+    """Ensure routes use the test session, not a separate DB connection.
+
+    Without this, routes call get_session_dep() -> new connection -> test data invisible.
+    """
+    async def _get_test_session():
+        yield session
+
+    app.dependency_overrides[get_session_dep] = _get_test_session
+    yield
+    app.dependency_overrides.pop(get_session_dep)
