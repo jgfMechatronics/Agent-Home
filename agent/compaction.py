@@ -55,7 +55,7 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     avg_tokens_per_msg = msg_tokens / len(messages)
     if avg_tokens_per_msg <= 0:
         return  # System prompt dominates token budget — can't estimate, skip this turn
-    target_tokens = deps.config.compaction_target_percentage * deps.config.soft_compaction_limit
+    target_tokens = deps.config.compaction_target_fraction * deps.config.soft_compaction_limit
     n_msg_to_keep = max(4, int((target_tokens - sys_tokens) / avg_tokens_per_msg))
 
     if n_msg_to_keep >= len(messages):

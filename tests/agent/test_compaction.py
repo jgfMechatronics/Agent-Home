@@ -40,14 +40,14 @@ from db.models import AgentRecord, MessageRecord
 
 def _make_config(
     soft_compaction_limit: int = 10000,
-    compaction_target_percentage: float = 0.5,
+    compaction_target_fraction: float = 0.5,
 ) -> AgentConfig:
     """Create AgentConfig with specified compaction settings."""
     return AgentConfig(
         model_name="claude-sonnet-4-20250514",
         tool_names=["memory_replace"],
         soft_compaction_limit=soft_compaction_limit,
-        compaction_target_percentage=compaction_target_percentage,
+        compaction_target_fraction=compaction_target_fraction,
     )
 
 
@@ -140,7 +140,7 @@ class CompactTestBase:
         total_tokens: int,
     ):
         """Set up test scenario with specified compaction parameters."""
-        config = _make_config(soft_compaction_limit=limit, compaction_target_percentage=target)
+        config = _make_config(soft_compaction_limit=limit, compaction_target_fraction=target)
         data = await _make_agent_with_messages(
             session, message_count=msg_count, config=config, system_prompt_chars=400
         )
@@ -215,7 +215,7 @@ class TestCompactEdgeCases(CompactTestBase):
         assert self.agent.context_window_start is None
 
     async def test_targets_percentage_of_limit(self, session: AsyncSession):
-        """compact targets compaction_target_percentage of soft_compaction_limit.
+        """compact targets compaction_target_fraction of soft_compaction_limit.
         
         Setup: 400 char prompt ≈ 100 tokens, 20 messages, total_tokens=2100
         → message_tokens = 2100 - 100 = 2000, avg = 100 tok/msg
@@ -288,14 +288,14 @@ class TestCompactToolPairAtomicity:
             no system prompt → sys_tokens = 0
             10 messages, total_tokens = 1250,  avg = 125 tok/msg
 
-            soft_compaction_limit = 1000,  compaction_target_percentage = 0.5
+            soft_compaction_limit = 1000,  compaction_target_fraction = 0.5
             target_tokens = 0.5 × 1000 = 500
             n_msg_to_keep = max(4, int(500 / 125)) = max(4, 4) = 4
 
         Naive result: context_window_start = records[-4].timestamp = records[6].timestamp  ← ORPHAN
         Fixed result: context_window_start = records[5].timestamp  ← pair kept intact
         """
-        config = _make_config(soft_compaction_limit=1000, compaction_target_percentage=0.5)
+        config = _make_config(soft_compaction_limit=1000, compaction_target_fraction=0.5)
         data = await self._make_agent_with_tool_sequence(session, agent_record, tool_pair_generator, config=config)
 
         # sanity check: records[5] and [6] are the tool pair (assumed in ending assertion)

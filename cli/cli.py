@@ -160,10 +160,10 @@ def run_config_wizard(state: CLIState) -> dict:
         state, "Compaction target percentage (0-1)", "0.25"
     )
     try:
-        compaction_target_percentage = float(target_pct_str)
+        compaction_target_fraction = float(target_pct_str)
     except ValueError:
         output(state, "  Invalid number, using default: 0.25")
-        compaction_target_percentage = 0.25
+        compaction_target_fraction = 0.25
     
     is_deletable_str = prompt_with_default(state, "Is deletable (true/false)", "false")
     is_deletable = is_deletable_str.lower() in ("true", "yes", "1")
@@ -181,7 +181,7 @@ def run_config_wizard(state: CLIState) -> dict:
             "model_name": model_name,
             "tool_names": tool_names,
             "soft_compaction_limit": soft_compaction_limit,
-            "compaction_target_percentage": compaction_target_percentage,
+            "compaction_target_fraction": compaction_target_fraction,
             "is_deletable": is_deletable,
         },
     }
