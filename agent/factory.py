@@ -12,14 +12,14 @@ StatefulAgent Pattern:
 """
 import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Literal, get_args, get_origin
+from typing import AsyncIterator
 
 from pydantic_ai import Agent, DeferredToolRequests
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import get_agent_record
-from agent.types import AgentAppState, AgentDeps
+from agent.types import AgentAppState, AgentDeps, validate_model_name
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
 
@@ -130,18 +130,12 @@ class AgentFactory:
             yield (agent, deps)
 
 
-# AnthropicModelName is defined as str | Literal['claude-...', ...]. The str union arm is an
-# escape hatch for forward compatibility — we want only the known Literal values for validation.
-_literal_type = next(arg for arg in get_args(AnthropicModelName) if get_origin(arg) is Literal)
-_VALID_MODEL_NAMES: frozenset[str] = frozenset(get_args(_literal_type))
-
-
 def get_model(model_name: str) -> AnthropicModel:
     """Map a model name string to a Pydantic AI model instance.
     
     Raises ValueError for unknown or unsupported model names.
+    AgentConfig.validate_model_name already enforces this at config creation time,
+    so this is a belt-and-suspenders guard.
     """
-    #TODO: JF Review
-    if model_name not in _VALID_MODEL_NAMES:
-        raise ValueError(f"Unsupported model name: {model_name!r}. Must be one of: {sorted(_VALID_MODEL_NAMES)}")
+    validate_model_name(model_name)  # raises ValueError for unknown names
     return AnthropicModel(model_name)

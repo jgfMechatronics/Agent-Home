@@ -8,12 +8,36 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from typing import Literal, get_args, get_origin
+
 from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic_ai.models.anthropic import AnthropicModelName
 from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from db.models import AgentRecord
+
+
+# AnthropicModelName is str | Literal['claude-...', ...]. Extract only the known
+# Literal values — the str arm is a forward-compat escape hatch, not a validation target.
+_literal_type = next(arg for arg in get_args(AnthropicModelName) if get_origin(arg) is Literal)
+VALID_MODEL_NAMES: frozenset[str] = frozenset(get_args(_literal_type))
+
+
+def validate_model_name(model_name: str) -> str:
+    """Validate that model_name is a known Anthropic model string.
+
+    Raises ValueError for empty or unrecognised names. Returns the name unchanged.
+    """
+    if not model_name.strip():
+        raise ValueError("model_name cannot be empty")
+    if model_name not in VALID_MODEL_NAMES:
+        raise ValueError(
+            f"Unknown model {model_name!r}. Must be one of: {sorted(VALID_MODEL_NAMES)}"
+        )
+    return model_name
 
 
 @dataclass
@@ -40,6 +64,8 @@ class AgentConfig(BaseModel):
     Optional fields:
     - compaction_target_fraction: Target context size after compaction as fraction of soft_compaction_limit
     - is_deletable: Whether agent can be deleted (default False)
+    - retries: how many times the agent can retry a failed tool call
+    - thinking_enabled
     """
     model_config = ConfigDict(extra="forbid") # prevent extra unexpected fields
 
@@ -53,12 +79,8 @@ class AgentConfig(BaseModel):
     
     @field_validator("model_name")
     @classmethod
-    def validate_model_name(cls, v: str) -> str:
-        # TODO, once get_model implemented validate that str corresponds to a valid AnthropicModel.
-        # Or, consider just storing model_name as an AnthropicModel and dealing with the DB integration.
-        if not v.strip():
-            raise ValueError("model_name cannot be empty")
-        return v
+    def _validate_model_name(cls, v: str) -> str:
+        return validate_model_name(v)
     
     @field_validator("soft_compaction_limit")
     @classmethod
@@ -72,6 +94,13 @@ class AgentConfig(BaseModel):
     def validate_compaction_target_fraction(cls, v: float) -> float:
         if not 0 < v < 1:
             raise ValueError("compaction_target_fraction must be between 0 and 1 (exclusive)")
+        return v
+
+    @field_validator("retries")
+    @classmethod
+    def validate_retries(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("retries must be non-negative")
         return v
 
 
