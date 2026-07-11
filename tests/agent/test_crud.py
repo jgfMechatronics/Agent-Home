@@ -6,7 +6,7 @@ import uuid
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.crud import create_agent_record, get_agent_record
+from agent.crud import create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
 from conftest import SAMPLE_AGENT_CONFIG
 from messages.messages import load_messages
 
@@ -47,13 +47,13 @@ class TestCreateAgentRecord:
 
 # --- get_agent_record tests ---
 
-async def test_get_agent_record_returns_record_for_known_id(
-    session: AsyncSession, agent_record
-):
-    result = await get_agent_record(session, agent_record.id)
-    assert result == agent_record
+class TestGetAgentRecord:
+    """Tests for get_agent_record."""
 
+    async def test_returns_record_for_known_id(self, session: AsyncSession, agent_record):
+        result = await get_agent_record(session, agent_record.id)
+        assert result == agent_record
 
-async def test_get_agent_record_returns_none_for_unknown_id(session: AsyncSession):
-    result = await get_agent_record(session, "nonexistent-id")
-    assert result is None
+    async def test_returns_none_for_unknown_id(self, session: AsyncSession):
+        result = await get_agent_record(session, "nonexistent-id")
+        assert result is None
