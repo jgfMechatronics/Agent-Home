@@ -180,25 +180,7 @@ class TestPutConfig:
         # Crud function should not be called when validation fails
         self.mock_replace_agent_config.assert_not_called()
 
-    async def test_returns_409_if_agent_locked(
-        self, app: FastAPI, client: AsyncClient, agent_record: AgentRecord
-    ):
-        """Returns 409 when agent has an active run in progress."""
-        # Set up locked state for this agent
-        agent_state = AgentAppState()
-        await agent_state.lock.acquire()  # Lock it
-        app.state.agent_app_state_reg[agent_record.id] = agent_state
-
-        response = await client.put(
-            f"/agents/{agent_record.id}/config",
-            json=agent_record.agent_config.model_dump(),
-        )
-
-        assert response.status_code == 409
-        assert response.json()["detail"] == f"Agent {agent_record.id!r} has an active run"
-        self.mock_replace_agent_config.assert_not_called()
-    
-    # 404 checked in common test
+    # 404/409 checked in common tests (TestNotFound, TestAgentLocked)
 
 
 class TestPutSystemInstructions:
@@ -228,24 +210,7 @@ class TestPutSystemInstructions:
             session, agent_record.id, instructions
         )
 
-    async def test_returns_409_if_agent_locked(
-        self, app: FastAPI, client: AsyncClient, agent_record: AgentRecord
-    ):
-        """Returns 409 when agent has an active run in progress."""
-        agent_state = AgentAppState()
-        await agent_state.lock.acquire()
-        app.state.agent_app_state_reg[agent_record.id] = agent_state
-
-        response = await client.put(
-            f"/agents/{agent_record.id}/system-instructions",
-            json=agent_record.system_instructions,
-        )
-
-        assert response.status_code == 409
-        assert response.json()["detail"] == f"Agent {agent_record.id!r} has an active run"
-        self.mock_replace_system_instructions.assert_not_called()
-    
-    # 404 checked in common test
+    # 404/409 checked in common tests (TestNotFound, TestAgentLocked)
 
 
 class TestGetAgent:
@@ -378,6 +343,18 @@ class TestHealthCheck:
         assert response.status_code == 503
 
 
+# --- Shared test data for parametrized PUT endpoint tests ---
+_VALID_CONFIG_BODY = {
+    "model_name": "claude-sonnet-4-20250514",
+    "tool_names": [],
+    "soft_compaction_limit": 1000,
+}
+_PUT_ENDPOINT_PARAMS = [
+    ("/agents/{agent_id}/config", _VALID_CONFIG_BODY),
+    ("/agents/{agent_id}/system-instructions", "some instructions"),
+]
+
+
 class TestNotFound:
     """404 behavior for unknown agent_id across all endpoints."""
 
@@ -394,16 +371,7 @@ class TestNotFound:
         response = await client.get(url)
         assert response.status_code == 404
 
-    _VALID_CONFIG_BODY = {
-        "model_name": "claude-sonnet-4-20250514",
-        "tool_names": [],
-        "soft_compaction_limit": 1000,
-    }
-
-    @pytest.mark.parametrize("path,body", [
-        ("/agents/{agent_id}/config", _VALID_CONFIG_BODY),
-        ("/agents/{agent_id}/system-instructions", "some instructions"),
-    ])
+    @pytest.mark.parametrize("path,body", _PUT_ENDPOINT_PARAMS)
     async def test_put_endpoints_return_404_for_unknown_agent(
         self, client: AsyncClient, path: str, body
     ):
@@ -411,6 +379,26 @@ class TestNotFound:
         url = path.format(agent_id=uuid4())
         response = await client.put(url, json=body)
         assert response.status_code == 404
+
+
+class TestAgentLocked:
+    """409 behavior when agent has an active run in progress."""
+
+    @pytest.mark.parametrize("path,body", _PUT_ENDPOINT_PARAMS)
+    async def test_put_endpoints_return_409_when_agent_locked(
+        self, app: FastAPI, client: AsyncClient, agent_record: AgentRecord, path: str, body
+    ):
+        """All PUT endpoints that modify agent state return 409 when agent is locked."""
+        # Set up locked state for this agent
+        agent_state = AgentAppState()
+        await agent_state.lock.acquire()
+        app.state.agent_app_state_reg[agent_record.id] = agent_state
+
+        url = path.format(agent_id=agent_record.id)
+        response = await client.put(url, json=body)
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == f"Agent {agent_record.id!r} has an active run"
 
 
 class TestCreateMemoryBlock:
