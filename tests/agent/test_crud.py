@@ -5,6 +5,7 @@ import uuid
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
@@ -67,6 +68,7 @@ class TestGetAgentRecord:
 # Function-specific behaviors have their own test classes.
 
 # Parametrization data for common replace-function behaviors
+# param args: "replace_fn,new_value,attr_name"
 _REPLACE_FUNCTIONS = [
     pytest.param(
         replace_agent_config,
@@ -81,7 +83,6 @@ _REPLACE_FUNCTIONS = [
         id="replace_system_instructions",
     ),
 ]
-
 
 @pytest.mark.parametrize("replace_fn,new_value,attr_name", _REPLACE_FUNCTIONS)
 class TestReplaceFunctionCommonBehaviors:
@@ -103,13 +104,17 @@ class TestReplaceFunctionCommonBehaviors:
         assert getattr(refreshed, attr_name) == new_value
 
     async def test_commits_on_success(self, session: AsyncSession, agent_record, replace_fn, new_value, attr_name):
-        """Replace functions commit changes (persist across new session)."""
-        agent_id = agent_record.id
-        await replace_fn(session, agent_id, new_value)
+        """Replace functions commit their changes."""
+        committed = False
 
-        async with AsyncSession(session.bind) as fresh_session:
-            refreshed = await get_agent_record(fresh_session, agent_id)
-            assert getattr(refreshed, attr_name) == new_value
+        @event.listens_for(session.sync_session, "after_commit")
+        def on_commit(sess):
+            nonlocal committed
+            committed = True
+
+        await replace_fn(session, agent_record.id, new_value)
+
+        assert committed, "Function did not commit"
 
 
 class TestReplaceSystemInstructions:
