@@ -19,22 +19,12 @@ from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import get_agent_record
-from agent.types import AgentAppState, AgentDeps, validate_model_name
+from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError, validate_model_name
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
 
-
-# --- Domain Exceptions ---
-# Routes translate these to HTTP status codes (404, 503)
-
-class AgentNotFoundError(Exception):
-    """Raised when agent_id doesn't exist in DB."""
-    pass
-
-
-class AgentLockedError(Exception):
-    """Raised when agent is already in use by another request."""
-    pass
+# Re-export exceptions for backward compatibility (canonical location is agent.types)
+__all__ = ["AgentFactory", "AgentNotFoundError", "AgentLockedError", "get_model"]
 
 
 class AgentFactory:

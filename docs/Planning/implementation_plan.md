@@ -948,11 +948,11 @@ agent_crud will often happen from discrete API hits.
 - [ ] Returns correct AgentConfig for a valid `agent_id`
 - [ ] Raises `NotFound` for unknown `agent_id`
 
-*[DEFERRED] `replace_config`:*
-- [ ] Replaces agent config in DB with `new_config`
-- [ ] Returns updated config
-- [ ] Raises `NotFound` for unknown `agent_id`
-- [ ] Unrelated configs not affected
+*`replace_agent_config`:*
+- [x] Replaces agent config in DB with `new_config`
+- [x] Returns updated config
+- [x] Raises `AgentNotFoundError` for unknown `agent_id`
+- [ ] Unrelated configs not affected (not explicitly tested)
 
 *[DEFERRED] `delete_agent`:*
 - [ ] Returns True and deletes agent row and all associated data (messages, memory blocks) when `is_deletable=True`
@@ -965,10 +965,10 @@ agent_crud will often happen from discrete API hits.
 - [ ] Returns list of all AgentConfigs
 - [ ] Returns empty list if no agents exist
 
-*[DEFERRED] `replace_system_instructions`:*
-- [ ] Stores instructions for the given agent (overwrites any previous value)
-- [ ] triggers recompilation of system prompt
-- [ ] Returns stored instructions
+*`replace_system_instructions`:*
+- [x] Stores instructions for the given agent (overwrites any previous value)
+- [x] triggers recompilation of system prompt
+- [x] Returns stored instructions
 
 *[DEFERRED] `get_system_instructions`:*
 - [ ] Returns expected system instructions for given agent_id
@@ -1080,13 +1080,12 @@ TODO: Consider extracting event loop logic to an `EventGenerator` class or simil
 *`GET /agents/{agent_id}/system-instructions`:*
 - [xr] Returns current system instructions string for a valid agent_id
 *`PUT /agents/{agent_id}/system-instructions`:*
-- [ ] Calls replace_system_instructions with correct agent_id and instructions string
-- [ ] Returns 409 if agent is currently locked (run in progress)
+- [x] Calls replace_system_instructions with correct agent_id and instructions string
+- [x] Returns 409 if agent is currently locked (run in progress)
 
 *Common (`GET/PUT /agents/{agent_id}/config`, `GET/PUT /agents/{agent_id}/system-instructions`)*
 - [x] Returns 404 for unknown agent_id
-    - [xr] for GETs, [x] for PUT /config
-- [ ] (PUTs only) returns 200 on success and echos back the set value (sys instr/agent config)
+- [x] (PUTs only) returns 200 on success and echos back the set value (sys instr/agent config)
     - echos the SET value, not just the passed in value
 
 

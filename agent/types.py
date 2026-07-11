@@ -52,6 +52,19 @@ class AgentAppState:
     cancel_requested: asyncio.Event = field(default_factory=asyncio.Event)
 
 
+# --- Domain Exceptions ---
+# Routes translate these to HTTP status codes (404, 409)
+
+class AgentNotFoundError(Exception):
+    """Raised when agent_id doesn't exist in DB."""
+    pass
+
+
+class AgentLockedError(Exception):
+    """Raised when agent is already in use by another request."""
+    pass
+
+
 class AgentConfig(BaseModel):
     """
     Agent configuration stored as JSON in AgentRecord.agent_config.

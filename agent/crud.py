@@ -4,7 +4,7 @@ Agent CRUD operations
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import AgentConfig, AgentDeps
+from agent.types import AgentConfig, AgentDeps, AgentNotFoundError
 from db.models import AgentRecord
 from memory.system_prompt_compilation import compile_system_prompt
 
@@ -25,14 +25,24 @@ async def replace_agent_config(
     session: AsyncSession, agent_id: str, config: AgentConfig
 ) -> AgentConfig:
     """Replace agent config in DB. Raises AgentNotFoundError if agent not found."""
-    raise NotImplementedError
+    record = await get_agent_record(session, agent_id)
+    if record is None:
+        raise AgentNotFoundError(agent_id)
+    record.agent_config = config
+    await session.flush()
+    return record.agent_config
 
 
 async def replace_system_instructions(
     session: AsyncSession, agent_id: str, instructions: str
 ) -> str:
     """Replace system instructions in DB and recompile. Raises AgentNotFoundError if not found."""
-    raise NotImplementedError
+    record = await get_agent_record(session, agent_id)
+    if record is None:
+        raise AgentNotFoundError(agent_id)
+    record.system_instructions = instructions
+    await compile_system_prompt(AgentDeps(session, record))
+    return record.system_instructions
 
 
 async def create_agent_record(
