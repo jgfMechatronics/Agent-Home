@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Local
 from agent.factory import AgentNotFoundError
+from agent.types import AgentConfig
 from api.fastapi_deps import get_deps_dep
 from conftest import make_deps
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
@@ -97,6 +98,32 @@ class TestCreateAgent:
             json={"name": "incomplete"},  # missing system_instructions and config
         )
         assert response.status_code in (400, 422)  # FastAPI validation error
+
+
+class TestGetConfig:
+    """GET /agents/{agent_id}/config — agent config."""
+
+    async def test_returns_config(self, client: AsyncClient, agent_record: AgentRecord):
+        """Returns the agent's AgentConfig as JSON."""
+        response = await client.get(f"/agents/{agent_record.id}/config")
+
+        assert response.status_code == 200
+        assert AgentConfig.model_validate(response.json()) == agent_record.agent_config
+
+    # 404 tested via parametrized TestNotFound
+
+
+class TestGetSystemInstructions:
+    """GET /agents/{agent_id}/system-instructions — agent system instructions."""
+
+    async def test_returns_system_instructions(self, client: AsyncClient, agent_record: AgentRecord):
+        """Returns the agent's system instructions as a JSON string."""
+        response = await client.get(f"/agents/{agent_record.id}/system-instructions")
+
+        assert response.status_code == 200
+        assert response.json() == agent_record.system_instructions
+
+    # 404 tested via parametrized TestNotFound
 
 
 class TestGetAgent:
@@ -236,6 +263,8 @@ class TestNotFound:
         "/agents/{agent_id}",
         "/agents/{agent_id}/memory/blocks",
         "/agents/{agent_id}/messages",
+        "/agents/{agent_id}/config",
+        "/agents/{agent_id}/system-instructions",
     ])
     async def test_get_endpoints_return_404_for_unknown_agent(self, client: AsyncClient, path: str):
         """All GET endpoints with agent_id return 404 for unknown agents."""

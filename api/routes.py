@@ -24,7 +24,7 @@ from pydantic_ai.messages import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record
-from agent.types import AgentAppState, AgentDeps
+from agent.types import AgentAppState, AgentConfig, AgentDeps
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_deps_dep
 from api.schemas import (
     AgentMetadataResponse,
@@ -189,6 +189,16 @@ async def create_agent(
     return AgentMetadataResponse.from_record(record)
 
 
+@router.get("/{agent_id}/system-instructions")
+async def get_system_instructions(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session_dep),
+) -> str:
+    """Return the system instructions for an existing agent."""
+    record = await get_agent_record_or_404(session, agent_id)
+    return record.system_instructions
+
+
 @router.get("/{agent_id}")
 async def get_agent_info(
     agent_id: str,
@@ -197,6 +207,16 @@ async def get_agent_info(
     """Return metadata for an existing agent."""
     record = await get_agent_record_or_404(session, agent_id)
     return AgentMetadataResponse.from_record(record)
+
+''
+@router.get("/{agent_id}/config")
+async def get_config(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session_dep),
+) -> AgentConfig:
+    """Return the config for an existing agent."""
+    record = await get_agent_record_or_404(session, agent_id)
+    return record.agent_config
 
 
 @router.get("/{agent_id}/memory/blocks")
