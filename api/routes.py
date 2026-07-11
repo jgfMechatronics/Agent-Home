@@ -227,7 +227,7 @@ async def get_agent_info(
     record = await get_agent_record_or_404(session, agent_id)
     return AgentMetadataResponse.from_record(record)
 
-''
+
 @router.get("/{agent_id}/config")
 async def get_config(
     agent_id: str,

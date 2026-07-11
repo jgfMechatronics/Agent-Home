@@ -1073,7 +1073,7 @@ TODO: Consider extracting event loop logic to an `EventGenerator` class or simil
 - [xr] Returns current AgentConfig as JSON for a valid agent_id
 
 *`PUT /agents/{agent_id}/config`:*
-- [ ] Calls replace_agent_config with correct agent_id and validated config (validated by AgentConfig constructor)
+- [xr] Calls replace_agent_config with correct agent_id and validated config (validated by AgentConfig constructor)
 - [ ] Returns 422 for invalid config (fails AgentConfig validation)
 - [ ] Returns 409 if agent is currently locked (run in progress)
 
