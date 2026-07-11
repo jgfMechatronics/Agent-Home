@@ -949,9 +949,9 @@ agent_crud will often happen from discrete API hits.
 - [ ] Raises `NotFound` for unknown `agent_id`
 
 *`replace_agent_config`:*
-- [x] Replaces agent config in DB with `new_config`
-- [x] Returns updated config
-- [x] Raises `AgentNotFoundError` for unknown `agent_id`
+- [ ] Replaces agent config in DB with `new_config`
+- [ ] Returns updated config
+- [ ] Raises `AgentNotFoundError` for unknown `agent_id`
 - [ ] Unrelated configs not affected (not explicitly tested)
 
 *[DEFERRED] `delete_agent`:*
@@ -966,9 +966,9 @@ agent_crud will often happen from discrete API hits.
 - [ ] Returns empty list if no agents exist
 
 *`replace_system_instructions`:*
-- [x] Stores instructions for the given agent (overwrites any previous value)
-- [x] triggers recompilation of system prompt
-- [x] Returns stored instructions
+- [ ] Stores instructions for the given agent (overwrites any previous value)
+- [ ] triggers recompilation of system prompt
+- [ ] Returns stored instructions
 
 *[DEFERRED] `get_system_instructions`:*
 - [ ] Returns expected system instructions for given agent_id
