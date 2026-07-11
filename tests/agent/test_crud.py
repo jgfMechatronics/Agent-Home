@@ -8,7 +8,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
-from agent.types import AgentConfig, AgentNotFoundError
+from agent.types import AgentNotFoundError
 from conftest import SAMPLE_AGENT_CONFIG
 from messages.messages import load_messages
 
@@ -61,71 +61,59 @@ class TestGetAgentRecord:
         assert result is None
 
 
-# --- replace_agent_config tests ---
+# --- replace function tests ---
+#
+# Common behaviors (not_found, commits) are tested via parametrization.
+# Function-specific behaviors have their own test classes.
 
-class TestReplaceAgentConfig:
-    """Tests for replace_agent_config."""
+# Parametrization data for common replace-function behaviors
+_REPLACE_FUNCTIONS = [
+    pytest.param(
+        replace_agent_config,
+        SAMPLE_AGENT_CONFIG.model_copy(update={"soft_compaction_limit": 7777}),
+        "agent_config",
+        id="replace_agent_config",
+    ),
+    pytest.param(
+        replace_system_instructions,
+        "New instructions for test.",
+        "system_instructions",
+        id="replace_system_instructions",
+    ),
+]
 
-    async def test_replaces_config_in_db_and_returns_it(self, session: AsyncSession, agent_record):
-        """Config is updated in the database and returned."""
-        agent_id = agent_record.id  # capture before any expiry
-        original_config = agent_record.agent_config
-        new_config = original_config.model_copy(update={"soft_compaction_limit": 9999})
-        assert new_config != original_config  # sanity check
 
-        result = await replace_agent_config(session, agent_id, new_config)
+@pytest.mark.parametrize("replace_fn,new_value,attr_name", _REPLACE_FUNCTIONS)
+class TestReplaceFunctionCommonBehaviors:
+    """Common behaviors shared by all replace_* functions."""
 
-        # Returns the updated config
-        assert result == new_config
+    async def test_raises_not_found_for_unknown_agent(self, session: AsyncSession, replace_fn, new_value, attr_name):
+        """Replace functions raise AgentNotFoundError for unknown agent_id."""
+        with pytest.raises(AgentNotFoundError):
+            await replace_fn(session, "nonexistent-id", new_value)
 
-        # Config is persisted in DB
+    async def test_updates_db_and_returns_new_value(self, session: AsyncSession, agent_record, replace_fn, new_value, attr_name):
+        """Replace functions update DB and return the new value."""
+        agent_id = agent_record.id
+        result = await replace_fn(session, agent_id, new_value)
+
+        assert result == new_value
         session.expire(agent_record)
         refreshed = await get_agent_record(session, agent_id)
-        assert refreshed.agent_config == new_config
+        assert getattr(refreshed, attr_name) == new_value
 
-    async def test_raises_not_found_for_unknown_agent(self, session: AsyncSession):
-        """Raises AgentNotFoundError for unknown agent_id."""
-        fake_config = AgentConfig(
-            model_name="claude-sonnet-4-20250514",
-            tool_names=[],
-            soft_compaction_limit=1000,
-        )
-        with pytest.raises(AgentNotFoundError):
-            await replace_agent_config(session, "nonexistent-id", fake_config)
-
-    async def test_commits_on_success(self, session: AsyncSession, agent_record):
-        """Changes are committed (persist across new session)."""
+    async def test_commits_on_success(self, session: AsyncSession, agent_record, replace_fn, new_value, attr_name):
+        """Replace functions commit changes (persist across new session)."""
         agent_id = agent_record.id
-        new_config = agent_record.agent_config.model_copy(update={"soft_compaction_limit": 7777})
+        await replace_fn(session, agent_id, new_value)
 
-        await replace_agent_config(session, agent_id, new_config)
-
-        # Get a fresh session to verify commit persisted
-        # Use session's bind to create new session
         async with AsyncSession(session.bind) as fresh_session:
             refreshed = await get_agent_record(fresh_session, agent_id)
-            assert refreshed.agent_config == new_config
+            assert getattr(refreshed, attr_name) == new_value
 
-
-# --- replace_system_instructions tests ---
 
 class TestReplaceSystemInstructions:
-    """Tests for replace_system_instructions."""
-
-    async def test_stores_instructions_and_returns_them(self, session: AsyncSession, agent_record):
-        """Instructions are stored in DB and returned."""
-        agent_id = agent_record.id
-        new_instructions = "You are a pirate. Always say arrr."
-
-        result = await replace_system_instructions(session, agent_id, new_instructions)
-
-        # Returns the stored instructions
-        assert result == new_instructions
-
-        # Instructions are persisted in DB
-        session.expire(agent_record)
-        refreshed = await get_agent_record(session, agent_id)
-        assert refreshed.system_instructions == new_instructions
+    """Function-specific tests for replace_system_instructions."""
 
     async def test_triggers_recompilation(self, session: AsyncSession, agent_record):
         """System prompt is recompiled after updating instructions."""
@@ -136,21 +124,4 @@ class TestReplaceSystemInstructions:
 
         session.expire(agent_record)
         refreshed = await get_agent_record(session, agent_id)
-        # Recompilation should include the new instructions in compiled prompt
         assert new_instructions in refreshed.compiled_system_prompt
-
-    async def test_raises_not_found_for_unknown_agent(self, session: AsyncSession):
-        """Raises AgentNotFoundError for unknown agent_id."""
-        with pytest.raises(AgentNotFoundError):
-            await replace_system_instructions(session, "nonexistent-id", "some instructions")
-
-    async def test_commits_on_success(self, session: AsyncSession, agent_record):
-        """Changes are committed (persist across new session)."""
-        agent_id = agent_record.id
-        new_instructions = "New instructions for commit test."
-
-        await replace_system_instructions(session, agent_id, new_instructions)
-
-        async with AsyncSession(session.bind) as fresh_session:
-            refreshed = await get_agent_record(fresh_session, agent_id)
-            assert refreshed.system_instructions == new_instructions
