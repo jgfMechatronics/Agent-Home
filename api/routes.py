@@ -69,7 +69,7 @@ def _raise_409_if_agent_locked(agent_id: str, agent_app_state_reg: dict[str, Age
         raise HTTPException(status_code=409, detail=f"Agent {agent_id!r} has an active run")
 
 
-async def get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
+async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
     """Load agent record, raising 404 if not found."""
     record = await get_agent_record(session, agent_id)
     if record is None:
@@ -202,7 +202,7 @@ async def get_system_instructions(
     session: AsyncSession = Depends(get_session_dep),
 ) -> str:
     """Return the system instructions for an existing agent."""
-    record = await get_agent_record_or_404(session, agent_id)
+    record = await _get_agent_record_or_404(session, agent_id)
     return record.system_instructions
 
 
@@ -236,7 +236,7 @@ async def get_agent_info(
     session: AsyncSession = Depends(get_session_dep),
 ) -> AgentMetadataResponse:
     """Return metadata for an existing agent."""
-    record = await get_agent_record_or_404(session, agent_id)
+    record = await _get_agent_record_or_404(session, agent_id)
     return AgentMetadataResponse.from_record(record)
 
 
@@ -246,7 +246,7 @@ async def get_config(
     session: AsyncSession = Depends(get_session_dep),
 ) -> AgentConfig:
     """Return the config for an existing agent."""
-    record = await get_agent_record_or_404(session, agent_id)
+    record = await _get_agent_record_or_404(session, agent_id)
     return record.agent_config
 
 
@@ -305,7 +305,7 @@ async def get_messages(
     Return conversation history. Use ?full=true for complete history.
     TODO: Another instance of bad read-only control
     """
-    record = await get_agent_record_or_404(session, agent_id)
+    record = await _get_agent_record_or_404(session, agent_id)
     # TODO: Don't need agent record if requesting full, but we're likely gonna rework this anyway
     start_timestamp = None if full else record.context_window_start
     messages = await load_messages(session, agent_id, start_timestamp=start_timestamp)
