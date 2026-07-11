@@ -1074,18 +1074,18 @@ TODO: Consider extracting event loop logic to an `EventGenerator` class or simil
 
 *`PUT /agents/{agent_id}/config`:*
 - [xr] Calls replace_agent_config with correct agent_id and validated config (validated by AgentConfig constructor)
-- [x] Returns 422 for invalid config (fails AgentConfig validation)
-- [x] Returns 409 if agent is currently locked (run in progress)
+- [xr] Returns 422 for invalid config (fails AgentConfig validation)
+- [xr] Returns 409 if agent is currently locked (run in progress)
 
 *`GET /agents/{agent_id}/system-instructions`:*
 - [xr] Returns current system instructions string for a valid agent_id
 *`PUT /agents/{agent_id}/system-instructions`:*
-- [x] Calls replace_system_instructions with correct agent_id and instructions string
-- [x] Returns 409 if agent is currently locked (run in progress)
+- [xr] Calls replace_system_instructions with correct agent_id and instructions string
+- [xr] Returns 409 if agent is currently locked (run in progress)
 
 *Common (`GET/PUT /agents/{agent_id}/config`, `GET/PUT /agents/{agent_id}/system-instructions`)*
-- [x] Returns 404 for unknown agent_id
-- [x] (PUTs only) returns 200 on success and echos back the set value (sys instr/agent config)
+- [xr] Returns 404 for unknown agent_id
+- [xr] (PUTs only) returns 200 on success and echos back the set value (sys instr/agent config)
     - echos the SET value, not just the passed in value
 
 

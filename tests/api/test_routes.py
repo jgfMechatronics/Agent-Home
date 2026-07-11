@@ -142,12 +142,8 @@ class TestPutConfig:
         config = agent_record.agent_config
         self.mock_replace_agent_config.return_value = config
 
-        response = await client.put(
-            f"/agents/{agent_record.id}/config",
-            json=config.model_dump(),
-        )
+        await client.put(f"/agents/{agent_record.id}/config", json=config.model_dump())
 
-        assert response.status_code == 200
         self.mock_replace_agent_config.assert_called_once_with(
             session, agent_record.id, config
         )
@@ -199,21 +195,8 @@ class TestPutConfig:
         )
 
         assert response.status_code == 409
-        assert "active run" in response.json()["detail"]
+        assert response.json()["detail"] == f"Agent {agent_record.id!r} has an active run"
         self.mock_replace_agent_config.assert_not_called()
-
-    async def test_returns_404_for_unknown_agent(
-        self, client: AsyncClient, agent_record: AgentRecord
-    ):
-        """Returns 404 when replace_agent_config raises AgentNotFoundError."""
-        self.mock_replace_agent_config.side_effect = AgentNotFoundError("unknown-agent-id")
-
-        response = await client.put(
-            f"/agents/unknown-agent-id/config",
-            json=agent_record.agent_config.model_dump(),
-        )
-
-        assert response.status_code == 404
 
 
 class TestPutSystemInstructions:
@@ -230,7 +213,7 @@ class TestPutSystemInstructions:
     ):
         """Calls replace_system_instructions with agent_id and instructions string, echoes result."""
         instructions = agent_record.system_instructions
-        self.mock_replace_system_instructions.return_value = instructions
+        self.mock_replace_system_instructions.return_value = "mutated instructions" # ensure route passes back actual ret val of the function
 
         response = await client.put(
             f"/agents/{agent_record.id}/system-instructions",
@@ -238,7 +221,7 @@ class TestPutSystemInstructions:
         )
 
         assert response.status_code == 200
-        assert response.json() == instructions
+        assert response.json() == self.mock_replace_system_instructions.return_value
         self.mock_replace_system_instructions.assert_called_once_with(
             session, agent_record.id, instructions
         )
@@ -257,21 +240,8 @@ class TestPutSystemInstructions:
         )
 
         assert response.status_code == 409
-        assert "active run" in response.json()["detail"]
+        assert response.json()["detail"] == f"Agent {agent_record.id!r} has an active run"
         self.mock_replace_system_instructions.assert_not_called()
-
-    async def test_returns_404_for_unknown_agent(
-        self, client: AsyncClient, agent_record: AgentRecord
-    ):
-        """Returns 404 when replace_system_instructions raises AgentNotFoundError."""
-        self.mock_replace_system_instructions.side_effect = AgentNotFoundError("unknown-agent-id")
-
-        response = await client.put(
-            f"/agents/unknown-agent-id/system-instructions",
-            json=agent_record.system_instructions,
-        )
-
-        assert response.status_code == 404
 
 
 class TestGetAgent:
