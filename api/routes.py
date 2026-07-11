@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.crud import agent_exists, create_agent_record, get_agent_record
+from agent.crud import agent_exists, create_agent_record, get_agent_record, replace_agent_config
 from agent.types import AgentAppState, AgentConfig, AgentDeps
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_deps_dep
 from api.schemas import (
@@ -60,6 +60,13 @@ def map_to_sse(event: Any) -> ServerSentEvent:
         # Stream-end signal only — don't expose the result object
         return ServerSentEvent(data={}, event="AgentRunResultEvent")
     return ServerSentEvent(data=event, event=type(event).__name__)
+
+
+def _raise_409_if_agent_locked(agent_id: str, agent_app_state_reg: dict[str, AgentAppState]) -> None:
+    """Raise 409 if the agent has an active run in progress."""
+    agent_app_state = agent_app_state_reg.get(agent_id)
+    if agent_app_state is not None and agent_app_state.lock.locked():
+        raise HTTPException(status_code=409, detail=f"Agent {agent_id!r} has an active run")
 
 
 async def get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
@@ -197,6 +204,18 @@ async def get_system_instructions(
     """Return the system instructions for an existing agent."""
     record = await get_agent_record_or_404(session, agent_id)
     return record.system_instructions
+
+
+@router.put("/{agent_id}/config")
+async def put_config(
+    agent_id: str,
+    config: AgentConfig,
+    session: AsyncSession = Depends(get_session_dep),
+    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
+) -> AgentConfig:
+    """Replace the config for an existing agent."""
+    _raise_409_if_agent_locked(agent_id, agent_app_state_reg)
+    return await replace_agent_config(session, agent_id, config)
 
 
 @router.get("/{agent_id}")

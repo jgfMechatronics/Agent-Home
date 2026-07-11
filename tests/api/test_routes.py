@@ -126,6 +126,35 @@ class TestGetSystemInstructions:
     # 404 tested via parametrized TestNotFound
 
 
+class TestPutConfig:
+    """PUT /agents/{agent_id}/config — replace agent config."""
+
+    @pytest.fixture(autouse=True)
+    def mock_replace_agent_config_dep(self):
+        with patch("api.routes.replace_agent_config", new_callable=AsyncMock) as mock:
+            self.mock_replace_agent_config = mock
+            yield
+
+    async def test_calls_replace_agent_config_with_correct_args(
+        self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession
+    ):
+        """Calls replace_agent_config with the agent_id and a validated AgentConfig (not raw dict)."""
+        config = agent_record.agent_config
+        self.mock_replace_agent_config.return_value = config
+
+        response = await client.put(
+            f"/agents/{agent_record.id}/config",
+            json=config.model_dump(),
+        )
+
+        assert response.status_code == 200
+        self.mock_replace_agent_config.assert_called_once_with(
+            session, agent_record.id, config
+        )
+
+    # 404, 409, 422 tested separately
+
+
 class TestGetAgent:
     """GET /agents/{agent_id} — agent metadata."""
     

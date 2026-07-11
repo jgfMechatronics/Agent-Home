@@ -21,6 +21,13 @@ async def agent_exists(session: AsyncSession, agent_id: str) -> bool:
     return result.scalar()
 
 
+async def replace_agent_config(
+    session: AsyncSession, agent_id: str, config: AgentConfig
+) -> AgentConfig:
+    """Replace agent config in DB. Raises AgentNotFoundError if agent not found."""
+    raise NotImplementedError
+
+
 async def create_agent_record(
     session: AsyncSession,
     name: str,
