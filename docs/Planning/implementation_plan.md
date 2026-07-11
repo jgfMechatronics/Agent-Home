@@ -921,9 +921,9 @@ They were not called in current routes nor did they have any dependents
 - [xr] `get_agent_record(session, agent_id)` — return AgentRecord for a given agent_id, or None if not found
 - [xr] `agent_exists(session, agent_id) -> bool` — lightweight existence check via EXISTS scalar query; does not load the full record
 - [DEFERRED] `get_config(agent_id)` — return AgentConfig for a given agent_id
-- [DEFERRED] `update_config(agent_id, new_config: AgentConfig)` — replace agent's config in DB.
+- [xr] `replace_config(agent_id, new_config: AgentConfig)` — replace agent's config in DB.
 - [DEFERRED] `delete_agent(agent_id) -> bool` — remove all data associated with agent from DB IFF `AgentConfig.is_deletable` is True. Returns True if deleted, False if not found or delete-protected. Note: to delete a delete-protected agent, first set `is_deletable=True` via `update_config`.
-- [DEFERRED] `replace_system_instructions(agent_id, instructions)` — set (overwrite) the system instructions for an agent  
+- [xr] `replace_system_instructions(agent_id, instructions)` — set (overwrite) the system instructions for an agent  
 - [DEFERRED] `get_system_instructions(agent_id)`
 - [DEFERRED] `list_agents() -> list[AgentConfig]` — return all agent configs (can access name and ID from config)
 Note: unlike block_crud, agent_crud works On agent ID instead of agent deps. This is because block_crud Will often be called from inside an active session, where a database connection already exists and agent deps is already load.  
@@ -950,10 +950,9 @@ agent_crud will often happen from discrete API hits.
 
 *`replace_agent_config`:*
 - [xr] Replaces agent config in DB with `new_config`
-- [x] Returns updated config
-- [x] Raises `AgentNotFoundError` for unknown `agent_id`
-- [ ] Unrelated configs not affected (not explicitly tested)
-- [x] commit on success
+- [xr] Returns updated config
+- [xr] Raises `AgentNotFoundError` for unknown `agent_id`
+- [xr] commit on success
 
 *[DEFERRED] `delete_agent`:*
 - [ ] Returns True and deletes agent row and all associated data (messages, memory blocks) when `is_deletable=True`
@@ -967,11 +966,11 @@ agent_crud will often happen from discrete API hits.
 - [ ] Returns empty list if no agents exist
 
 *`replace_system_instructions`:*
-- [x] Stores instructions for the given agent (overwrites any previous value)
-- [x] triggers recompilation of system prompt
-- [x] Returns stored instructions
-- [x] commit on success
-- [x] Raises `AgentNotFoundError` for unknown `agent_id`
+- [xr] Stores instructions for the given agent (overwrites any previous value)
+- [xr] triggers recompilation of system prompt
+- [xr] Returns stored instructions
+- [xr] commit on success
+- [xr] Raises `AgentNotFoundError` for unknown `agent_id`
 
 *[DEFERRED] `get_system_instructions`:*
 - [ ] Returns expected system instructions for given agent_id

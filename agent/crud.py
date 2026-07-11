@@ -25,6 +25,7 @@ async def replace_agent_config(
     session: AsyncSession, agent_id: str, config: AgentConfig
 ) -> AgentConfig:
     """Replace agent config in DB. Raises AgentNotFoundError if agent not found."""
+    # TODO: Check all callsites for get_agent_record. if we always do the below pattern, just make it raise instead
     record = await get_agent_record(session, agent_id)
     if record is None:
         raise AgentNotFoundError(agent_id)
