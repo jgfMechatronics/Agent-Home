@@ -949,7 +949,7 @@ agent_crud will often happen from discrete API hits.
 - [ ] Raises `NotFound` for unknown `agent_id`
 
 *`replace_agent_config`:*
-- [ ] Replaces agent config in DB with `new_config`
+- [xr] Replaces agent config in DB with `new_config`
 - [ ] Returns updated config
 - [ ] Raises `AgentNotFoundError` for unknown `agent_id`
 - [ ] Unrelated configs not affected (not explicitly tested)

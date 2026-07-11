@@ -57,3 +57,23 @@ class TestGetAgentRecord:
     async def test_returns_none_for_unknown_id(self, session: AsyncSession):
         result = await get_agent_record(session, "nonexistent-id")
         assert result is None
+
+
+# --- replace_agent_config tests ---
+
+class TestReplaceAgentConfig:
+    """Tests for replace_agent_config."""
+
+    async def test_replaces_config_in_db(self, session: AsyncSession, agent_record):
+        """Config is updated in the database."""
+        agent_id = agent_record.id  # capture before any expiry
+        original_config = agent_record.agent_config
+        new_config = original_config.model_copy(update={"soft_compaction_limit": 9999})
+        assert new_config != original_config  # sanity check
+
+        await replace_agent_config(session, agent_id, new_config)
+
+        # Force fresh read from DB
+        session.expire(agent_record)
+        refreshed = await get_agent_record(session, agent_id)
+        assert refreshed.agent_config == new_config

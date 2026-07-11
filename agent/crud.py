@@ -25,14 +25,11 @@ async def replace_agent_config(
     session: AsyncSession, agent_id: str, config: AgentConfig
 ) -> AgentConfig:
     """Replace agent config in DB. Raises AgentNotFoundError if agent not found."""
-    # TODO: Uncomment after writing crud unit tests (TDD red-green cycle)
-    # record = await get_agent_record(session, agent_id)
-    # if record is None:
-    #     raise AgentNotFoundError(agent_id)
-    # record.agent_config = config
-    # await session.flush()
-    # return record.agent_config
-    raise NotImplementedError
+    record = await get_agent_record(session, agent_id)
+    record.agent_config = config
+    await session.commit()
+    await session.refresh(record)
+    return record.agent_config
 
 
 async def replace_system_instructions(
