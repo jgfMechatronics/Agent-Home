@@ -194,6 +194,9 @@ async def create_agent(
     behaviour should be covered by tests in test_routes.py::TestCreateAgent.
     
     TODO: I was able to get an invalid model name through to the DB. Errored out when trying to do a model request but did persist
+    TODO: this route and the associated crud function do not follow our read only scheme. granted, the read only scheme is intended to
+    block concurrent access to an existing agent, which doesn't apply here. we can't use our normal deps scheme to lock because there's
+    no agent to construct deps for. will need to figure out, perhaps this route manually acquires the lock.
     """
     record = await create_agent_record(session, body.name, body.system_instructions, body.config)
     return AgentMetadataResponse.from_record(record)
