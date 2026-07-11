@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Local
 from agent.factory import AgentNotFoundError
-from agent.types import AgentConfig
+from agent.types import AgentAppState, AgentConfig
 from api.fastapi_deps import get_deps_dep
 from conftest import make_deps
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
@@ -152,7 +152,51 @@ class TestPutConfig:
             session, agent_record.id, config
         )
 
-    # 404, 409, 422 tested separately
+    async def test_returns_422_for_invalid_config(
+        self, client: AsyncClient, agent_record: AgentRecord
+    ):
+        """Returns 422 when config fails AgentConfig validation."""
+        invalid_config = {"model_name": 12345}  # model_name should be string
+
+        response = await client.put(
+            f"/agents/{agent_record.id}/config",
+            json=invalid_config,
+        )
+
+        assert response.status_code == 422
+        # Crud function should not be called when validation fails
+        self.mock_replace_agent_config.assert_not_called()
+
+    async def test_returns_409_if_agent_locked(
+        self, app: FastAPI, client: AsyncClient, agent_record: AgentRecord
+    ):
+        """Returns 409 when agent has an active run in progress."""
+        # Set up locked state for this agent
+        agent_state = AgentAppState()
+        await agent_state.lock.acquire()  # Lock it
+        app.state.agent_app_state_reg[agent_record.id] = agent_state
+
+        response = await client.put(
+            f"/agents/{agent_record.id}/config",
+            json=agent_record.agent_config.model_dump(),
+        )
+
+        assert response.status_code == 409
+        assert "active run" in response.json()["detail"]
+        self.mock_replace_agent_config.assert_not_called()
+
+    async def test_returns_404_for_unknown_agent(
+        self, client: AsyncClient, agent_record: AgentRecord
+    ):
+        """Returns 404 when replace_agent_config raises AgentNotFoundError."""
+        self.mock_replace_agent_config.side_effect = AgentNotFoundError("unknown-agent-id")
+
+        response = await client.put(
+            f"/agents/unknown-agent-id/config",
+            json=agent_record.agent_config.model_dump(),
+        )
+
+        assert response.status_code == 404
 
 
 class TestGetAgent:
