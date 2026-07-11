@@ -1,4 +1,7 @@
-"""API routes — Section 4.1.
+"""
+API routes
+NOTE: Read only routes should take a session only and do not need to read or acquire the agent lock
+R/W routes should take deps from the get_deps_dep which acquires and holds the lock
 
 TODO: Our current "read-only" access pattern isn't truly read-only. Read operations
 take a full AsyncSession and may return mutable ORM objects still connected to the DB.
@@ -282,7 +285,8 @@ async def cancel_agent_run(
     agent_id: str,
     agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> None:
-    """Cancel an active agent run.
+    """
+    Cancel an active agent run.
 
     Sets the cancel_requested for the given agent if a run is currently active.
     Returns 202 if the cancel signal was sent, 409 if no run is active.
