@@ -197,6 +197,8 @@ class TestPutConfig:
         assert response.status_code == 409
         assert response.json()["detail"] == f"Agent {agent_record.id!r} has an active run"
         self.mock_replace_agent_config.assert_not_called()
+    
+    # 404 checked in common test
 
 
 class TestPutSystemInstructions:
@@ -242,6 +244,8 @@ class TestPutSystemInstructions:
         assert response.status_code == 409
         assert response.json()["detail"] == f"Agent {agent_record.id!r} has an active run"
         self.mock_replace_system_instructions.assert_not_called()
+    
+    # 404 checked in common test
 
 
 class TestGetAgent:
