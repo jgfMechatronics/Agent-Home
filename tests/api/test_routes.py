@@ -152,6 +152,23 @@ class TestPutConfig:
             session, agent_record.id, config
         )
 
+    async def test_returns_200_with_echoed_config(
+        self, client: AsyncClient, agent_record: AgentRecord
+    ):
+        """Echoes the value returned by replace_agent_config, not just the input."""
+        sent_config = agent_record.agent_config
+        # Return a different config to confirm we echo the crud result, not the raw input
+        returned_config = sent_config.model_copy(update={"retries": sent_config.retries + 1})
+        self.mock_replace_agent_config.return_value = returned_config
+
+        response = await client.put(
+            f"/agents/{agent_record.id}/config",
+            json=sent_config.model_dump(),
+        )
+
+        assert response.status_code == 200
+        assert AgentConfig.model_validate(response.json()) == returned_config
+
     async def test_returns_422_for_invalid_config(
         self, client: AsyncClient, agent_record: AgentRecord
     ):
@@ -194,6 +211,64 @@ class TestPutConfig:
         response = await client.put(
             f"/agents/unknown-agent-id/config",
             json=agent_record.agent_config.model_dump(),
+        )
+
+        assert response.status_code == 404
+
+
+class TestPutSystemInstructions:
+    """PUT /agents/{agent_id}/system-instructions — replace system instructions."""
+
+    @pytest.fixture(autouse=True)
+    def mock_replace_system_instructions_dep(self):
+        with patch("api.routes.replace_system_instructions", new_callable=AsyncMock) as mock:
+            self.mock_replace_system_instructions = mock
+            yield
+
+    async def test_calls_replace_system_instructions_with_correct_args(
+        self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession
+    ):
+        """Calls replace_system_instructions with agent_id and instructions string, echoes result."""
+        instructions = agent_record.system_instructions
+        self.mock_replace_system_instructions.return_value = instructions
+
+        response = await client.put(
+            f"/agents/{agent_record.id}/system-instructions",
+            json=instructions,
+        )
+
+        assert response.status_code == 200
+        assert response.json() == instructions
+        self.mock_replace_system_instructions.assert_called_once_with(
+            session, agent_record.id, instructions
+        )
+
+    async def test_returns_409_if_agent_locked(
+        self, app: FastAPI, client: AsyncClient, agent_record: AgentRecord
+    ):
+        """Returns 409 when agent has an active run in progress."""
+        agent_state = AgentAppState()
+        await agent_state.lock.acquire()
+        app.state.agent_app_state_reg[agent_record.id] = agent_state
+
+        response = await client.put(
+            f"/agents/{agent_record.id}/system-instructions",
+            json=agent_record.system_instructions,
+        )
+
+        assert response.status_code == 409
+        assert "active run" in response.json()["detail"]
+        self.mock_replace_system_instructions.assert_not_called()
+
+    async def test_returns_404_for_unknown_agent(
+        self, client: AsyncClient, agent_record: AgentRecord
+    ):
+        """Returns 404 when replace_system_instructions raises AgentNotFoundError."""
+        self.mock_replace_system_instructions.side_effect = AgentNotFoundError("unknown-agent-id")
+
+        response = await client.put(
+            f"/agents/unknown-agent-id/system-instructions",
+            json=agent_record.system_instructions,
         )
 
         assert response.status_code == 404

@@ -28,6 +28,13 @@ async def replace_agent_config(
     raise NotImplementedError
 
 
+async def replace_system_instructions(
+    session: AsyncSession, agent_id: str, instructions: str
+) -> str:
+    """Replace system instructions in DB and recompile. Raises AgentNotFoundError if not found."""
+    raise NotImplementedError
+
+
 async def create_agent_record(
     session: AsyncSession,
     name: str,

@@ -10,7 +10,7 @@ TODO: We have some exception catching and mapping that doesn't use "raise ... fr
 import logging
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.messages import (
@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.crud import agent_exists, create_agent_record, get_agent_record, replace_agent_config
+from agent.crud import agent_exists, create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
 from agent.types import AgentAppState, AgentConfig, AgentDeps
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_deps_dep
 from api.schemas import (
@@ -216,6 +216,18 @@ async def put_config(
     """Replace the config for an existing agent."""
     _raise_409_if_agent_locked(agent_id, agent_app_state_reg)
     return await replace_agent_config(session, agent_id, config)
+
+
+@router.put("/{agent_id}/system-instructions")
+async def put_system_instructions(
+    agent_id: str,
+    instructions: str = Body(...),
+    session: AsyncSession = Depends(get_session_dep),
+    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
+) -> str:
+    """Replace system instructions for an existing agent and recompile."""
+    _raise_409_if_agent_locked(agent_id, agent_app_state_reg)
+    return await replace_system_instructions(session, agent_id, instructions)
 
 
 @router.get("/{agent_id}")
