@@ -420,6 +420,24 @@ class TestNotFound:
         response = await client.get(url)
         assert response.status_code == 404
 
+    _VALID_CONFIG_BODY = {
+        "model_name": "claude-sonnet-4-20250514",
+        "tool_names": [],
+        "soft_compaction_limit": 1000,
+    }
+
+    @pytest.mark.parametrize("path,body", [
+        ("/agents/{agent_id}/config", _VALID_CONFIG_BODY),
+        ("/agents/{agent_id}/system-instructions", "some instructions"),
+    ])
+    async def test_put_endpoints_return_404_for_unknown_agent(
+        self, client: AsyncClient, path: str, body
+    ):
+        """All PUT endpoints with agent_id return 404 for unknown agents."""
+        url = path.format(agent_id=uuid4())
+        response = await client.put(url, json=body)
+        assert response.status_code == 404
+
 
 class TestCreateMemoryBlock:
     """POST /agents/{agent_id}/memory/blocks — create a memory block."""
