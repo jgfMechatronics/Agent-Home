@@ -27,6 +27,7 @@ from agent.tools import get_tools_for_agent
 __all__ = ["AgentFactory", "AgentNotFoundError", "AgentLockedError", "get_model"]
 
 
+LOCK_TIMEOUT_SECONDS: int = 60
 LOCK_TIMEOUT_FAST: int = 2
 
 
@@ -43,8 +44,6 @@ class AgentFactory:
     which proves the caller holds the lock.
     """
 
-    LOCK_TIMEOUT_SECONDS: int = 60
-
     def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState], session: AsyncSession):
         """Resolve (or create) the agent slot from the registry, then discard the registry ref."""
         self._agent_id = agent_id
@@ -60,16 +59,16 @@ class AgentFactory:
         return agent_app_state_reg[agent_id]
 
     @asynccontextmanager
-    async def build_deps(self) -> AsyncIterator[AgentDeps]:
+    async def build_deps(self, timeout: float = LOCK_TIMEOUT_SECONDS) -> AsyncIterator[AgentDeps]:
         """Async context manager that acquires the agent lock and yields AgentDeps.
 
         Lock-then-fetch: acquires lock BEFORE fetching from DB to prevent stale state.
         Releases lock on exit (normal or exception) via try/finally.
         """
         try:
-            await asyncio.wait_for(self._agent_app_state.lock.acquire(), timeout=self.LOCK_TIMEOUT_SECONDS)
+            await asyncio.wait_for(self._agent_app_state.lock.acquire(), timeout=timeout)
         except asyncio.TimeoutError:
-            raise AgentLockedError(f"Agent {self._agent_id!r} did not become available within {self.LOCK_TIMEOUT_SECONDS}s")
+            raise AgentLockedError(f"Agent {self._agent_id!r} did not become available within {timeout}s")
 
         try:
             agent_record = await get_agent_record(self._session, self._agent_id)

@@ -24,7 +24,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.factory import AgentFactory, AgentNotFoundError, get_model
+from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError, get_model
 from agent.types import AgentAppState, AgentDeps
 from memory.system_prompt_compilation import get_system_prompt
 from conftest import SAMPLE_AGENT_CONFIG
@@ -305,6 +305,21 @@ async def test_build_deps_concurrent_different_agents_no_block(
     # B should enter while A is still holding its lock (different agents, no blocking)
     # Expected: a_entered, b_entered, b_exiting, a_exiting
     assert execution_order.index("b_entered") < execution_order.index("a_exiting")
+
+
+@pytest.mark.asyncio
+async def test_build_deps_timeout_raises_agent_locked_error(
+    agent_factory: AgentFactory,
+    agent_app_state_reg: dict,
+    agent_record: AgentRecord,
+):
+    """build_deps raises AgentLockedError when the lock is not acquired within timeout."""
+    # Hold the lock so the second acquire times out
+    await agent_app_state_reg[agent_record.id].lock.acquire()
+
+    with pytest.raises(AgentLockedError):
+        async with agent_factory.build_deps(timeout=0.01):
+            pass  # should not reach here
 
 
 # --- AgentFactory.build_agent_and_deps tests ---

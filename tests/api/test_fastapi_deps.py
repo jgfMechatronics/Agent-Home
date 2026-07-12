@@ -101,7 +101,7 @@ async def deps_only_client(
     captured: dict,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Test client wired to get_deps_dep — route captures AgentDeps only (no Agent)."""
-    async def _route(deps: AgentDeps = Depends(get_deps_dep)):
+    async def _route(deps: AgentDeps = Depends(get_deps_dep())):
         captured["deps"] = deps
         if exc := captured.get("route_raises"):
             raise exc

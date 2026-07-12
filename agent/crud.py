@@ -4,7 +4,7 @@ Agent CRUD operations
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import AgentConfig, AgentDeps, AgentNotFoundError
+from agent.types import AgentConfig, AgentDeps
 from db.models import AgentRecord
 from memory.system_prompt_compilation import compile_system_prompt
 
@@ -21,32 +21,19 @@ async def agent_exists(session: AsyncSession, agent_id: str) -> bool:
     return result.scalar()
 
 
-async def replace_agent_config(
-    session: AsyncSession, agent_id: str, config: AgentConfig
-) -> AgentConfig:
-    """Replace agent config in DB. Raises AgentNotFoundError if agent not found."""
-    # TODO: Check all callsites for get_agent_record. if we always do the below pattern, just make it raise instead
-    record = await get_agent_record(session, agent_id)
-    if record is None:
-        raise AgentNotFoundError(agent_id)
-    record.agent_config = config
-    await session.commit()
-    await session.refresh(record)
-    return record.agent_config
+async def replace_agent_config(deps: AgentDeps, config: AgentConfig) -> AgentConfig:
+    """Replace agent config in DB. Agent is already verified to exist via deps."""
+    deps.config = config
+    await deps.commit_changes_refresh_agent_record()
+    return deps.config
 
 
-async def replace_system_instructions(
-    session: AsyncSession, agent_id: str, instructions: str
-) -> str:
-    """Replace system instructions in DB and recompile. Raises AgentNotFoundError if not found."""
-    record = await get_agent_record(session, agent_id)
-    if record is None:
-        raise AgentNotFoundError(agent_id)
-    record.system_instructions = instructions
-    await compile_system_prompt(AgentDeps(session, record))
-    await session.commit()
-    await session.refresh(record)
-    return record.system_instructions
+async def replace_system_instructions(deps: AgentDeps, instructions: str) -> str:
+    """Replace system instructions in DB and recompile. Agent is already verified to exist via deps."""
+    deps.system_instructions = instructions
+    await compile_system_prompt(deps)
+    await deps.commit_changes_refresh_agent_record()
+    return deps.system_instructions
 
 
 async def create_agent_record(

@@ -9,7 +9,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
-from agent.types import AgentNotFoundError
+from agent.types import AgentDeps
 from conftest import SAMPLE_AGENT_CONFIG
 from messages.messages import load_messages
 
@@ -64,8 +64,18 @@ class TestGetAgentRecord:
 
 # --- replace function tests ---
 #
-# Common behaviors (not_found, commits) are tested via parametrization.
+# Common behaviors (commits, round-trip) are tested via parametrization.
 # Function-specific behaviors have their own test classes.
+#
+# Not-found guarantee: replace_* functions take AgentDeps, which proves the agent exists.
+# AgentNotFoundError is raised by AgentFactory.build_deps before deps are ever constructed —
+# tested in tests/agent/test_factory.py, not here.
+
+@pytest_asyncio.fixture
+async def agent_deps(session: AsyncSession, agent_record) -> AgentDeps:
+    """AgentDeps constructed directly for crud tests (bypasses factory/lock — valid in tests)."""
+    return AgentDeps(session, agent_record)
+
 
 # Parametrization data for common replace-function behaviors
 # param args: "replace_fn,new_value,attr_name"
@@ -88,22 +98,21 @@ _REPLACE_FUNCTIONS = [
 class TestReplaceFunctionCommonBehaviors:
     """Common behaviors shared by all replace_* functions."""
 
-    async def test_raises_not_found_for_unknown_agent(self, session: AsyncSession, replace_fn, new_value, attr_name):
-        """Replace functions raise AgentNotFoundError for unknown agent_id."""
-        with pytest.raises(AgentNotFoundError):
-            await replace_fn(session, "nonexistent-id", new_value)
-
-    async def test_updates_db_and_returns_new_value(self, session: AsyncSession, agent_record, replace_fn, new_value, attr_name):
+    async def test_updates_db_and_returns_new_value(
+        self, session: AsyncSession, agent_record, agent_deps: AgentDeps, replace_fn, new_value, attr_name
+    ):
         """Replace functions update DB and return the new value."""
-        agent_id = agent_record.id
-        result = await replace_fn(session, agent_id, new_value)
+        agent_id = agent_record.id  # capture before expire — post-expire attr access triggers async lazy load
+        result = await replace_fn(agent_deps, new_value)
 
         assert result == new_value
         session.expire(agent_record)
         refreshed = await get_agent_record(session, agent_id)
         assert getattr(refreshed, attr_name) == new_value
 
-    async def test_commits_on_success(self, session: AsyncSession, agent_record, replace_fn, new_value, attr_name):
+    async def test_commits_on_success(
+        self, session: AsyncSession, agent_deps: AgentDeps, replace_fn, new_value, attr_name
+    ):
         """Replace functions commit their changes."""
         committed = False
 
@@ -112,7 +121,7 @@ class TestReplaceFunctionCommonBehaviors:
             nonlocal committed
             committed = True
 
-        await replace_fn(session, agent_record.id, new_value)
+        await replace_fn(agent_deps, new_value)
 
         assert committed, "Function did not commit"
 
@@ -120,12 +129,12 @@ class TestReplaceFunctionCommonBehaviors:
 class TestReplaceSystemInstructions:
     """Function-specific tests for replace_system_instructions."""
 
-    async def test_triggers_recompilation(self, session: AsyncSession, agent_record):
+    async def test_triggers_recompilation(self, session: AsyncSession, agent_record, agent_deps: AgentDeps):
         """System prompt is recompiled after updating instructions."""
-        agent_id = agent_record.id
+        agent_id = agent_record.id  # capture before expire — post-expire attr access triggers async lazy load
         new_instructions = "You are a helpful assistant who loves cats."
 
-        await replace_system_instructions(session, agent_id, new_instructions)
+        await replace_system_instructions(agent_deps, new_instructions)
 
         session.expire(agent_record)
         refreshed = await get_agent_record(session, agent_id)

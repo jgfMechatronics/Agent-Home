@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
 from agent.types import AgentAppState, AgentConfig, AgentDeps
-from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_deps_dep
+from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, deps_dep, deps_dep_fast
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
@@ -64,12 +64,6 @@ def map_to_sse(event: Any) -> ServerSentEvent:
         return ServerSentEvent(data={}, event="AgentRunResultEvent")
     return ServerSentEvent(data=event, event=type(event).__name__)
 
-
-def _raise_409_if_agent_locked(agent_id: str, agent_app_state_reg: dict[str, AgentAppState]) -> None:
-    """Raise 409 if the agent has an active run in progress."""
-    agent_app_state = agent_app_state_reg.get(agent_id)
-    if agent_app_state is not None and agent_app_state.lock.locked():
-        raise HTTPException(status_code=409, detail=f"Agent {agent_id!r} has an active run")
 
 
 async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
@@ -169,7 +163,7 @@ async def send_message(
 @router.post("/{agent_id}/recompile_system_prompt")
 async def recompile_system_prompt_route_handler(
     agent_id: str,
-    deps: AgentDeps = Depends(get_deps_dep)
+    deps: AgentDeps = Depends(deps_dep),
 ) -> bool: # We may or may not want this to return a bool
     """
     TODO: This is temp just to be able to test out memory system functionality, we may not actually want this
@@ -214,26 +208,20 @@ async def get_system_instructions(
 
 @router.put("/{agent_id}/config")
 async def put_config(
-    agent_id: str,
     config: AgentConfig,
-    session: AsyncSession = Depends(get_session_dep),
-    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
+    deps: AgentDeps = Depends(deps_dep_fast),
 ) -> AgentConfig:
     """Replace the config for an existing agent."""
-    _raise_409_if_agent_locked(agent_id, agent_app_state_reg)
-    return await replace_agent_config(session, agent_id, config)
+    return await replace_agent_config(deps, config)
 
 
 @router.put("/{agent_id}/system-instructions")
 async def put_system_instructions(
-    agent_id: str,
     instructions: str = Body(...),
-    session: AsyncSession = Depends(get_session_dep),
-    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
+    deps: AgentDeps = Depends(deps_dep_fast),
 ) -> str:
     """Replace system instructions for an existing agent and recompile."""
-    _raise_409_if_agent_locked(agent_id, agent_app_state_reg)
-    return await replace_system_instructions(session, agent_id, instructions)
+    return await replace_system_instructions(deps, instructions)
 
 
 @router.get("/{agent_id}")
@@ -273,7 +261,7 @@ async def get_memory_blocks(
 async def create_memory_block(
     agent_id: str,
     body: CreateMemoryBlockRequest,
-    deps: AgentDeps = Depends(get_deps_dep),
+    deps: AgentDeps = Depends(deps_dep),
 ) -> MemoryBlockResponse:
     """Create a new memory block for an agent."""
     try:

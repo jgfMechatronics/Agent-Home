@@ -153,9 +153,17 @@ class AgentDeps:
     def config(self) -> AgentConfig:
         return self._agent_record.agent_config
 
+    @config.setter
+    def config(self, value: AgentConfig) -> None:
+        self._agent_record.agent_config = value
+
     @property
     def system_instructions(self) -> str:
         return self._agent_record.system_instructions or ""
+
+    @system_instructions.setter
+    def system_instructions(self, value: str) -> None:
+        self._agent_record.system_instructions = value
 
     @property
     def compiled_system_prompt(self) -> str | None:

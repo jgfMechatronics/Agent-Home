@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Local
 from agent.factory import AgentNotFoundError
 from agent.types import AgentAppState, AgentConfig
-from api.fastapi_deps import get_deps_dep
+from api.fastapi_deps import deps_dep
 from conftest import make_deps
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
@@ -138,15 +138,17 @@ class TestPutConfig:
     async def test_calls_replace_agent_config_with_correct_args(
         self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession
     ):
-        """Calls replace_agent_config with the agent_id and a validated AgentConfig (not raw dict)."""
+        """Calls replace_agent_config with the agent's deps and a validated AgentConfig (not raw dict)."""
         config = agent_record.agent_config
         self.mock_replace_agent_config.return_value = config
 
         await client.put(f"/agents/{agent_record.id}/config", json=config.model_dump())
 
-        self.mock_replace_agent_config.assert_called_once_with(
-            session, agent_record.id, config
-        )
+        call_args = self.mock_replace_agent_config.call_args.args
+        actual_deps, actual_config = call_args
+        assert actual_deps.agent_id == agent_record.id
+        assert actual_deps.session is session
+        assert actual_config == config
 
     async def test_returns_200_with_echoed_config(
         self, client: AsyncClient, agent_record: AgentRecord
@@ -206,9 +208,11 @@ class TestPutSystemInstructions:
 
         assert response.status_code == 200
         assert response.json() == self.mock_replace_system_instructions.return_value
-        self.mock_replace_system_instructions.assert_called_once_with(
-            session, agent_record.id, instructions
-        )
+        call_args = self.mock_replace_system_instructions.call_args.args
+        actual_deps, actual_instructions = call_args
+        assert actual_deps.agent_id == agent_record.id
+        assert actual_deps.session is session
+        assert actual_instructions == instructions
 
     # 404/409 checked in common tests (TestNotFound, TestAgentLocked)
 
@@ -382,13 +386,13 @@ class TestNotFound:
 
 
 class TestAgentLocked:
-    """409 behavior when agent has an active run in progress."""
+    """423 behavior when agent has an active run in progress."""
 
     @pytest.mark.parametrize("path,body", _PUT_ENDPOINT_PARAMS)
-    async def test_put_endpoints_return_409_when_agent_locked(
+    async def test_put_endpoints_return_423_when_agent_locked(
         self, app: FastAPI, client: AsyncClient, agent_record: AgentRecord, path: str, body
     ):
-        """All PUT endpoints that modify agent state return 409 when agent is locked."""
+        """All write endpoints that modify agent state return 423 when agent is locked."""
         # Set up locked state for this agent
         agent_state = AgentAppState()
         await agent_state.lock.acquire()
@@ -397,8 +401,7 @@ class TestAgentLocked:
         url = path.format(agent_id=agent_record.id)
         response = await client.put(url, json=body)
 
-        assert response.status_code == 409
-        assert response.json()["detail"] == f"Agent {agent_record.id!r} has an active run"
+        assert response.status_code == 423
 
 
 class TestCreateMemoryBlock:
@@ -428,7 +431,7 @@ class TestCreateMemoryBlock:
                     raise raise_exc
                 yield make_deps(self.mock_session, agent_record)
                 
-            app.dependency_overrides[get_deps_dep] = _mock_dep
+            app.dependency_overrides[deps_dep] = _mock_dep
 
         self.configure_mock_get_deps_dep = _configure
         _configure()  # default: happy path
@@ -437,7 +440,7 @@ class TestCreateMemoryBlock:
             self.mock_create_block = mock
             yield
 
-        app.dependency_overrides.pop(get_deps_dep)
+        app.dependency_overrides.pop(deps_dep)
 
     async def test_calls_create_block_and_returns_201(self, client: AsyncClient):
         """Successful creation calls create_block and returns 201 with block data."""
