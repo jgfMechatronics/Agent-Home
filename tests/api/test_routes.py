@@ -25,7 +25,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Local
-from agent.factory import AgentNotFoundError
+from agent.factory import AgentNotFoundError, LOCK_TIMEOUT_FAST
 from agent.types import AgentAppState, AgentConfig
 from api.fastapi_deps import deps_dep
 from conftest import make_deps
@@ -402,6 +402,7 @@ class TestAgentLocked:
         response = await client.put(url, json=body)
 
         assert response.status_code == 423
+        assert response.json()["detail"] == f"AgentLockedError: Agent {agent_record.id!r} did not become available within {LOCK_TIMEOUT_FAST}s"
 
 
 class TestCreateMemoryBlock:
