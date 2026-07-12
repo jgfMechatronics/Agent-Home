@@ -27,6 +27,9 @@ from agent.tools import get_tools_for_agent
 __all__ = ["AgentFactory", "AgentNotFoundError", "AgentLockedError", "get_model"]
 
 
+LOCK_TIMEOUT_FAST: int = 2
+
+
 class AgentFactory:
     """Per-agent, per-request factory for building agents with locking.
 

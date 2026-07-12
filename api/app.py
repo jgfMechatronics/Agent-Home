@@ -37,7 +37,7 @@ async def agent_not_found_handler(request: Request, exc: AgentNotFoundError) -> 
 
 
 async def agent_locked_handler(request: Request, exc: AgentLockedError) -> JSONResponse:
-    return JSONResponse(status_code=503, content={"detail": _exc_detail(exc)})
+    return JSONResponse(status_code=423, content={"detail": _exc_detail(exc)})
 
 
 # Since this app is intended for self hosters, we want exception details to pass on to the client
