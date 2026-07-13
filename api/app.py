@@ -1,4 +1,5 @@
 """FastAPI application and lifespan"""
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -10,7 +11,7 @@ from api.schemas import HealthResponse
 from db.connection import create_sqlite_engine, init_db
 
 
-DB_PATH = "/data/db.sqlite"
+DB_PATH = os.environ.get("AGENT_HOME_DB_PATH", os.path.expanduser("~/.agent-home/db.sqlite"))
 
 
 @asynccontextmanager
