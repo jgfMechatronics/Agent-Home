@@ -15,6 +15,8 @@ Commands:
     info             View agent info
     memory           View core memory blocks (read-only)
     recompile        Trigger system prompt recompilation
+    instructions     Edit system instructions in $EDITOR
+    config           Edit agent config in $EDITOR
     help             Show this help
     quit / exit      Exit CLI
 """
@@ -23,7 +25,10 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -119,6 +124,56 @@ def prompt(state: CLIState) -> str:
         return ""
     agent_part = f"[{state.active_agent_id[:8]}...]" if state.active_agent_id else "[no agent]"
     return f"{agent_part}> "
+
+
+# --- Editor Helpers ---
+
+def _get_editor() -> str | None:
+    """Get the user's preferred editor from environment, with fallback chain.
+    
+    Returns None if no editor is available.
+    """
+    # Check environment variables
+    for var in ("EDITOR", "VISUAL"):
+        editor = os.environ.get(var)
+        if editor:
+            return editor
+    
+    # Fallback chain: nano → vi
+    for fallback in ("nano", "vi"):
+        if shutil.which(fallback):
+            return fallback
+    
+    return None
+
+
+def _edit_in_editor(content: str, suffix: str = ".txt") -> str | None:
+    """Open content in the user's editor and return the edited result.
+    
+    Returns None if editor is not available or user aborted.
+    Returns the original content if no changes were made.
+    """
+    editor = _get_editor()
+    if not editor:
+        return None
+    
+    # Write to temp file
+    with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as f:
+        f.write(content)
+        temp_path = f.name
+    
+    try:
+        # Open editor (blocks until user closes it)
+        result = subprocess.run([editor, temp_path])
+        if result.returncode != 0:
+            return None
+        
+        # Read back the edited content
+        with open(temp_path) as f:
+            return f.read()
+    finally:
+        # Clean up temp file
+        os.unlink(temp_path)
 
 
 # --- Commands ---
@@ -537,6 +592,145 @@ async def cmd_recompile(state: CLIState, client: httpx.AsyncClient, args: list[s
         output_error(state, f"Request failed: {e}")
 
 
+async def cmd_instructions(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
+    """Edit system instructions in $EDITOR."""
+    if not state.active_agent_id:
+        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        return
+    
+    if state.headless:
+        output_error(state, "Editor commands not available in headless mode.")
+        return
+    
+    if not _get_editor():
+        output_error(state, "No editor available. Set $EDITOR or install nano/vi.")
+        return
+    
+    # GET current instructions
+    try:
+        response = await client.get(
+            f"{state.server_url}/agents/{state.active_agent_id}/system-instructions"
+        )
+        response.raise_for_status()
+        data = response.json()
+        original = data.get("system_instructions", "")
+    except httpx.HTTPStatusError as e:
+        output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
+        return
+    except httpx.RequestError as e:
+        output_error(state, f"Request failed: {e}")
+        return
+    
+    # Edit loop - keep trying until success or user gives up
+    edited = original
+    while True:
+        edited = _edit_in_editor(edited, suffix=".txt")
+        if edited is None:
+            output(state, "Edit cancelled.")
+            return
+        
+        if edited == original:
+            output(state, "No changes made.")
+            return
+        
+        # PUT the updated instructions
+        try:
+            response = await client.put(
+                f"{state.server_url}/agents/{state.active_agent_id}/system-instructions",
+                json={"system_instructions": edited},
+            )
+            response.raise_for_status()
+            output(state, "System instructions updated successfully.")
+            return
+        except httpx.HTTPStatusError as e:
+            output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
+            output(state, "Press Enter to re-edit, or Ctrl+C to abort.")
+            try:
+                input()
+            except (KeyboardInterrupt, EOFError):
+                output(state, "\nAborted.")
+                return
+        except httpx.RequestError as e:
+            output_error(state, f"Request failed: {e}")
+            return
+
+
+async def cmd_config(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
+    """Edit agent config in $EDITOR."""
+    if not state.active_agent_id:
+        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        return
+    
+    if state.headless:
+        output_error(state, "Editor commands not available in headless mode.")
+        return
+    
+    if not _get_editor():
+        output_error(state, "No editor available. Set $EDITOR or install nano/vi.")
+        return
+    
+    # GET current config
+    try:
+        response = await client.get(
+            f"{state.server_url}/agents/{state.active_agent_id}/config"
+        )
+        response.raise_for_status()
+        config = response.json()
+        original = json.dumps(config, indent=2)
+    except httpx.HTTPStatusError as e:
+        output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
+        return
+    except httpx.RequestError as e:
+        output_error(state, f"Request failed: {e}")
+        return
+    
+    # Edit loop - keep trying until success or user gives up
+    edited = original
+    while True:
+        edited = _edit_in_editor(edited, suffix=".json")
+        if edited is None:
+            output(state, "Edit cancelled.")
+            return
+        
+        if edited == original:
+            output(state, "No changes made.")
+            return
+        
+        # Parse the edited JSON
+        try:
+            config_data = json.loads(edited)
+        except json.JSONDecodeError as e:
+            output_error(state, f"Invalid JSON: {e}")
+            output(state, "Press Enter to re-edit, or Ctrl+C to abort.")
+            try:
+                input()
+            except (KeyboardInterrupt, EOFError):
+                output(state, "\nAborted.")
+                return
+            continue
+        
+        # PUT the updated config
+        try:
+            response = await client.put(
+                f"{state.server_url}/agents/{state.active_agent_id}/config",
+                json=config_data,
+            )
+            response.raise_for_status()
+            output(state, "Config updated successfully.")
+            return
+        except httpx.HTTPStatusError as e:
+            output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
+            output(state, "Press Enter to re-edit, or Ctrl+C to abort.")
+            try:
+                input()
+            except (KeyboardInterrupt, EOFError):
+                output(state, "\nAborted.")
+                return
+        except httpx.RequestError as e:
+            output_error(state, f"Request failed: {e}")
+            return
+
+
 async def cmd_newblock(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """Create a new memory block for the active agent."""
     if not state.active_agent_id:
@@ -601,6 +795,8 @@ Commands (prefix with /):
     /memory          View core memory blocks (read-only)
     /newblock        Create a new memory block (interactive)
     /recompile       Trigger system prompt recompilation
+    /instructions    Edit system instructions in $EDITOR
+    /config          Edit agent config in $EDITOR
     /help            Show this help
     /quit or /exit   Exit CLI
 
@@ -623,6 +819,8 @@ COMMANDS = {
     "info": cmd_info,
     "memory": cmd_memory,
     "recompile": cmd_recompile,
+    "instructions": cmd_instructions,
+    "config": cmd_config,
     "newblock": cmd_newblock,
 }
 
