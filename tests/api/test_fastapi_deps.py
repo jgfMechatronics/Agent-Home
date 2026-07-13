@@ -186,7 +186,7 @@ class TestGetAgentAndDeps:
 
 
 class TestGetAgentDeps:
-    """get_agent_deps: yields AgentDeps (no Agent) and propagates all exceptions uncaught."""
+    """get_agent_deps: yields AgentDeps (no Agent) with short lock timeout, propagates all exceptions uncaught."""
 
     @pytest.fixture(autouse=True)
     def mock_build_success(self):

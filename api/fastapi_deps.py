@@ -51,29 +51,13 @@ async def get_agent_deps(
     session: AsyncSession = Depends(get_session_dep),
     agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> AsyncIterator[AgentDeps]:
-    """FastAPI yield dependency: acquires agent lock (default timeout) and yields AgentDeps.
+    """FastAPI yield dependency: acquires agent lock (short timeout) and yields AgentDeps.
 
-    Use for routes that need the lock but don't need a configured Agent instance.
-    Domain exceptions propagate to app-level handlers in api/app.py:
-      AgentNotFoundError → 404
-      AgentLockedError   → 423
+    Intended for user-triggered routes that do a quick update and don't need a configured
+    Agent instance. Uses a short lock timeout — returns 423 quickly if the agent is busy
+    rather than blocking. Routes that need a long timeout are likely agent routes and should use
+    get_agent_and_deps instead.
 
-    Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
-    """
-    factory = AgentFactory(agent_id, agent_app_state_reg, session)
-    async with factory.build_deps() as deps:
-        yield deps
-
-
-async def get_agent_deps_fast_timeout(
-    agent_id: str,
-    session: AsyncSession = Depends(get_session_dep),
-    agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
-) -> AsyncIterator[AgentDeps]:
-    """FastAPI yield dependency: acquires agent lock with a short timeout and yields AgentDeps.
-
-    Use for write routes where a long wait on a held lock is undesirable — returns 423
-    quickly if the agent is busy rather than blocking for the full default timeout.
     Domain exceptions propagate to app-level handlers in api/app.py:
       AgentNotFoundError → 404
       AgentLockedError   → 423

@@ -1,7 +1,7 @@
 """
 API routes
 NOTE: Read only routes should take a session only and do not need to read or acquire the agent lock
-R/W routes should take deps from get_agent_deps / get_agent_deps_fast_timeout which acquire and hold the lock
+R/W routes should take deps from get_agent_deps which acquires and holds the lock
 
 TODO: Our current "read-only" access pattern isn't truly read-only. Read operations
 take a full AsyncSession and may return mutable ORM objects still connected to the DB.
@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
 from agent.types import AgentAppState, AgentConfig, AgentDeps
-from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_agent_deps_fast_timeout
+from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
@@ -188,6 +188,7 @@ async def create_agent(
     behaviour should be covered by tests in test_routes.py::TestCreateAgent.
     
     TODO: I was able to get an invalid model name through to the DB. Errored out when trying to do a model request but did persist
+    (update: pretty sure this is fixed now)
     TODO: this route and the associated crud function do not follow our read only scheme. granted, the read only scheme is intended to
     block concurrent access to an existing agent, which doesn't apply here. we can't use our normal deps scheme to lock because there's
     no agent to construct deps for. will need to figure out, perhaps this route manually acquires the lock.
@@ -209,7 +210,7 @@ async def get_system_instructions(
 @router.put("/{agent_id}/config")
 async def put_config(
     config: AgentConfig,
-    deps: AgentDeps = Depends(get_agent_deps_fast_timeout),
+    deps: AgentDeps = Depends(get_agent_deps),
 ) -> AgentConfig:
     """Replace the config for an existing agent."""
     return await replace_agent_config(deps, config)
@@ -218,7 +219,7 @@ async def put_config(
 @router.put("/{agent_id}/system-instructions")
 async def put_system_instructions(
     instructions: str = Body(...),
-    deps: AgentDeps = Depends(get_agent_deps_fast_timeout),
+    deps: AgentDeps = Depends(get_agent_deps),
 ) -> str:
     """Replace system instructions for an existing agent and recompile."""
     return await replace_system_instructions(deps, instructions)
