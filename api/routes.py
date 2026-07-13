@@ -1,7 +1,7 @@
 """
 API routes
 NOTE: Read only routes should take a session only and do not need to read or acquire the agent lock
-R/W routes should take deps from the get_deps_dep which acquires and holds the lock
+R/W routes should take deps from get_agent_deps / get_agent_deps_fast_timeout which acquire and hold the lock
 
 TODO: Our current "read-only" access pattern isn't truly read-only. Read operations
 take a full AsyncSession and may return mutable ORM objects still connected to the DB.
@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
 from agent.types import AgentAppState, AgentConfig, AgentDeps
-from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, deps_dep, deps_dep_fast
+from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_agent_deps_fast_timeout
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
@@ -163,7 +163,7 @@ async def send_message(
 @router.post("/{agent_id}/recompile_system_prompt")
 async def recompile_system_prompt_route_handler(
     agent_id: str,
-    deps: AgentDeps = Depends(deps_dep),
+    deps: AgentDeps = Depends(get_agent_deps),
 ) -> bool: # We may or may not want this to return a bool
     """
     TODO: This is temp just to be able to test out memory system functionality, we may not actually want this
@@ -209,7 +209,7 @@ async def get_system_instructions(
 @router.put("/{agent_id}/config")
 async def put_config(
     config: AgentConfig,
-    deps: AgentDeps = Depends(deps_dep_fast),
+    deps: AgentDeps = Depends(get_agent_deps_fast_timeout),
 ) -> AgentConfig:
     """Replace the config for an existing agent."""
     return await replace_agent_config(deps, config)
@@ -218,7 +218,7 @@ async def put_config(
 @router.put("/{agent_id}/system-instructions")
 async def put_system_instructions(
     instructions: str = Body(...),
-    deps: AgentDeps = Depends(deps_dep_fast),
+    deps: AgentDeps = Depends(get_agent_deps_fast_timeout),
 ) -> str:
     """Replace system instructions for an existing agent and recompile."""
     return await replace_system_instructions(deps, instructions)
@@ -261,7 +261,7 @@ async def get_memory_blocks(
 async def create_memory_block(
     agent_id: str,
     body: CreateMemoryBlockRequest,
-    deps: AgentDeps = Depends(deps_dep),
+    deps: AgentDeps = Depends(get_agent_deps),
 ) -> MemoryBlockResponse:
     """Create a new memory block for an agent."""
     try:

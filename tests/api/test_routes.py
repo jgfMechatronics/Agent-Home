@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Local
 from agent.factory import AgentNotFoundError, LOCK_TIMEOUT_FAST
 from agent.types import AgentAppState, AgentConfig
-from api.fastapi_deps import deps_dep
+from api.fastapi_deps import get_agent_deps
 from conftest import make_deps
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
@@ -418,9 +418,9 @@ class TestCreateMemoryBlock:
 
     @pytest.fixture(autouse=True)
     def mock_create_block_dep(self, app: FastAPI, agent_record: AgentRecord):
-        """Overrides get_deps_dep and patches create_block for all tests.
+        """Overrides get_agent_deps and patches create_block for all tests.
 
-        Provides self.configure_mock_get_deps_dep() to change dep behavior (e.g. raise
+        Provides self.configure_mock_get_agent_deps() to change dep behavior (e.g. raise
         AgentNotFoundError for 404 tests). Default: yields a valid AgentDeps.
         """
         self.agent_record = agent_record
@@ -432,16 +432,16 @@ class TestCreateMemoryBlock:
                     raise raise_exc
                 yield make_deps(self.mock_session, agent_record)
                 
-            app.dependency_overrides[deps_dep] = _mock_dep
+            app.dependency_overrides[get_agent_deps] = _mock_dep
 
-        self.configure_mock_get_deps_dep = _configure
+        self.configure_mock_get_agent_deps = _configure
         _configure()  # default: happy path
 
         with patch("api.routes.create_block", new_callable=AsyncMock) as mock:
             self.mock_create_block = mock
             yield
 
-        app.dependency_overrides.pop(deps_dep)
+        app.dependency_overrides.pop(get_agent_deps)
 
     async def test_calls_create_block_and_returns_201(self, client: AsyncClient):
         """Successful creation calls create_block and returns 201 with block data."""
@@ -464,7 +464,7 @@ class TestCreateMemoryBlock:
         Returns 404 before calling create_block when agent does not exist.
         Exception is propagated by the route and caught by app level handler
         """
-        self.configure_mock_get_deps_dep(raise_exc=AgentNotFoundError(f"Agent not found"))
+        self.configure_mock_get_agent_deps(raise_exc=AgentNotFoundError(f"Agent not found"))
 
         response = await client.post(
             f"/agents/{uuid4()}/memory/blocks",
