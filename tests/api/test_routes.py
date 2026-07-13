@@ -20,13 +20,14 @@ from uuid import uuid4
 
 # Third-party
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Local
 from agent.factory import AgentNotFoundError, LOCK_TIMEOUT_FAST
-from agent.types import AgentAppState, AgentConfig
+from agent.types import AgentAppState, AgentConfig, AgentDeps
 from api.fastapi_deps import get_agent_deps
 from conftest import make_deps
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
@@ -126,38 +127,55 @@ class TestGetSystemInstructions:
     # 404 tested via parametrized TestNotFound
 
 
-class TestPutConfig:
-    """PUT /agents/{agent_id}/config — replace agent config."""
+class _PutEndpointBase:
+    """Base for PUT endpoint tests that patch a crud function and override get_agent_deps."""
+    crud_patch_target: str  # subclasses define
 
-    @pytest.fixture(autouse=True)
-    def mock_replace_agent_config_dep(self):
-        with patch("api.routes.replace_agent_config", new_callable=AsyncMock) as mock:
-            self.mock_replace_agent_config = mock
+    @staticmethod
+    def _make_deps_override(agent_deps: AgentDeps):
+        """Returns an async dep generator that yields agent_deps, for overriding get_agent_deps in tests."""
+        async def _dep():
+            yield agent_deps
+        return _dep
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def _setup(self, app: FastAPI, agent_deps: AgentDeps):
+        app.dependency_overrides[get_agent_deps] = _PutEndpointBase._make_deps_override(agent_deps)
+        self.agent_deps = agent_deps
+        with patch(self.crud_patch_target, new_callable=AsyncMock) as mock:
+            self.mock_crud_fcn = mock
             yield
+        app.dependency_overrides.pop(get_agent_deps)
+
+
+class TestPutConfig(_PutEndpointBase):
+    """PUT /agents/{agent_id}/config — replace agent config."""
+    crud_patch_target = "api.routes.replace_agent_config"
+
+    @pytest.fixture()
+    def mutated_config_copy(self, agent_record: AgentRecord):
+        original_config = agent_record.agent_config
+        return original_config.model_copy(update={"retries": original_config.retries + 1})
+
+
 
     async def test_calls_replace_agent_config_with_correct_args(
-        self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession
+        self, client: AsyncClient, agent_record: AgentRecord, mutated_config_copy: AgentConfig
     ):
-        """Calls replace_agent_config with the agent's deps and a validated AgentConfig (not raw dict)."""
-        config = agent_record.agent_config
-        self.mock_replace_agent_config.return_value = config
+        """Calls replace_agent_config with the request body config, not the one already on agent_deps."""
+        self.mock_crud_fcn.return_value = mutated_config_copy
 
-        await client.put(f"/agents/{agent_record.id}/config", json=config.model_dump())
+        await client.put(f"/agents/{agent_record.id}/config", json=mutated_config_copy.model_dump())
 
-        call_args = self.mock_replace_agent_config.call_args.args
-        actual_deps, actual_config = call_args
-        assert actual_deps.agent_id == agent_record.id
-        assert actual_deps.session is session
-        assert actual_config == config
+        self.mock_crud_fcn.assert_called_once_with(self.agent_deps, mutated_config_copy)
 
     async def test_returns_200_with_echoed_config(
-        self, client: AsyncClient, agent_record: AgentRecord
+        self, client: AsyncClient, agent_record: AgentRecord, mutated_config_copy: AgentConfig
     ):
         """Echoes the value returned by replace_agent_config, not just the input."""
         sent_config = agent_record.agent_config
         # Return a different config to confirm we echo the crud result, not the raw input
-        returned_config = sent_config.model_copy(update={"retries": sent_config.retries + 1})
-        self.mock_replace_agent_config.return_value = returned_config
+        self.mock_crud_fcn.return_value = mutated_config_copy
 
         response = await client.put(
             f"/agents/{agent_record.id}/config",
@@ -165,7 +183,7 @@ class TestPutConfig:
         )
 
         assert response.status_code == 200
-        assert AgentConfig.model_validate(response.json()) == returned_config
+        assert AgentConfig.model_validate(response.json()) == mutated_config_copy
 
     async def test_returns_422_for_invalid_config(
         self, client: AsyncClient, agent_record: AgentRecord
@@ -180,41 +198,43 @@ class TestPutConfig:
 
         assert response.status_code == 422
         # Crud function should not be called when validation fails
-        self.mock_replace_agent_config.assert_not_called()
+        self.mock_crud_fcn.assert_not_called()
 
-    # 404/409 checked in common tests (TestNotFound, TestAgentLocked)
+    # 404/423 checked in common tests (TestNotFound, TestAgentLocked)
 
 
-class TestPutSystemInstructions:
+class TestPutSystemInstructions(_PutEndpointBase):
     """PUT /agents/{agent_id}/system-instructions — replace system instructions."""
-
-    @pytest.fixture(autouse=True)
-    def mock_replace_system_instructions_dep(self):
-        with patch("api.routes.replace_system_instructions", new_callable=AsyncMock) as mock:
-            self.mock_replace_system_instructions = mock
-            yield
+    crud_patch_target = "api.routes.replace_system_instructions"
 
     async def test_calls_replace_system_instructions_with_correct_args(
-        self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession
+        self, client: AsyncClient, agent_record: AgentRecord
     ):
-        """Calls replace_system_instructions with agent_id and instructions string, echoes result."""
-        instructions = agent_record.system_instructions
-        self.mock_replace_system_instructions.return_value = "mutated instructions" # ensure route passes back actual ret val of the function
+        """Calls replace_system_instructions with the agent's deps and the instructions string."""
+        instructions = "instructions updated by route"
+        self.mock_crud_fcn.return_value = instructions
+
+        await client.put(f"/agents/{agent_record.id}/system-instructions", json=instructions)
+
+        self.mock_crud_fcn.assert_called_once_with(self.agent_deps, instructions)
+
+    async def test_returns_200_with_echoed_instructions(
+        self, client: AsyncClient, agent_record: AgentRecord
+    ):
+        """Echoes the value returned by replace_system_instructions, not just the input."""
+        original = agent_record.system_instructions
+        mutated = "mutated instructions"
+        self.mock_crud_fcn.return_value = mutated
 
         response = await client.put(
             f"/agents/{agent_record.id}/system-instructions",
-            json=instructions,
+            json=original,
         )
 
         assert response.status_code == 200
-        assert response.json() == self.mock_replace_system_instructions.return_value
-        call_args = self.mock_replace_system_instructions.call_args.args
-        actual_deps, actual_instructions = call_args
-        assert actual_deps.agent_id == agent_record.id
-        assert actual_deps.session is session
-        assert actual_instructions == instructions
+        assert response.json() == mutated
 
-    # 404/409 checked in common tests (TestNotFound, TestAgentLocked)
+    # 404/423 checked in common tests (TestNotFound, TestAgentLocked)
 
 
 class TestGetAgent:
