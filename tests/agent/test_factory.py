@@ -15,6 +15,7 @@ if nonexistent during *construction* as opposed to during deps building caused i
 are not ideal
 """
 import asyncio
+import time
 from unittest.mock import patch
 
 import pytest
@@ -308,18 +309,30 @@ async def test_build_deps_concurrent_different_agents_no_block(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("timeout,min_elapsed,max_elapsed", [
+    (0.01, 0.0, 0.5),   # fast — just assert it doesn't block
+    (1.0,  0.8, 2.5),   # roughly a second
+])
 async def test_build_deps_timeout_raises_agent_locked_error(
     agent_factory: AgentFactory,
     agent_app_state_reg: dict,
     agent_record: AgentRecord,
+    timeout: float,
+    min_elapsed: float,
+    max_elapsed: float,
 ):
-    """build_deps raises AgentLockedError when the lock is not acquired within timeout."""
+    """build_deps raises AgentLockedError after approximately the requested timeout."""
     # Hold the lock so the second acquire times out
     await agent_app_state_reg[agent_record.id].lock.acquire()
 
+    start = time.monotonic()
     with pytest.raises(AgentLockedError):
-        async with agent_factory.build_deps(timeout=0.01):
+        async with agent_factory.build_deps(timeout=timeout):
             pass  # should not reach here
+    elapsed = time.monotonic() - start
+
+    assert elapsed >= min_elapsed, f"Timed out too fast: {elapsed:.3f}s < {min_elapsed}s"
+    assert elapsed < max_elapsed, f"Timed out too slow: {elapsed:.3f}s >= {max_elapsed}s"
 
 
 # --- AgentFactory.build_agent_and_deps tests ---
