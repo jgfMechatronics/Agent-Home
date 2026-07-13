@@ -71,11 +71,6 @@ class TestGetAgentRecord:
 # AgentNotFoundError is raised by AgentFactory.build_deps before deps are ever constructed —
 # tested in tests/agent/test_factory.py, not here.
 
-@pytest_asyncio.fixture
-async def agent_deps(session: AsyncSession, agent_record) -> AgentDeps:
-    """AgentDeps constructed directly for crud tests (bypasses factory/lock — valid in tests)."""
-    return AgentDeps(session, agent_record)
-
 
 # Parametrization data for common replace-function behaviors
 # param args: "replace_fn,new_value,attr_name"
