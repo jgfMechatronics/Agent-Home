@@ -99,3 +99,7 @@ class MessagesResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+
+
+class SystemInstructionsResponse(BaseModel):
+    system_instructions: str

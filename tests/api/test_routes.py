@@ -118,11 +118,11 @@ class TestGetSystemInstructions:
     """GET /agents/{agent_id}/system-instructions — agent system instructions."""
 
     async def test_returns_system_instructions(self, client: AsyncClient, agent_record: AgentRecord):
-        """Returns the agent's system instructions as a JSON string."""
+        """Returns the agent's system instructions wrapped in a response object."""
         response = await client.get(f"/agents/{agent_record.id}/system-instructions")
 
         assert response.status_code == 200
-        assert response.json() == agent_record.system_instructions
+        assert response.json() == {"system_instructions": agent_record.system_instructions}
 
     # 404 tested via parametrized TestNotFound
 
@@ -214,7 +214,10 @@ class TestPutSystemInstructions(_PutEndpointBase):
         instructions = "instructions updated by route"
         self.mock_crud_fcn.return_value = instructions
 
-        await client.put(f"/agents/{agent_record.id}/system-instructions", json=instructions)
+        await client.put(
+            f"/agents/{agent_record.id}/system-instructions",
+            json={"system_instructions": instructions},
+        )
 
         self.mock_crud_fcn.assert_called_once_with(self.agent_deps, instructions)
 
@@ -228,11 +231,11 @@ class TestPutSystemInstructions(_PutEndpointBase):
 
         response = await client.put(
             f"/agents/{agent_record.id}/system-instructions",
-            json=original,
+            json={"system_instructions": original},
         )
 
         assert response.status_code == 200
-        assert response.json() == mutated
+        assert response.json() == {"system_instructions": mutated}
 
     # 404/423 checked in common tests (TestNotFound, TestAgentLocked)
 

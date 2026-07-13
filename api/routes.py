@@ -37,6 +37,7 @@ from api.schemas import (
     MemoryBlockResponse,
     MessageRequest,
     MessagesResponse,
+    SystemInstructionsResponse,
 )
 from memory.block_crud import DuplicateBlockError, create_block, get_blocks
 from memory.system_prompt_compilation import compile_system_prompt
@@ -201,10 +202,10 @@ async def create_agent(
 async def get_system_instructions(
     agent_id: str,
     session: AsyncSession = Depends(get_session_dep),
-) -> str:
+) -> SystemInstructionsResponse:
     """Return the system instructions for an existing agent."""
     record = await _get_agent_record_or_404(session, agent_id)
-    return record.system_instructions
+    return SystemInstructionsResponse(system_instructions=record.system_instructions)
 
 
 @router.put("/{agent_id}/config")
@@ -218,11 +219,12 @@ async def put_config(
 
 @router.put("/{agent_id}/system-instructions")
 async def put_system_instructions(
-    instructions: str = Body(...),
+    body: SystemInstructionsResponse,
     deps: AgentDeps = Depends(get_agent_deps),
-) -> str:
+) -> SystemInstructionsResponse:
     """Replace system instructions for an existing agent and recompile."""
-    return await replace_system_instructions(deps, instructions)
+    result = await replace_system_instructions(deps, body.system_instructions)
+    return SystemInstructionsResponse(system_instructions=result)
 
 
 @router.get("/{agent_id}")
