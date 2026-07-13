@@ -17,6 +17,7 @@ Commands:
     recompile        Trigger system prompt recompilation
     help             Show this help
     quit / exit      Exit CLI
+writing this comment just to get a change to test git
 """
 
 import argparse
