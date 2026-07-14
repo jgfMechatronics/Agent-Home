@@ -39,7 +39,7 @@ from memory.block_crud import DuplicateBlockError
 # --- Test Classes ---
 
 class TestCreateAgent:
-    """POST /agents/ — create a new agent."""
+    """POST /agents — create a new agent."""
 
     _NAME = "test-agent"
     _MODEL = "claude-sonnet-4-20250514"
@@ -80,7 +80,7 @@ class TestCreateAgent:
             updated_at=DATETIME_NOW,
         )
 
-        response = await client.post("/agents/", json=self._VALID_BODY)
+        response = await client.post("/agents", json=self._VALID_BODY)
 
         assert response.status_code == 201
         self.mock_create_agent_record.assert_called_once()
@@ -89,14 +89,14 @@ class TestCreateAgent:
     async def test_returns_500_when_create_agent_fails(self, client: AsyncClient):
         """Route propagates unexpected exceptions to the app-level handler, returning 500."""
         self.mock_create_agent_record.side_effect = RuntimeError("DB failure")
-        response = await client.post("/agents/", json=self._VALID_BODY)
+        response = await client.post("/agents", json=self._VALID_BODY)
         assert response.status_code == 500
         assert response.json()["detail"] == "RuntimeError: DB failure"
 
     async def test_returns_400_for_invalid_config(self, client: AsyncClient):
         """Missing required fields result in 400 before route logic is reached."""
         response = await client.post(
-            "/agents/",
+            "/agents",
             json={"name": "incomplete"},  # missing system_instructions and config
         )
         assert response.status_code in (400, 422)  # FastAPI validation error

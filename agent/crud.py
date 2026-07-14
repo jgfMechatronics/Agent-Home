@@ -14,6 +14,12 @@ async def get_agent_record(session: AsyncSession, agent_id: str) -> AgentRecord 
     return await session.get(AgentRecord, agent_id)
 
 
+async def get_all_agents(session: AsyncSession) -> list[AgentRecord]:
+    """Return all agents on the server."""
+    result = await session.execute(select(AgentRecord))
+    return list(result.scalars().all())
+
+
 async def agent_exists(session: AsyncSession, agent_id: str) -> bool:
     """Return True if an agent with the given ID exists, without loading the full record. TODO: Unit test"""
     stmt = select(exists().where(AgentRecord.id == agent_id))
