@@ -15,6 +15,12 @@ dependencies = [
     "python-dotenv",
     "asgi-lifespan>=2.1.0",
     "httpx",
+    # DuckDuckGo search + web_fetch tools for pydantic-ai. These are the underlying
+    # deps for pydantic-ai-slim[duckduckgo] and [web-fetch] extras. We use full
+    # pydantic-ai (not slim), which doesn't expose those extras — direct deps work.
+    # TODO: Consider switching to pydantic-ai-slim as a leaning operation later.
+    "ddgs>=9.14.4",
+    "markdownify>=1.2.3",
 ]
 
 [project.optional-dependencies]

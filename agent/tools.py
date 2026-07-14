@@ -9,6 +9,9 @@ and associated tests
 from typing import Callable
 
 from pydantic_ai import RunContext
+from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
+from pydantic_ai.common_tools.web_fetch import web_fetch_tool
+from pydantic_ai.tools import Tool
 from pydantic_ai.exceptions import ModelRetry
 
 from agent.types import AgentDeps
@@ -213,20 +216,22 @@ async def memory_insert(
 # Tool Registry
 # =============================================================================
 
-TOOL_REGISTRY: dict[str, Callable] = {
+TOOL_REGISTRY: dict[str, Callable | Tool[AgentDeps]] = {
     "memory_replace": memory_replace,
     "memory_insert": memory_insert,
+    "duckduckgo_search": duckduckgo_search_tool(max_results=5),
+    "web_fetch": web_fetch_tool(),
 }
 
 
-def get_tools_for_agent(tool_names: list[str]) -> list[Callable]:
+def get_tools_for_agent(tool_names: list[str]) -> list[Callable | Tool[AgentDeps]]:
     """Return the list of tool callables for the given tool names.
     
     Args:
         tool_names: List of tool name strings to look up
         
     Returns:
-        List of callable tool functions
+        List of tool callables or Tool instances
         
     Raises:
         KeyError: If any tool name is not found in the registry
