@@ -112,7 +112,7 @@ class TestCreateAgentNameUniqueness:
 
         second = await client.post("/agents", json=TestCreateAgent._VALID_BODY)
         assert second.status_code == 409
-        assert second.json()["detail"] == "TODO fill in the expected msg"
+        assert second.json()["detail"] == f"Agent name already in use: {TestCreateAgent._NAME!r}"
 
 
 class TestGetConfig:

@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
@@ -203,7 +204,13 @@ async def create_agent(
     block concurrent access to an existing agent, which doesn't apply here. we can't use our normal deps scheme to lock because there's
     no agent to construct deps for. will need to figure out, perhaps this route manually acquires the lock.
     """
-    record = await create_agent_record(session, body.name, body.system_instructions, body.config)
+    try:
+        record = await create_agent_record(session, body.name, body.system_instructions, body.config)
+    except IntegrityError as e:
+        if "UNIQUE constraint failed: agent.name" in str(e.orig):
+            # SQLite-specific string check. This is brittle but worst case user just gets a less helpful but still helpful error msg
+            raise HTTPException(status_code=409, detail=f"Agent name already in use: {body.name!r}")
+        raise
     return AgentMetadataResponse.from_record(record)
 
 
