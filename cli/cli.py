@@ -272,7 +272,7 @@ async def cmd_create(state: CLIState, client: httpx.AsyncClient, args: list[str]
         payload = run_config_wizard(state)
     
     try:
-        response = await client.post(f"{state.server_url}/agents/", json=payload)
+        response = await client.post(f"{state.server_url}/agents", json=payload)
         response.raise_for_status()
         data = response.json()
         
@@ -783,12 +783,36 @@ async def cmd_newblock(state: CLIState, client: httpx.AsyncClient, args: list[st
         output_error(state, f"Request failed: {e}")
 
 
+async def cmd_agents(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
+    """List all agents on the server."""
+    try:
+        response = await client.get(f"{state.server_url}/agents")
+        response.raise_for_status()
+        data = response.json()
+
+        if state.headless:
+            output_json(state, data)
+        else:
+            if not data:
+                output(state, "\nNo agents found.\n")
+            else:
+                output(state, "\nAgents:")
+                for agent in data:
+                    output(state, f"  {agent['name']}  —  {agent['id']}")
+                output(state, "")
+    except httpx.HTTPStatusError as e:
+        output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
+    except httpx.RequestError as e:
+        output_error(state, f"Request failed: {e}")
+
+
 def cmd_help(state: CLIState) -> None:
     """Show help."""
     help_text = """
 Commands (prefix with /):
     /create          Create a new agent (interactive config wizard)
     /create -q <n>   Create agent with defaults (quick mode)
+    /agents          List all agents on the server
     /use <agent_id>  Set active agent for subsequent commands
     /history         View message history for active agent
     /info            View agent info
@@ -813,6 +837,7 @@ Example:
 # --- Main Loop ---
 
 COMMANDS = {
+    "agents": cmd_agents,
     "create": cmd_create,
     "use": cmd_use,
     "history": cmd_history,

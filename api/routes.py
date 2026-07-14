@@ -26,7 +26,7 @@ from pydantic_ai.messages import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.crud import agent_exists, create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
+from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
 from agent.types import AgentAppState, AgentConfig, AgentDeps
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps
 from api.schemas import (
@@ -175,7 +175,16 @@ async def recompile_system_prompt_route_handler(
     return True
 
 
-@router.post("/", status_code=201)
+@router.get("")
+async def list_agents(
+    session: AsyncSession = Depends(get_session_dep),
+) -> list[AgentMetadataResponse]:
+    """Return all agents on the server."""
+    records = await get_all_agents(session)
+    return [AgentMetadataResponse.from_record(r) for r in records]
+
+
+@router.post("", status_code=201)
 async def create_agent(
     body: CreateAgentRequest,
     session: AsyncSession = Depends(get_session_dep),

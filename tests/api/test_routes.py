@@ -29,7 +29,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.factory import AgentNotFoundError, LOCK_TIMEOUT_FAST
 from agent.types import AgentAppState, AgentConfig, AgentDeps
 from api.fastapi_deps import get_agent_deps
-from conftest import make_deps
+from agent.crud import create_agent_record
+from conftest import make_deps, SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import DuplicateBlockError
@@ -38,7 +39,7 @@ from memory.block_crud import DuplicateBlockError
 # --- Test Classes ---
 
 class TestCreateAgent:
-    """POST /agents/ — create a new agent."""
+    """POST /agents — create a new agent."""
 
     _NAME = "test-agent"
     _MODEL = "claude-sonnet-4-20250514"
@@ -79,7 +80,7 @@ class TestCreateAgent:
             updated_at=DATETIME_NOW,
         )
 
-        response = await client.post("/agents/", json=self._VALID_BODY)
+        response = await client.post("/agents", json=self._VALID_BODY)
 
         assert response.status_code == 201
         self.mock_create_agent_record.assert_called_once()
@@ -88,14 +89,14 @@ class TestCreateAgent:
     async def test_returns_500_when_create_agent_fails(self, client: AsyncClient):
         """Route propagates unexpected exceptions to the app-level handler, returning 500."""
         self.mock_create_agent_record.side_effect = RuntimeError("DB failure")
-        response = await client.post("/agents/", json=self._VALID_BODY)
+        response = await client.post("/agents", json=self._VALID_BODY)
         assert response.status_code == 500
         assert response.json()["detail"] == "RuntimeError: DB failure"
 
     async def test_returns_400_for_invalid_config(self, client: AsyncClient):
         """Missing required fields result in 400 before route logic is reached."""
         response = await client.post(
-            "/agents/",
+            "/agents",
             json={"name": "incomplete"},  # missing system_instructions and config
         )
         assert response.status_code in (400, 422)  # FastAPI validation error
@@ -238,6 +239,31 @@ class TestPutSystemInstructions(_PutEndpointBase):
         assert response.json() == {"system_instructions": mutated}
 
     # 404/423 checked in common tests (TestNotFound, TestAgentLocked)
+
+
+class TestListAgents:
+    """GET /agents — list all agents on the server."""
+
+    @pytest.mark.parametrize("n_agents", list(range(4)))
+    async def test_returns_all_agents(
+        self, client: AsyncClient, session: AsyncSession, n_agents: int
+    ):
+        """Returns all agents as AgentMetadataResponse objects; empty list when none exist."""
+        expected = []
+        for i in range(n_agents):
+            record = await create_agent_record(
+                session, name=f"agent-{i}", system_instructions="", config=SAMPLE_AGENT_CONFIG
+            )
+            expected.append(AgentMetadataResponse.from_record(record))
+
+        response = await client.get("/agents")
+
+        assert response.status_code == 200
+        result = sorted(
+            [AgentMetadataResponse(**item) for item in response.json()],
+            key=lambda r: str(r.id),
+        )
+        assert result == sorted(expected, key=lambda r: str(r.id))
 
 
 class TestGetAgent:
