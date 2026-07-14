@@ -33,3 +33,33 @@ echo "Starting server... stdout: $LOG_FILE  stderr: $ERR_FILE"
 nohup uv run uvicorn main:app --host 0.0.0.0 --port 8000 > "$LOG_FILE" 2> "$ERR_FILE" &
 echo $! > "$PID_FILE"
 echo "Server started (PID $(cat "$PID_FILE"))"
+
+# Wait for health check
+TIMEOUT=15
+ELAPSED=0
+echo "Waiting for server to become healthy..."
+while [[ $ELAPSED -lt $TIMEOUT ]]; do
+    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+        echo "Server is healthy!"
+        exit 0
+    fi
+    # Check if process died
+    if ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "ERROR: Server process died during startup!"
+        echo "=== stderr ($ERR_FILE) ==="
+        cat "$ERR_FILE"
+        echo "=== stdout ($LOG_FILE) ==="
+        cat "$LOG_FILE"
+        rm -f "$PID_FILE"
+        exit 1
+    fi
+    sleep 1
+    ELAPSED=$((ELAPSED + 1))
+done
+
+echo "ERROR: Server did not become healthy within ${TIMEOUT}s"
+echo "=== stderr ($ERR_FILE) ==="
+cat "$ERR_FILE"
+echo "=== stdout ($LOG_FILE) ==="
+cat "$LOG_FILE"
+exit 1

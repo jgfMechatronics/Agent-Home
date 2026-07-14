@@ -20,13 +20,15 @@ from uuid import uuid4
 
 # Third-party
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Local
-from agent.factory import AgentNotFoundError
-from api.fastapi_deps import get_deps_dep
+from agent.factory import AgentNotFoundError, LOCK_TIMEOUT_FAST
+from agent.types import AgentAppState, AgentConfig, AgentDeps
+from api.fastapi_deps import get_agent_deps
 from conftest import make_deps
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
@@ -97,6 +99,145 @@ class TestCreateAgent:
             json={"name": "incomplete"},  # missing system_instructions and config
         )
         assert response.status_code in (400, 422)  # FastAPI validation error
+
+
+class TestGetConfig:
+    """GET /agents/{agent_id}/config — agent config."""
+
+    async def test_returns_config(self, client: AsyncClient, agent_record: AgentRecord):
+        """Returns the agent's AgentConfig as JSON."""
+        response = await client.get(f"/agents/{agent_record.id}/config")
+
+        assert response.status_code == 200
+        assert AgentConfig.model_validate(response.json()) == agent_record.agent_config
+
+    # 404 tested via parametrized TestNotFound
+
+
+class TestGetSystemInstructions:
+    """GET /agents/{agent_id}/system-instructions — agent system instructions."""
+
+    async def test_returns_system_instructions(self, client: AsyncClient, agent_record: AgentRecord):
+        """Returns the agent's system instructions wrapped in a response object."""
+        response = await client.get(f"/agents/{agent_record.id}/system-instructions")
+
+        assert response.status_code == 200
+        assert response.json() == {"system_instructions": agent_record.system_instructions}
+
+    # 404 tested via parametrized TestNotFound
+
+
+class _PutEndpointBase:
+    """Base for PUT endpoint tests that patch a crud function and override get_agent_deps."""
+    crud_patch_target: str  # subclasses define
+
+    @staticmethod
+    def _make_deps_override(agent_deps: AgentDeps):
+        """Returns an async dep generator that yields agent_deps, for overriding get_agent_deps in tests."""
+        async def _dep():
+            yield agent_deps
+        return _dep
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def _setup(self, app: FastAPI, agent_deps: AgentDeps):
+        app.dependency_overrides[get_agent_deps] = _PutEndpointBase._make_deps_override(agent_deps)
+        self.agent_deps = agent_deps
+        with patch(self.crud_patch_target, new_callable=AsyncMock) as mock:
+            self.mock_crud_fcn = mock
+            yield
+        app.dependency_overrides.pop(get_agent_deps)
+
+
+class TestPutConfig(_PutEndpointBase):
+    """PUT /agents/{agent_id}/config — replace agent config."""
+    crud_patch_target = "api.routes.replace_agent_config"
+
+    @pytest.fixture()
+    def mutated_config_copy(self, agent_record: AgentRecord):
+        original_config = agent_record.agent_config
+        return original_config.model_copy(update={"retries": original_config.retries + 1})
+
+
+
+    async def test_calls_replace_agent_config_with_correct_args(
+        self, client: AsyncClient, agent_record: AgentRecord, mutated_config_copy: AgentConfig
+    ):
+        """Calls replace_agent_config with the request body config, not the one already on agent_deps."""
+        self.mock_crud_fcn.return_value = mutated_config_copy
+
+        await client.put(f"/agents/{agent_record.id}/config", json=mutated_config_copy.model_dump())
+
+        self.mock_crud_fcn.assert_called_once_with(self.agent_deps, mutated_config_copy)
+
+    async def test_returns_200_with_echoed_config(
+        self, client: AsyncClient, agent_record: AgentRecord, mutated_config_copy: AgentConfig
+    ):
+        """Echoes the value returned by replace_agent_config, not just the input."""
+        sent_config = agent_record.agent_config
+        # Return a different config to confirm we echo the crud result, not the raw input
+        self.mock_crud_fcn.return_value = mutated_config_copy
+
+        response = await client.put(
+            f"/agents/{agent_record.id}/config",
+            json=sent_config.model_dump(),
+        )
+
+        assert response.status_code == 200
+        assert AgentConfig.model_validate(response.json()) == mutated_config_copy
+
+    async def test_returns_422_for_invalid_config(
+        self, client: AsyncClient, agent_record: AgentRecord
+    ):
+        """Returns 422 when config fails AgentConfig validation."""
+        invalid_config = {"model_name": 12345}  # model_name should be string
+
+        response = await client.put(
+            f"/agents/{agent_record.id}/config",
+            json=invalid_config,
+        )
+
+        assert response.status_code == 422
+        # Crud function should not be called when validation fails
+        self.mock_crud_fcn.assert_not_called()
+
+    # 404/423 checked in common tests (TestNotFound, TestAgentLocked)
+
+
+class TestPutSystemInstructions(_PutEndpointBase):
+    """PUT /agents/{agent_id}/system-instructions — replace system instructions."""
+    crud_patch_target = "api.routes.replace_system_instructions"
+
+    async def test_calls_replace_system_instructions_with_correct_args(
+        self, client: AsyncClient, agent_record: AgentRecord
+    ):
+        """Calls replace_system_instructions with the agent's deps and the instructions string."""
+        instructions = "instructions updated by route"
+        self.mock_crud_fcn.return_value = instructions
+
+        await client.put(
+            f"/agents/{agent_record.id}/system-instructions",
+            json={"system_instructions": instructions},
+        )
+
+        self.mock_crud_fcn.assert_called_once_with(self.agent_deps, instructions)
+
+    async def test_returns_200_with_echoed_instructions(
+        self, client: AsyncClient, agent_record: AgentRecord
+    ):
+        """Echoes the value returned by replace_system_instructions, not just the input."""
+        original = agent_record.system_instructions
+        mutated = "mutated instructions"
+        self.mock_crud_fcn.return_value = mutated
+
+        response = await client.put(
+            f"/agents/{agent_record.id}/system-instructions",
+            json={"system_instructions": original},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"system_instructions": mutated}
+
+    # 404/423 checked in common tests (TestNotFound, TestAgentLocked)
 
 
 class TestGetAgent:
@@ -229,6 +370,18 @@ class TestHealthCheck:
         assert response.status_code == 503
 
 
+# --- Shared test data for parametrized PUT endpoint tests ---
+_VALID_CONFIG_BODY = {
+    "model_name": "claude-sonnet-4-20250514",
+    "tool_names": [],
+    "soft_compaction_limit": 1000,
+}
+_PUT_ENDPOINT_PARAMS = [
+    ("/agents/{agent_id}/config", _VALID_CONFIG_BODY),
+    ("/agents/{agent_id}/system-instructions", "some instructions"),
+]
+
+
 class TestNotFound:
     """404 behavior for unknown agent_id across all endpoints."""
 
@@ -236,12 +389,43 @@ class TestNotFound:
         "/agents/{agent_id}",
         "/agents/{agent_id}/memory/blocks",
         "/agents/{agent_id}/messages",
+        "/agents/{agent_id}/config",
+        "/agents/{agent_id}/system-instructions",
     ])
     async def test_get_endpoints_return_404_for_unknown_agent(self, client: AsyncClient, path: str):
         """All GET endpoints with agent_id return 404 for unknown agents."""
         url = path.format(agent_id=uuid4())
         response = await client.get(url)
         assert response.status_code == 404
+
+    @pytest.mark.parametrize("path,body", _PUT_ENDPOINT_PARAMS)
+    async def test_put_endpoints_return_404_for_unknown_agent(
+        self, client: AsyncClient, path: str, body
+    ):
+        """All PUT endpoints with agent_id return 404 for unknown agents."""
+        url = path.format(agent_id=uuid4())
+        response = await client.put(url, json=body)
+        assert response.status_code == 404
+
+
+class TestAgentLocked:
+    """423 behavior when agent has an active run in progress."""
+
+    @pytest.mark.parametrize("path,body", _PUT_ENDPOINT_PARAMS)
+    async def test_put_endpoints_return_423_when_agent_locked(
+        self, app: FastAPI, client: AsyncClient, agent_record: AgentRecord, path: str, body
+    ):
+        """All write endpoints that modify agent state return 423 when agent is locked."""
+        # Set up locked state for this agent
+        agent_state = AgentAppState()
+        await agent_state.lock.acquire()
+        app.state.agent_app_state_reg[agent_record.id] = agent_state
+
+        url = path.format(agent_id=agent_record.id)
+        response = await client.put(url, json=body)
+
+        assert response.status_code == 423
+        assert response.json()["detail"] == f"AgentLockedError: Agent {agent_record.id!r} did not become available within {LOCK_TIMEOUT_FAST}s"
 
 
 class TestCreateMemoryBlock:
@@ -257,9 +441,9 @@ class TestCreateMemoryBlock:
 
     @pytest.fixture(autouse=True)
     def mock_create_block_dep(self, app: FastAPI, agent_record: AgentRecord):
-        """Overrides get_deps_dep and patches create_block for all tests.
+        """Overrides get_agent_deps and patches create_block for all tests.
 
-        Provides self.configure_mock_get_deps_dep() to change dep behavior (e.g. raise
+        Provides self.configure_mock_get_agent_deps() to change dep behavior (e.g. raise
         AgentNotFoundError for 404 tests). Default: yields a valid AgentDeps.
         """
         self.agent_record = agent_record
@@ -271,16 +455,16 @@ class TestCreateMemoryBlock:
                     raise raise_exc
                 yield make_deps(self.mock_session, agent_record)
                 
-            app.dependency_overrides[get_deps_dep] = _mock_dep
+            app.dependency_overrides[get_agent_deps] = _mock_dep
 
-        self.configure_mock_get_deps_dep = _configure
+        self.configure_mock_get_agent_deps = _configure
         _configure()  # default: happy path
 
         with patch("api.routes.create_block", new_callable=AsyncMock) as mock:
             self.mock_create_block = mock
             yield
 
-        app.dependency_overrides.pop(get_deps_dep)
+        app.dependency_overrides.pop(get_agent_deps)
 
     async def test_calls_create_block_and_returns_201(self, client: AsyncClient):
         """Successful creation calls create_block and returns 201 with block data."""
@@ -303,7 +487,7 @@ class TestCreateMemoryBlock:
         Returns 404 before calling create_block when agent does not exist.
         Exception is propagated by the route and caught by app level handler
         """
-        self.configure_mock_get_deps_dep(raise_exc=AgentNotFoundError(f"Agent not found"))
+        self.configure_mock_get_agent_deps(raise_exc=AgentNotFoundError(f"Agent not found"))
 
         response = await client.post(
             f"/agents/{uuid4()}/memory/blocks",

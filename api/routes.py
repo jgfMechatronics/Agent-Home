@@ -1,4 +1,7 @@
-"""API routes — Section 4.1.
+"""
+API routes
+NOTE: Read only routes should take a session only and do not need to read or acquire the agent lock
+R/W routes should take deps from get_agent_deps which acquires and holds the lock
 
 TODO: Our current "read-only" access pattern isn't truly read-only. Read operations
 take a full AsyncSession and may return mutable ORM objects still connected to the DB.
@@ -10,7 +13,7 @@ TODO: We have some exception catching and mapping that doesn't use "raise ... fr
 import logging
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.messages import (
@@ -23,9 +26,9 @@ from pydantic_ai.messages import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.crud import agent_exists, create_agent_record, get_agent_record
-from agent.types import AgentAppState, AgentDeps
-from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_deps_dep
+from agent.crud import agent_exists, create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
+from agent.types import AgentAppState, AgentConfig, AgentDeps
+from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
@@ -34,6 +37,7 @@ from api.schemas import (
     MemoryBlockResponse,
     MessageRequest,
     MessagesResponse,
+    SystemInstructionsResponse,
 )
 from memory.block_crud import DuplicateBlockError, create_block, get_blocks
 from memory.system_prompt_compilation import compile_system_prompt
@@ -62,7 +66,8 @@ def map_to_sse(event: Any) -> ServerSentEvent:
     return ServerSentEvent(data=event, event=type(event).__name__)
 
 
-async def get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
+
+async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
     """Load agent record, raising 404 if not found."""
     record = await get_agent_record(session, agent_id)
     if record is None:
@@ -159,7 +164,7 @@ async def send_message(
 @router.post("/{agent_id}/recompile_system_prompt")
 async def recompile_system_prompt_route_handler(
     agent_id: str,
-    deps: AgentDeps = Depends(get_deps_dep)
+    deps: AgentDeps = Depends(get_agent_deps),
 ) -> bool: # We may or may not want this to return a bool
     """
     TODO: This is temp just to be able to test out memory system functionality, we may not actually want this
@@ -184,9 +189,42 @@ async def create_agent(
     behaviour should be covered by tests in test_routes.py::TestCreateAgent.
     
     TODO: I was able to get an invalid model name through to the DB. Errored out when trying to do a model request but did persist
+    (update: pretty sure this is fixed now)
+    TODO: this route and the associated crud function do not follow our read only scheme. granted, the read only scheme is intended to
+    block concurrent access to an existing agent, which doesn't apply here. we can't use our normal deps scheme to lock because there's
+    no agent to construct deps for. will need to figure out, perhaps this route manually acquires the lock.
     """
     record = await create_agent_record(session, body.name, body.system_instructions, body.config)
     return AgentMetadataResponse.from_record(record)
+
+
+@router.get("/{agent_id}/system-instructions")
+async def get_system_instructions(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session_dep),
+) -> SystemInstructionsResponse:
+    """Return the system instructions for an existing agent."""
+    record = await _get_agent_record_or_404(session, agent_id)
+    return SystemInstructionsResponse(system_instructions=record.system_instructions)
+
+
+@router.put("/{agent_id}/config")
+async def put_config(
+    config: AgentConfig,
+    deps: AgentDeps = Depends(get_agent_deps),
+) -> AgentConfig:
+    """Replace the config for an existing agent."""
+    return await replace_agent_config(deps, config)
+
+
+@router.put("/{agent_id}/system-instructions")
+async def put_system_instructions(
+    body: SystemInstructionsResponse,
+    deps: AgentDeps = Depends(get_agent_deps),
+) -> SystemInstructionsResponse:
+    """Replace system instructions for an existing agent and recompile."""
+    result = await replace_system_instructions(deps, body.system_instructions)
+    return SystemInstructionsResponse(system_instructions=result)
 
 
 @router.get("/{agent_id}")
@@ -195,8 +233,18 @@ async def get_agent_info(
     session: AsyncSession = Depends(get_session_dep),
 ) -> AgentMetadataResponse:
     """Return metadata for an existing agent."""
-    record = await get_agent_record_or_404(session, agent_id)
+    record = await _get_agent_record_or_404(session, agent_id)
     return AgentMetadataResponse.from_record(record)
+
+
+@router.get("/{agent_id}/config")
+async def get_config(
+    agent_id: str,
+    session: AsyncSession = Depends(get_session_dep),
+) -> AgentConfig:
+    """Return the config for an existing agent."""
+    record = await _get_agent_record_or_404(session, agent_id)
+    return record.agent_config
 
 
 @router.get("/{agent_id}/memory/blocks")
@@ -216,7 +264,7 @@ async def get_memory_blocks(
 async def create_memory_block(
     agent_id: str,
     body: CreateMemoryBlockRequest,
-    deps: AgentDeps = Depends(get_deps_dep),
+    deps: AgentDeps = Depends(get_agent_deps),
 ) -> MemoryBlockResponse:
     """Create a new memory block for an agent."""
     try:
@@ -231,7 +279,8 @@ async def cancel_agent_run(
     agent_id: str,
     agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> None:
-    """Cancel an active agent run.
+    """
+    Cancel an active agent run.
 
     Sets the cancel_requested for the given agent if a run is currently active.
     Returns 202 if the cancel signal was sent, 409 if no run is active.
@@ -254,7 +303,7 @@ async def get_messages(
     Return conversation history. Use ?full=true for complete history.
     TODO: Another instance of bad read-only control
     """
-    record = await get_agent_record_or_404(session, agent_id)
+    record = await _get_agent_record_or_404(session, agent_id)
     # TODO: Don't need agent record if requesting full, but we're likely gonna rework this anyway
     start_timestamp = None if full else record.context_window_start
     messages = await load_messages(session, agent_id, start_timestamp=start_timestamp)

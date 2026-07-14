@@ -3,10 +3,13 @@ Tests for agent CRUD operations (agent/crud.py)
 """
 import uuid
 
+import pytest
 import pytest_asyncio
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.crud import create_agent_record, get_agent_record
+from agent.crud import create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
+from agent.types import AgentDeps
 from conftest import SAMPLE_AGENT_CONFIG
 from messages.messages import load_messages
 
@@ -47,13 +50,87 @@ class TestCreateAgentRecord:
 
 # --- get_agent_record tests ---
 
-async def test_get_agent_record_returns_record_for_known_id(
-    session: AsyncSession, agent_record
-):
-    result = await get_agent_record(session, agent_record.id)
-    assert result == agent_record
+class TestGetAgentRecord:
+    """Tests for get_agent_record."""
+
+    async def test_returns_record_for_known_id(self, session: AsyncSession, agent_record):
+        result = await get_agent_record(session, agent_record.id)
+        assert result == agent_record
+
+    async def test_returns_none_for_unknown_id(self, session: AsyncSession):
+        result = await get_agent_record(session, "nonexistent-id")
+        assert result is None
 
 
-async def test_get_agent_record_returns_none_for_unknown_id(session: AsyncSession):
-    result = await get_agent_record(session, "nonexistent-id")
-    assert result is None
+# --- replace function tests ---
+#
+# Common behaviors (commits, round-trip) are tested via parametrization.
+# Function-specific behaviors have their own test classes.
+#
+# Not-found guarantee: replace_* functions take AgentDeps, which proves the agent exists.
+# AgentNotFoundError is raised by AgentFactory.build_deps before deps are ever constructed —
+# tested in tests/agent/test_factory.py, not here.
+
+
+# Parametrization data for common replace-function behaviors
+# param args: "replace_fn,new_value,attr_name"
+_REPLACE_FUNCTIONS = [
+    pytest.param(
+        replace_agent_config,
+        SAMPLE_AGENT_CONFIG.model_copy(update={"soft_compaction_limit": 7777}),
+        "agent_config",
+        id="replace_agent_config",
+    ),
+    pytest.param(
+        replace_system_instructions,
+        "New instructions for test.",
+        "system_instructions",
+        id="replace_system_instructions",
+    ),
+]
+
+@pytest.mark.parametrize("replace_fn,new_value,attr_name", _REPLACE_FUNCTIONS)
+class TestReplaceFunctionCommonBehaviors:
+    """Common behaviors shared by all replace_* functions."""
+
+    async def test_updates_db_and_returns_new_value(
+        self, session: AsyncSession, agent_record, agent_deps: AgentDeps, replace_fn, new_value, attr_name
+    ):
+        """Replace functions update DB and return the new value."""
+        agent_id = agent_record.id  # capture before expire — post-expire attr access triggers async lazy load
+        result = await replace_fn(agent_deps, new_value)
+
+        assert result == new_value
+        session.expire(agent_record)
+        refreshed = await get_agent_record(session, agent_id)
+        assert getattr(refreshed, attr_name) == new_value
+
+    async def test_commits_on_success(
+        self, session: AsyncSession, agent_deps: AgentDeps, replace_fn, new_value, attr_name
+    ):
+        """Replace functions commit their changes."""
+        committed = False
+
+        @event.listens_for(session.sync_session, "after_commit")
+        def on_commit(sess):
+            nonlocal committed
+            committed = True
+
+        await replace_fn(agent_deps, new_value)
+
+        assert committed, "Function did not commit"
+
+
+class TestReplaceSystemInstructions:
+    """Function-specific tests for replace_system_instructions."""
+
+    async def test_triggers_recompilation(self, session: AsyncSession, agent_record, agent_deps: AgentDeps):
+        """System prompt is recompiled after updating instructions."""
+        agent_id = agent_record.id  # capture before expire — post-expire attr access triggers async lazy load
+        new_instructions = "You are a helpful assistant who loves cats."
+
+        await replace_system_instructions(agent_deps, new_instructions)
+
+        session.expire(agent_record)
+        refreshed = await get_agent_record(session, agent_id)
+        assert new_instructions in refreshed.compiled_system_prompt

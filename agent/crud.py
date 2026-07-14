@@ -21,6 +21,21 @@ async def agent_exists(session: AsyncSession, agent_id: str) -> bool:
     return result.scalar()
 
 
+async def replace_agent_config(deps: AgentDeps, config: AgentConfig) -> AgentConfig:
+    """Replace agent config in DB. Agent is already verified to exist via deps."""
+    deps.config = config
+    await deps.commit_changes_refresh_agent_record()
+    return deps.config
+
+
+async def replace_system_instructions(deps: AgentDeps, instructions: str) -> str:
+    """Replace system instructions in DB and recompile. Agent is already verified to exist via deps."""
+    deps.system_instructions = instructions
+    await compile_system_prompt(deps)
+    await deps.commit_changes_refresh_agent_record()
+    return deps.system_instructions
+
+
 async def create_agent_record(
     session: AsyncSession,
     name: str,

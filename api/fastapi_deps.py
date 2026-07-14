@@ -11,7 +11,7 @@ from typing import AsyncIterator
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.factory import AgentFactory
+from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST
 from agent.types import AgentAppState, AgentDeps
 from db.connection import get_session
 from pydantic_ai import Agent
@@ -37,7 +37,7 @@ async def get_agent_and_deps(
 
     Domain exceptions propagate to app-level handlers in api/app.py:
       AgentNotFoundError → 404
-      AgentLockedError   → 503
+      AgentLockedError   → 423
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
@@ -46,23 +46,24 @@ async def get_agent_and_deps(
         yield (agent, deps)
 
 
-async def get_deps_dep(
+async def get_agent_deps(
     agent_id: str,
     session: AsyncSession = Depends(get_session_dep),
     agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> AsyncIterator[AgentDeps]:
-    """
-    FastAPI yield dependency: acquires agent lock, yields AgentDeps (without building Agent).
+    """FastAPI yield dependency: acquires agent lock (short timeout) and yields AgentDeps.
 
-    Use for write routes that need the lock but don't need a configured Agent instance.
+    Intended for user-triggered routes that do a quick update and don't need a configured
+    Agent instance. Uses a short lock timeout — returns 423 quickly if the agent is busy
+    rather than blocking. Routes that need a long timeout are likely agent routes and should use
+    get_agent_and_deps instead.
+
     Domain exceptions propagate to app-level handlers in api/app.py:
       AgentNotFoundError → 404
-      AgentLockedError   → 503
+      AgentLockedError   → 423
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
-    
-    Has the best function name in the entire codebase
     """
     factory = AgentFactory(agent_id, agent_app_state_reg, session)
-    async with factory.build_deps() as deps:
+    async with factory.build_deps(timeout=LOCK_TIMEOUT_FAST) as deps:
         yield deps

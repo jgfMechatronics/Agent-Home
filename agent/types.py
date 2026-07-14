@@ -8,12 +8,36 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from typing import Literal, get_args, get_origin
+
 from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic_ai.models.anthropic import AnthropicModelName
 from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from db.models import AgentRecord
+
+
+# AnthropicModelName is str | Literal['claude-...', ...]. Extract only the known
+# Literal values — the str arm is a forward-compat escape hatch, not a validation target.
+_literal_type = next(arg for arg in get_args(AnthropicModelName) if get_origin(arg) is Literal)
+VALID_MODEL_NAMES: frozenset[str] = frozenset(get_args(_literal_type))
+
+
+def validate_model_name(model_name: str) -> str:
+    """Validate that model_name is a known Anthropic model string.
+
+    Raises ValueError for empty or unrecognised names. Returns the name unchanged.
+    """
+    if not model_name.strip():
+        raise ValueError("model_name cannot be empty")
+    if model_name not in VALID_MODEL_NAMES:
+        raise ValueError(
+            f"Unknown model {model_name!r}. Must be one of: {sorted(VALID_MODEL_NAMES)}"
+        )
+    return model_name
 
 
 @dataclass
@@ -28,6 +52,19 @@ class AgentAppState:
     cancel_requested: asyncio.Event = field(default_factory=asyncio.Event)
 
 
+# --- Domain Exceptions ---
+# Routes translate these to HTTP status codes (404, 409)
+
+class AgentNotFoundError(Exception):
+    """Raised when agent_id doesn't exist in DB."""
+    pass
+
+
+class AgentLockedError(Exception):
+    """Raised when agent is already in use by another request."""
+    pass
+
+
 class AgentConfig(BaseModel):
     """
     Agent configuration stored as JSON in AgentRecord.agent_config.
@@ -38,27 +75,25 @@ class AgentConfig(BaseModel):
     - soft_compaction_limit: Token threshold for triggering compaction
     
     Optional fields:
-    - compaction_target_percentage: Target context size after compaction as fraction of soft_compaction_limit
+    - compaction_target_fraction: Target context size after compaction as fraction of soft_compaction_limit
     - is_deletable: Whether agent can be deleted (default False)
+    - retries: how many times the agent can retry a failed tool call
+    - thinking_enabled
     """
-    model_config = ConfigDict(extra="forbid") # TODO: What is this?
+    model_config = ConfigDict(extra="forbid") # prevent extra unexpected fields
 
     model_name: str
     tool_names: list[str]
     soft_compaction_limit: int
-    compaction_target_percentage: float = 0.25
+    compaction_target_fraction: float = 0.25
     is_deletable: bool = False
     retries: int = 4
     thinking_enabled: bool = False
     
     @field_validator("model_name")
     @classmethod
-    def validate_model_name(cls, v: str) -> str:
-        # TODO, once get_model implemented validate that str corresponds to a valid AnthropicModel.
-        # Or, consider just storing model_name as an AnthropicModel and dealing with the DB integration.
-        if not v.strip():
-            raise ValueError("model_name cannot be empty")
-        return v
+    def _validate_model_name(cls, v: str) -> str:
+        return validate_model_name(v)
     
     @field_validator("soft_compaction_limit")
     @classmethod
@@ -67,11 +102,18 @@ class AgentConfig(BaseModel):
             raise ValueError("soft_compaction_limit must be positive")
         return v
     
-    @field_validator("compaction_target_percentage")
+    @field_validator("compaction_target_fraction")
     @classmethod
-    def validate_compaction_target_percentage(cls, v: float) -> float:
+    def validate_compaction_target_fraction(cls, v: float) -> float:
         if not 0 < v < 1:
-            raise ValueError("compaction_target_percentage must be between 0 and 1 (exclusive)")
+            raise ValueError("compaction_target_fraction must be between 0 and 1 (exclusive)")
+        return v
+
+    @field_validator("retries")
+    @classmethod
+    def validate_retries(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("retries must be non-negative")
         return v
 
 
@@ -111,9 +153,17 @@ class AgentDeps:
     def config(self) -> AgentConfig:
         return self._agent_record.agent_config
 
+    @config.setter
+    def config(self, value: AgentConfig) -> None:
+        self._agent_record.agent_config = value
+
     @property
     def system_instructions(self) -> str:
         return self._agent_record.system_instructions or ""
+
+    @system_instructions.setter
+    def system_instructions(self, value: str) -> None:
+        self._agent_record.system_instructions = value
 
     @property
     def compiled_system_prompt(self) -> str | None:

@@ -1,4 +1,5 @@
 """FastAPI application and lifespan"""
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -10,7 +11,7 @@ from api.schemas import HealthResponse
 from db.connection import create_sqlite_engine, init_db
 
 
-DB_PATH = "/data/db.sqlite"
+DB_PATH = os.environ.get("AGENT_HOME_DB_PATH", os.path.expanduser("~/.agent-home/db.sqlite"))
 
 
 @asynccontextmanager
@@ -37,7 +38,7 @@ async def agent_not_found_handler(request: Request, exc: AgentNotFoundError) -> 
 
 
 async def agent_locked_handler(request: Request, exc: AgentLockedError) -> JSONResponse:
-    return JSONResponse(status_code=503, content={"detail": _exc_detail(exc)})
+    return JSONResponse(status_code=423, content={"detail": _exc_detail(exc)})
 
 
 # Since this app is intended for self hosters, we want exception details to pass on to the client

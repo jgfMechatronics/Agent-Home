@@ -921,9 +921,9 @@ They were not called in current routes nor did they have any dependents
 - [xr] `get_agent_record(session, agent_id)` — return AgentRecord for a given agent_id, or None if not found
 - [xr] `agent_exists(session, agent_id) -> bool` — lightweight existence check via EXISTS scalar query; does not load the full record
 - [DEFERRED] `get_config(agent_id)` — return AgentConfig for a given agent_id
-- [DEFERRED] `update_config(agent_id, new_config: AgentConfig)` — replace agent's config in DB. For incremental changes, get, mod, then put
+- [xr] `replace_config(agent_id, new_config: AgentConfig)` — replace agent's config in DB.
 - [DEFERRED] `delete_agent(agent_id) -> bool` — remove all data associated with agent from DB IFF `AgentConfig.is_deletable` is True. Returns True if deleted, False if not found or delete-protected. Note: to delete a delete-protected agent, first set `is_deletable=True` via `update_config`.
-- [DEFERRED] `store_system_instructions(agent_id, instructions)` — set (overwrite) the system instructions for an agent  
+- [xr] `replace_system_instructions(agent_id, instructions)` — set (overwrite) the system instructions for an agent  
 - [DEFERRED] `get_system_instructions(agent_id)`
 - [DEFERRED] `list_agents() -> list[AgentConfig]` — return all agent configs (can access name and ID from config)
 Note: unlike block_crud, agent_crud works On agent ID instead of agent deps. This is because block_crud Will often be called from inside an active session, where a database connection already exists and agent deps is already load.  
@@ -948,11 +948,11 @@ agent_crud will often happen from discrete API hits.
 - [ ] Returns correct AgentConfig for a valid `agent_id`
 - [ ] Raises `NotFound` for unknown `agent_id`
 
-*[DEFERRED] `update_config`:*
-- [ ] Replaces agent config in DB with `new_config`
-- [ ] Returns updated config
-- [ ] Raises `NotFound` for unknown `agent_id`
-- [ ] Unrelated configs not affected
+*`replace_agent_config`:*
+- [xr] Replaces agent config in DB with `new_config`
+- [xr] Returns updated config
+- [xr] Raises `AgentNotFoundError` for unknown `agent_id`
+- [xr] commit on success
 
 *[DEFERRED] `delete_agent`:*
 - [ ] Returns True and deletes agent row and all associated data (messages, memory blocks) when `is_deletable=True`
@@ -965,10 +965,12 @@ agent_crud will often happen from discrete API hits.
 - [ ] Returns list of all AgentConfigs
 - [ ] Returns empty list if no agents exist
 
-*[DEFERRED] `store_system_instructions`:*
-- [ ] Stores instructions for the given agent (overwrites any previous value)
-- [ ] Instructions are picked up by `compile_system_prompt` on next compilation
-- [ ] Returns stored instructions
+*`replace_system_instructions`:*
+- [xr] Stores instructions for the given agent (overwrites any previous value)
+- [xr] triggers recompilation of system prompt
+- [xr] Returns stored instructions
+- [xr] commit on success
+- [xr] Raises `AgentNotFoundError` for unknown `agent_id`
 
 *[DEFERRED] `get_system_instructions`:*
 - [ ] Returns expected system instructions for given agent_id
@@ -1002,6 +1004,10 @@ TODO: Consider extracting event loop logic to an `EventGenerator` class or simil
 - [xr] `GET /agents/{agent_id}` — get agent info
 - [xr] `GET /agents/{agent_id}/core_memory`
 - [xr] `GET /agents/{agent_id}/messages` — get conversation history
+- [xr] `GET /agents/{agent_id}/config` — return agent's current AgentConfig
+- [ ] `PUT /agents/{agent_id}/config` — replace agent's AgentConfig
+- [xr] `GET /agents/{agent_id}/system-instructions` — return agent's current system instructions
+- [ ] `PUT /agents/{agent_id}/system-instructions` — replace agent's system instructions (triggers recompilation)
 
 **Behaviors to test:**
 
@@ -1064,6 +1070,25 @@ TODO: Consider extracting event loop logic to an `EventGenerator` class or simil
 
 *Common (`GET /agents/{agent_id}/messages`, `GET /agents/{agent_id}/core_memory`, `GET /agents/{agent_id}`)*
 - [xr] Returns 404 for unknown `agent_id`
+
+*`GET /agents/{agent_id}/config`:*
+- [xr] Returns current AgentConfig as JSON for a valid agent_id
+
+*`PUT /agents/{agent_id}/config`:*
+- [xr] Calls replace_agent_config with correct agent_id and validated config (validated by AgentConfig constructor)
+- [xr] Returns 422 for invalid config (fails AgentConfig validation)
+- [xr] Returns 409 if agent is currently locked (run in progress)
+
+*`GET /agents/{agent_id}/system-instructions`:*
+- [xr] Returns current system instructions string for a valid agent_id
+*`PUT /agents/{agent_id}/system-instructions`:*
+- [xr] Calls replace_system_instructions with correct agent_id and instructions string
+- [xr] Returns 409 if agent is currently locked (run in progress)
+
+*Common (`GET/PUT /agents/{agent_id}/config`, `GET/PUT /agents/{agent_id}/system-instructions`)*
+- [xr] Returns 404 for unknown agent_id
+- [xr] (PUTs only) returns 200 on success and echos back the set value (sys instr/agent config)
+    - echos the SET value, not just the passed in value
 
 
 #### 4.2 Schemas (`schemas.py`)

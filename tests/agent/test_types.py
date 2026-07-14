@@ -11,7 +11,7 @@ import pytest
 from conftest import SAMPLE_AGENT_CONFIG_DATA
 from pydantic import ValidationError
 
-from agent.types import AgentConfig, AgentDeps
+from agent.types import AgentConfig, AgentDeps, VALID_MODEL_NAMES
 # --- Fixtures ---
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def test_agentconfig_valid_construction(valid_config_data: dict):
 
 @pytest.mark.parametrize("missing_field", [
     "model_name",
-    "tool_names", 
+    "tool_names",
     "soft_compaction_limit",
 ])
 def test_agentconfig_requires_field(valid_config_data: dict, missing_field: str):
@@ -70,13 +70,40 @@ def test_agentconfig_validates_types(valid_config_data: dict, field: str, invali
         AgentConfig(**valid_config_data)
 
 
-@pytest.mark.xfail(reason="Need validate model name with get_model() once implemented.")
-def test_todo_validate_model_name_w_get_model():
-    """
-    TODO, once get_model implemented validate that str corresponds to a valid AnthropicModel.
-    Or, consider just storing model_name as an AnthropicModel and dealing with the DB integration.
-    """
-    pytest.fail()
+# --- AgentConfig retries validation ---
+
+@pytest.mark.parametrize("invalid_retries", [-1, -100])
+def test_agentconfig_retries_must_be_non_negative(valid_config_data: dict, invalid_retries: int):
+    """Negative retry counts are nonsensical and should be rejected."""
+    valid_config_data["retries"] = invalid_retries
+    with pytest.raises(ValidationError):
+        AgentConfig(**valid_config_data)
+
+
+@pytest.mark.parametrize("valid_retries", [0, 1, 4])
+def test_agentconfig_retries_non_negative_is_valid(valid_config_data: dict, valid_retries: int):
+    """Zero and positive retry counts are all valid."""
+    valid_config_data["retries"] = valid_retries
+    config = AgentConfig(**valid_config_data)
+    assert config.retries == valid_retries
+
+
+# --- AgentConfig model_name validation against known models ---
+
+def test_agentconfig_rejects_unknown_model_name(valid_config_data: dict):
+    """model_name must correspond to a known Anthropic model."""
+    valid_config_data["model_name"] = "claude-totally-fake-model"
+    with pytest.raises(ValidationError):
+        AgentConfig(**valid_config_data)
+
+
+@pytest.mark.parametrize("model_name", VALID_MODEL_NAMES)
+def test_agentconfig_accepts_known_model_name(valid_config_data: dict, model_name: str):
+    """Every model name in VALID_MODEL_NAMES should be accepted."""
+    valid_config_data["model_name"] = model_name
+    config = AgentConfig(**valid_config_data)
+    assert config.model_name == model_name
+
 
 # --- AgentConfig defaults ---
 

@@ -7,7 +7,7 @@ dependency injection chain.
 Strategy: mock AgentFactory.build_agent_and_deps / build_deps at the boundary.
   - get_agent_and_deps is responsible for: calling build_agent_and_deps, yielding
     the result, and propagating exceptions. Nothing more.
-  - get_deps_dep mirrors get_agent_and_deps but yields AgentDeps only (no Agent).
+  - get_agent_deps mirrors get_agent_and_deps but yields AgentDeps only (no Agent).
   - Exception → HTTP mapping is the app's concern, tested in tests/api/test_app.py.
   - Lock management, DB lookups, agent construction → build_agent_and_deps's concern,
     covered in tests/agent/test_factory.py.
@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError
 from agent.types import AgentAppState, AgentDeps
-from api.fastapi_deps import get_agent_and_deps, get_agent_app_state_reg, get_deps_dep, get_session_dep
+from api.fastapi_deps import get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_session_dep
 
 
 # --- Fixtures ---
@@ -57,7 +57,7 @@ async def _build_test_client(
     No exception handlers registered — exceptions propagate uncaught.
     Accepts any route handler so each fixture can define its own dep and capture logic.
 
-    The fixtures for testing get_deps_dep and get_agent_and_deps both share app setup, only the specifics of
+    The fixtures for testing get_agent_deps and get_agent_and_deps both share app setup, only the specifics of
     the route differ
     """
     app = FastAPI()
@@ -100,8 +100,8 @@ async def deps_only_client(
     agent_app_state_reg: dict,
     captured: dict,
 ) -> AsyncGenerator[AsyncClient, None]:
-    """Test client wired to get_deps_dep — route captures AgentDeps only (no Agent)."""
-    async def _route(deps: AgentDeps = Depends(get_deps_dep)):
+    """Test client wired to get_agent_deps — route captures AgentDeps only (no Agent)."""
+    async def _route(deps: AgentDeps = Depends(get_agent_deps)):
         captured["deps"] = deps
         if exc := captured.get("route_raises"):
             raise exc
@@ -185,8 +185,8 @@ class TestGetAgentAndDeps:
             await agent_and_deps_client.get("/test/any-id")
 
 
-class TestGetDepsDep:
-    """get_deps_dep: yields AgentDeps (no Agent) and propagates all exceptions uncaught."""
+class TestGetAgentDeps:
+    """get_agent_deps: yields AgentDeps (no Agent) with short lock timeout, propagates all exceptions uncaught."""
 
     @pytest.fixture(autouse=True)
     def mock_build_success(self):

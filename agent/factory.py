@@ -12,29 +12,23 @@ StatefulAgent Pattern:
 """
 import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Literal, get_args, get_origin
+from typing import AsyncIterator
 
 from pydantic_ai import Agent, DeferredToolRequests
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import get_agent_record
-from agent.types import AgentAppState, AgentDeps
+from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError, validate_model_name
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
 
-
-# --- Domain Exceptions ---
-# Routes translate these to HTTP status codes (404, 503)
-
-class AgentNotFoundError(Exception):
-    """Raised when agent_id doesn't exist in DB."""
-    pass
+# Re-export exceptions for backward compatibility (canonical location is agent.types)
+__all__ = ["AgentFactory", "AgentNotFoundError", "AgentLockedError", "get_model"]
 
 
-class AgentLockedError(Exception):
-    """Raised when agent is already in use by another request."""
-    pass
+LOCK_TIMEOUT_SECONDS: int = 60
+LOCK_TIMEOUT_FAST: int = 2
 
 
 class AgentFactory:
@@ -49,8 +43,6 @@ class AgentFactory:
     Write operations require build_deps() or build_agent_and_deps(),
     which proves the caller holds the lock.
     """
-
-    LOCK_TIMEOUT_SECONDS: int = 60
 
     def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState], session: AsyncSession):
         """Resolve (or create) the agent slot from the registry, then discard the registry ref."""
@@ -67,16 +59,16 @@ class AgentFactory:
         return agent_app_state_reg[agent_id]
 
     @asynccontextmanager
-    async def build_deps(self) -> AsyncIterator[AgentDeps]:
+    async def build_deps(self, timeout: float = LOCK_TIMEOUT_SECONDS) -> AsyncIterator[AgentDeps]:
         """Async context manager that acquires the agent lock and yields AgentDeps.
 
         Lock-then-fetch: acquires lock BEFORE fetching from DB to prevent stale state.
         Releases lock on exit (normal or exception) via try/finally.
         """
         try:
-            await asyncio.wait_for(self._agent_app_state.lock.acquire(), timeout=self.LOCK_TIMEOUT_SECONDS)
+            await asyncio.wait_for(self._agent_app_state.lock.acquire(), timeout=timeout)
         except asyncio.TimeoutError:
-            raise AgentLockedError(f"Agent {self._agent_id!r} did not become available within {self.LOCK_TIMEOUT_SECONDS}s")
+            raise AgentLockedError(f"Agent {self._agent_id!r} did not become available within {timeout}s")
 
         try:
             agent_record = await get_agent_record(self._session, self._agent_id)
@@ -130,18 +122,12 @@ class AgentFactory:
             yield (agent, deps)
 
 
-# AnthropicModelName is defined as str | Literal['claude-...', ...]. The str union arm is an
-# escape hatch for forward compatibility — we want only the known Literal values for validation.
-_literal_type = next(arg for arg in get_args(AnthropicModelName) if get_origin(arg) is Literal)
-_VALID_MODEL_NAMES: frozenset[str] = frozenset(get_args(_literal_type))
-
-
 def get_model(model_name: str) -> AnthropicModel:
     """Map a model name string to a Pydantic AI model instance.
     
     Raises ValueError for unknown or unsupported model names.
+    AgentConfig.validate_model_name already enforces this at config creation time,
+    so this is a belt-and-suspenders guard.
     """
-    #TODO: JF Review
-    if model_name not in _VALID_MODEL_NAMES:
-        raise ValueError(f"Unsupported model name: {model_name!r}. Must be one of: {sorted(_VALID_MODEL_NAMES)}")
+    validate_model_name(model_name)  # raises ValueError for unknown names
     return AnthropicModel(model_name)

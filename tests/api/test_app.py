@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from asgi_lifespan import LifespanManager
 from collections.abc import AsyncGenerator
@@ -50,7 +52,7 @@ class TestLifespan:
     async def test_happy_path(self):
         await self.startup_and_shutdown_lifespan()
 
-        expected_db_path = "/data/db.sqlite"
+        expected_db_path = os.path.expanduser("~/.agent-home/db.sqlite")
         
         self.mock_create_engine.assert_called_once_with(expected_db_path)
         self.mock_init_db.assert_called_once_with(self.mock_db_engine)
@@ -96,13 +98,13 @@ class TestExceptionHandlers:
 
     @pytest.mark.parametrize("path,expected_status,error_msg", [
         ("/test-not-found", 404, "AgentNotFoundError: agent 'x' not found"),
-        ("/test-locked", 503, "AgentLockedError: agent 'x' is locked"),
+        ("/test-locked", 423, "AgentLockedError: agent 'x' is locked"),
         ("/test-unexpected", 500, "RuntimeError: something broke"),
     ])
     async def test_maps_domain_exception_to_http(
         self, path: str, expected_status: int, error_msg: str
     ):
-        """AgentNotFoundError → 404, AgentLockedError → 503 with detail string."""
+        """AgentNotFoundError → 404, AgentLockedError → 423 with detail string."""
         response = await self.client.get(path)
         assert response.status_code == expected_status
         assert response.json()["detail"] == error_msg
