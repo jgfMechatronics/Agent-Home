@@ -16,6 +16,13 @@ if [[ -f "$ENV_FILE" ]]; then
     echo "Loaded env from $ENV_FILE"
 fi
 
+# create default dir for db
+DEFAULT_DB_DIR="$HOME/.agent-home"
+if [[ ! -d "$DEFAULT_DB_DIR" ]]; then
+    mkdir -p "$DEFAULT_DB_DIR"
+    echo "created $DEFAULT_DB_DIR"
+fi
+
 # Stop existing server if running
 if [[ -f "$PID_FILE" ]]; then
     PID=$(cat "$PID_FILE")
