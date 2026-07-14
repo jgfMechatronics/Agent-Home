@@ -102,6 +102,19 @@ class TestCreateAgent:
         assert response.status_code in (400, 422)  # FastAPI validation error
 
 
+class TestCreateAgentNameUniqueness:
+    """POST /agents — duplicate name handling."""
+
+    async def test_returns_409_for_duplicate_name(self, client: AsyncClient):
+        """Creating a second agent with an already-used name returns 409."""
+        first = await client.post("/agents", json=TestCreateAgent._VALID_BODY)
+        assert first.status_code == 201
+
+        second = await client.post("/agents", json=TestCreateAgent._VALID_BODY)
+        assert second.status_code == 409
+        assert second.json()["detail"] == f"Agent name already in use: {TestCreateAgent._NAME!r}"
+
+
 class TestGetConfig:
     """GET /agents/{agent_id}/config — agent config."""
 

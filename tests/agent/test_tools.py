@@ -297,7 +297,7 @@ class TestMemoryToolsShared:
         """Tool returns snippet matching _compute_snippet output."""
         # Use 10-line content so snippeting actually happens
         agent_data = await _make_agent_with_block(
-            session, content=ALPHABET_CONTENT, char_limit=500
+            session, content=ALPHABET_CONTENT, char_limit=500, agent_name="snippet-test-agent"
         )
         ctx = agent_data["ctx"]
         block = agent_data["block"]

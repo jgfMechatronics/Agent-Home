@@ -33,7 +33,7 @@ This document outlines what key features we are still missing leading up to dogf
 # Implementation Progress
 
 - [xr] Gap 6: Agent Config Management Console
-- [ ] Gap 2: Web Search / Fetch Webpage
+- [xr] Gap 2: Web Search / Fetch Webpage
 - [ ] Gap 5: Inter-Agent Comms
 - [ ] Gap 3: Conversation History Portability (minimal spike only)
 - [ ] Gap 8: Timestamp-as-Index Ordering

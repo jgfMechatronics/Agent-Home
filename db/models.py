@@ -52,7 +52,7 @@ class AgentRecord(Base):
     __tablename__ = "agent"
 
     id: Mapped[str] = mapped_column(primary_key=True, default=lambda: str(uuid.uuid4()))
-    name: Mapped[str]
+    name: Mapped[str] = mapped_column(unique=True)
     agent_config: Mapped[AgentConfig] = mapped_column(AgentConfigType())
     system_instructions: Mapped[str] = mapped_column(default='')
     compiled_system_prompt: Mapped[str] = mapped_column(default='')
