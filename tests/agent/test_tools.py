@@ -579,7 +579,7 @@ class TestSendMessage:
 
     @pytest_asyncio.fixture(autouse=True)
     async def setup(self, session: AsyncSession):
-        """Create a sender agent in the DB and wire up context."""
+        """Create sender agent and optionally a target for delivery tests."""
         sender = AgentRecord(
             name="sender-agent",
             agent_config=SAMPLE_AGENT_CONFIG,
@@ -592,6 +592,26 @@ class TestSendMessage:
         self.deps = make_deps(session, sender)
         self.ctx = mock_run_context(self.deps)
 
+    async def _create_target(self):
+        """Helper: create target agent in DB."""
+        target = AgentRecord(
+            name="target-agent",
+            agent_config=SAMPLE_AGENT_CONFIG,
+            system_instructions="Target",
+        )
+        self.session.add(target)
+        await self.session.flush()
+        return target
+
+    def _ctx_with_registry(self, mocker):
+        """Helper: context with registry configured (enables send_message)."""
+        deps = AgentDeps(
+            session=self.session,
+            agent_record=self.sender,
+            agent_app_state_reg={self.sender.id: mocker.MagicMock()},
+        )
+        return mock_run_context(deps)
+
     async def test_target_not_found_raises_model_retry(self):
         """Raises ModelRetry when no agent with that name exists."""
         with pytest.raises(ModelRetry, match="ghost"):
@@ -599,120 +619,75 @@ class TestSendMessage:
 
     async def test_target_not_found_is_case_sensitive(self):
         """Name lookup is case-sensitive — mismatched case raises ModelRetry."""
-        # sender-agent exists but "Sender-Agent" (capitalised) should not match
         with pytest.raises(ModelRetry, match="Sender-Agent"):
             await send_message(self.ctx, target_name="Sender-Agent", content="hi")
 
     async def test_raises_model_retry_when_registry_not_configured(self):
-        """Raises ModelRetry when deps lacks agent_app_state_reg (send_message not usable)."""
-        # Create a target so we pass the "not found" check
-        target = AgentRecord(
-            name="target-agent",
-            agent_config=SAMPLE_AGENT_CONFIG,
-            system_instructions="Target",
-        )
-        self.session.add(target)
-        await self.session.flush()
-
-        # self.deps has no registry (make_deps doesn't set it)
+        """Raises ModelRetry when deps lacks agent_app_state_reg."""
+        await self._create_target()
         with pytest.raises(ModelRetry, match="not configured"):
             await send_message(self.ctx, target_name="target-agent", content="hello")
 
-    async def test_happy_path_returns_success(self, mocker):
-        """Returns success string when target found and delivery confirmed."""
-        # Create target agent
-        target = AgentRecord(
-            name="target-agent",
-            agent_config=SAMPLE_AGENT_CONFIG,
-            system_instructions="Target",
-        )
-        self.session.add(target)
-        await self.session.flush()
+    @pytest.mark.parametrize("delivery_succeeds,expect_error", [
+        pytest.param(True, False, id="success"),
+        pytest.param(False, True, id="busy"),
+    ])
+    async def test_delivery_outcome(self, mocker, delivery_succeeds, expect_error):
+        """Delivery success returns message; failure raises ModelRetry."""
+        await self._create_target()
+        ctx = self._ctx_with_registry(mocker)
 
-        # Rebuild deps with registry so send_message is "configured"
-        mock_registry = {self.sender.id: mocker.MagicMock()}
-        deps_with_registry = AgentDeps(
-            session=self.session,
-            agent_record=self.sender,
-            agent_app_state_reg=mock_registry,
-        )
-        ctx_with_registry = mock_run_context(deps_with_registry)
-
-        # Mock _deliver_message to immediately signal success
-        async def mock_deliver(agent_id, user_prompt, engine, agent_app_state_reg, delivery_future, timeout=60.0):
-            delivery_future.set_result(True)
-
+        async def mock_deliver(*args, **kwargs):
+            kwargs["delivery_future"].set_result(delivery_succeeds)
         mocker.patch("agent.tools._deliver_message", side_effect=mock_deliver)
 
-        result = await send_message(ctx_with_registry, target_name="target-agent", content="hello")
-        assert "delivered" in result.lower()
-        assert "target-agent" in result
-
-    async def test_raises_model_retry_when_target_busy(self, mocker):
-        """Raises ModelRetry when target agent's lock cannot be acquired."""
-        # Create target agent
-        target = AgentRecord(
-            name="target-agent",
-            agent_config=SAMPLE_AGENT_CONFIG,
-            system_instructions="Target",
-        )
-        self.session.add(target)
-        await self.session.flush()
-
-        # Rebuild deps with registry
-        mock_registry = {self.sender.id: mocker.MagicMock()}
-        deps_with_registry = AgentDeps(
-            session=self.session,
-            agent_record=self.sender,
-            agent_app_state_reg=mock_registry,
-        )
-        ctx_with_registry = mock_run_context(deps_with_registry)
-
-        # Mock _deliver_message to signal failure (lock not acquired)
-        async def mock_deliver(agent_id, user_prompt, engine, agent_app_state_reg, delivery_future, timeout=60.0):
-            delivery_future.set_result(False)
-
-        mocker.patch("agent.tools._deliver_message", side_effect=mock_deliver)
-
-        with pytest.raises(ModelRetry, match="target-agent"):
-            await send_message(ctx_with_registry, target_name="target-agent", content="hello")
+        if expect_error:
+            with pytest.raises(ModelRetry, match="target-agent"):
+                await send_message(ctx, target_name="target-agent", content="hello")
+        else:
+            result = await send_message(ctx, target_name="target-agent", content="hello")
+            assert "delivered" in result.lower() and "target-agent" in result
 
 
 class TestDeliverMessage:
     """_deliver_message: background task for inter-agent delivery."""
 
-    async def test_signals_true_when_lock_acquired(self, mocker):
-        """Future receives True once lock is acquired, before agent run completes."""
+    @pytest.fixture
+    def mock_session(self, mocker):
+        """Mock get_session context manager (patch at source — imports are deferred)."""
+        mock_cm = mocker.AsyncMock()
+        mock_cm.__aenter__.return_value = mocker.MagicMock()
+        mock_cm.__aexit__.return_value = None
+        mocker.patch("db.connection.get_session", return_value=mock_cm)
+        return mock_cm
+
+    @pytest.mark.parametrize("lock_acquired", [
+        pytest.param(True, id="lock_acquired"),
+        pytest.param(False, id="lock_unavailable"),
+    ])
+    async def test_signals_future_based_on_lock_outcome(self, mocker, mock_session, lock_acquired):
+        """Future receives True when lock acquired, False when AgentLockedError."""
         import asyncio
         from agent.tools import _deliver_message
+        from agent.factory import AgentLockedError
 
-        # Mock get_session (patch at source, not agent.tools — imports are deferred)
-        mock_session_cm = mocker.AsyncMock()
-        mock_session = mocker.MagicMock()
-        mock_session_cm.__aenter__.return_value = mock_session
-        mock_session_cm.__aexit__.return_value = None
-        mocker.patch("db.connection.get_session", return_value=mock_session_cm)
-
-        # Mock AgentFactory context manager
-        mock_agent = mocker.MagicMock()
-        mock_deps = mocker.MagicMock()
-        mock_factory_instance = mocker.MagicMock()
+        # Configure factory mock based on test case
         mock_factory_cm = mocker.AsyncMock()
-        mock_factory_cm.__aenter__.return_value = (mock_agent, mock_deps)
-        mock_factory_cm.__aexit__.return_value = None
-        mock_factory_instance.build_agent_and_deps.return_value = mock_factory_cm
-        mocker.patch("agent.factory.AgentFactory", return_value=mock_factory_instance)
+        if lock_acquired:
+            mock_factory_cm.__aenter__.return_value = (mocker.MagicMock(), mocker.MagicMock())
+            mock_factory_cm.__aexit__.return_value = None
+            async def mock_run(*args, **kwargs):
+                return
+                yield
+            mocker.patch("agent.runner.run_stateful_agent", side_effect=mock_run)
+        else:
+            mock_factory_cm.__aenter__.side_effect = AgentLockedError("test-agent-id")
 
-        # Mock run_stateful_agent as an async generator that yields nothing
-        async def mock_run(*args, **kwargs):
-            return
-            yield  # makes it a generator
-        mocker.patch("agent.runner.run_stateful_agent", side_effect=mock_run)
+        mock_factory = mocker.MagicMock()
+        mock_factory.build_agent_and_deps.return_value = mock_factory_cm
+        mocker.patch("agent.factory.AgentFactory", return_value=mock_factory)
 
-        # Create and await the future
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[bool] = loop.create_future()
-
+        future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         await _deliver_message(
             agent_id="test-agent-id",
             user_prompt="hello",
@@ -721,65 +696,15 @@ class TestDeliverMessage:
             delivery_future=future,
         )
 
-        assert future.done()
-        assert future.result() is True
-
-    async def test_signals_false_when_lock_unavailable(self, mocker):
-        """Future receives False when AgentLockedError is raised."""
-        import asyncio
-        from agent.tools import _deliver_message
-        from agent.factory import AgentLockedError
-
-        # Mock get_session (patch at source)
-        mock_session_cm = mocker.AsyncMock()
-        mock_session = mocker.MagicMock()
-        mock_session_cm.__aenter__.return_value = mock_session
-        mock_session_cm.__aexit__.return_value = None
-        mocker.patch("db.connection.get_session", return_value=mock_session_cm)
-
-        # Mock AgentFactory to raise AgentLockedError
-        mock_factory_instance = mocker.MagicMock()
-        mock_factory_cm = mocker.AsyncMock()
-        mock_factory_cm.__aenter__.side_effect = AgentLockedError("test-agent-id")
-        mock_factory_instance.build_agent_and_deps.return_value = mock_factory_cm
-        mocker.patch("agent.factory.AgentFactory", return_value=mock_factory_instance)
-
-        # Create and await the future
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[bool] = loop.create_future()
-
-        await _deliver_message(
-            agent_id="test-agent-id",
-            user_prompt="hello",
-            engine=mocker.MagicMock(),
-            agent_app_state_reg={},
-            delivery_future=future,
-        )
-
-        assert future.done()
-        assert future.result() is False
+        assert future.done() and future.result() is lock_acquired
 
 
 class TestFormatInterAgentMessage:
     """_format_inter_agent_message: pure helper for origin marker formatting."""
 
-    def test_contains_sender_name(self):
-        """Formatted message includes the sender name."""
-        result = _format_inter_agent_message("alice", "hello")
-        assert "alice" in result
-
-    def test_contains_content(self):
-        """Formatted message includes the original content."""
+    def test_format_structure(self):
+        """Message has header with sender, newline, then content."""
         result = _format_inter_agent_message("alice", "hello world")
-        assert "hello world" in result
-
-    def test_header_format(self):
-        """Header matches the expected origin marker format."""
-        result = _format_inter_agent_message("alice", "hi")
         assert result.startswith("[INTER AGENT MESSAGE. From: alice]")
-
-    def test_content_on_new_line(self):
-        """Content begins on a new line after the header."""
-        result = _format_inter_agent_message("alice", "hi")
         header, _, body = result.partition("\n")
-        assert body == "hi"
+        assert body == "hello world"
