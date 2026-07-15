@@ -69,7 +69,6 @@ async def _build_test_client(
 
     app.dependency_overrides[get_session_dep] = _override_session
     app.dependency_overrides[get_agent_app_state_reg] = lambda: agent_app_state_reg
-    app.dependency_overrides[get_engine] = lambda: None  # engine unused — build_agent_and_deps is mocked
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url=TEST_BASE_URL
