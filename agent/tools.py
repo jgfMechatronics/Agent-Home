@@ -266,6 +266,10 @@ async def send_message(
     if target_record is None:
         raise ModelRetry(f"Agent {target_name!r} not found.")
 
+    # Reject self-messages
+    if target_record.id == deps.agent_id:
+        raise ModelRetry("You cannot send a message to yourself.")
+
     # Format message with origin marker
     formatted_content = _format_inter_agent_message(sender_name=deps.name, content=content)
 
