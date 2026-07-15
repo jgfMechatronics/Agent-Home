@@ -12,19 +12,12 @@ from typing import Literal, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic_ai.models.anthropic import AnthropicModelName
-from pydantic_ai import AgentRunResultEvent
-from pydantic_ai.messages import AgentStreamEvent
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from db.models import AgentRecord
-
-
-# Type alias for all events yielded by pydantic_ai.Agent.run_stream_events() plus the final result
-# AgentStreamEvent is the pydantic_ai.messages union for all streaming events
-AgentEvent = AgentStreamEvent | AgentRunResultEvent[str]
 
 
 # AnthropicModelName is str | Literal['claude-...', ...]. Extract only the known

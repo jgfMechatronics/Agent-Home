@@ -2,6 +2,7 @@ from typing import AsyncGenerator
 
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     FunctionToolResultEvent,
     ModelRequest,
     ModelResponse,
@@ -11,14 +12,14 @@ from pydantic_ai.messages import (
 )
 
 from agent.compaction import compact, is_compaction_needed
-from agent.types import AgentAppState, AgentDeps, AgentEvent
+from agent.types import AgentAppState, AgentDeps
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
 
 async def run_stateful_agent(agent: Agent,
                              deps: AgentDeps,
                              agent_app_state: AgentAppState,
-                             user_prompt: str) -> AsyncGenerator[AgentEvent, None]:
+                             user_prompt: str) -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[str], None]:
     """
     The core loop that drives the Pydantic AI agent, persists messages, handles cancellation, handles compaction.
     
