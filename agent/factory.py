@@ -16,7 +16,7 @@ from typing import AsyncIterator
 
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import get_agent_record
 from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError, validate_model_name
@@ -45,13 +45,12 @@ class AgentFactory:
     """
 
     def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState],
-                 session: AsyncSession, engine: AsyncEngine | None = None):
+                 session: AsyncSession):
         """Resolve (or create) the agent slot from the registry, then store refs needed for deps."""
         self._agent_id = agent_id
         self._agent_app_state = self._get_or_create_agent_app_state(agent_app_state_reg, agent_id)
         self._agent_app_state_reg = agent_app_state_reg  # kept for passing to deps (send_message tool)
         self._session = session  # TODO: session also lives and is passed around in deps. ref spaghetti?
-        self._engine = engine
 
     @staticmethod
     def _get_or_create_agent_app_state(agent_app_state_reg: dict[str, AgentAppState], agent_id: str) -> AgentAppState:
@@ -79,7 +78,6 @@ class AgentFactory:
                 raise AgentNotFoundError(f"Agent {self._agent_id!r} not found")
 
             deps = AgentDeps(self._session, agent_record,
-                             engine=self._engine,
                              agent_app_state_reg=self._agent_app_state_reg)
             yield deps
         finally:
