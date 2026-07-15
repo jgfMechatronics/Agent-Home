@@ -1,6 +1,5 @@
 from typing import AsyncGenerator
 
-from fastapi.sse import ServerSentEvent
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
@@ -12,18 +11,21 @@ from pydantic_ai.messages import (
 )
 
 from agent.compaction import compact, is_compaction_needed
-from agent.types import AgentAppState, AgentDeps
-from api.routes import map_to_sse
+from agent.types import AgentAppState, AgentDeps, AgentEvent
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
 
 async def run_stateful_agent(agent: Agent,
                              deps: AgentDeps,
                              agent_app_state: AgentAppState,
-                             user_prompt: str) -> AsyncGenerator[ServerSentEvent, None]:
+                             user_prompt: str) -> AsyncGenerator[AgentEvent, None]:
     """
-    The core loop that drives the Pydantic AI agent, persists messages, handles cancellation, handles compaction
-    TODO: This function is currently tested throuhg the send_message route. We should consider moving the bulk of that
+    The core loop that drives the Pydantic AI agent, persists messages, handles cancellation, handles compaction.
+    
+    Yields raw AgentEvent objects from pydantic_ai.Agent.run_stream_events(). The caller is responsible for
+    converting these to ServerSentEvent format if needed (typically via map_to_sse in the API layer).
+    
+    TODO: This function is currently tested through the send_message route. We should consider moving the bulk of that
     testing into unit testing of this function
     """
     records = await load_messages(deps.session, deps.agent_id, start_timestamp=deps.context_window_start)
@@ -37,7 +39,7 @@ async def run_stateful_agent(agent: Agent,
             last_total_tokens_value = None
 
             async for event in stream:
-                yield map_to_sse(event)
+                yield event
 
                 messages_to_persist = []
                 last_part_of_last_msg = messages[-1].parts[-1] if messages else None

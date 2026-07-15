@@ -118,16 +118,16 @@ class _BaseRouteTest:
     @pytest.fixture(autouse=True)
     def _base_route_patches(self):
         """
-        Patch route-level side effects
+        Patch agent runner side effects
         TODO: Consider autospec across the board. Currently only applied to persist_messages
         Came in from refactor where the signature matching for it was explicitly considered.
         """
         with (
-            patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load,
-            patch("api.routes.deserialize_messages") as mock_deserialize,
-            patch("api.routes.is_compaction_needed") as mock_needs_compact,
-            patch("api.routes.compact", new_callable=AsyncMock) as mock_compact,
-            patch("api.routes.persist_messages", autospec=True) as mock_persist_messages,
+            patch("agent.runner.load_messages", new_callable=AsyncMock) as mock_load,
+            patch("agent.runner.deserialize_messages") as mock_deserialize,
+            patch("agent.runner.is_compaction_needed") as mock_needs_compact,
+            patch("agent.runner.compact", new_callable=AsyncMock) as mock_compact,
+            patch("agent.runner.persist_messages", autospec=True) as mock_persist_messages,
         ):
             mock_load.return_value = []
             mock_deserialize.return_value = []

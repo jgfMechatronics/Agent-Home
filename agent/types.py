@@ -12,12 +12,41 @@ from typing import Literal, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic_ai.models.anthropic import AnthropicModelName
+from pydantic_ai import AgentRunResultEvent
+from pydantic_ai.messages import (
+    BuiltinToolCallEvent,
+    BuiltinToolResultEvent,
+    FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    OutputToolCallEvent,
+    OutputToolResultEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from db.models import AgentRecord
+
+
+# Type alias for all events yielded by pydantic_ai.Agent.run_stream_events()
+AgentEvent = (
+    PartStartEvent
+    | PartDeltaEvent
+    | PartEndEvent
+    | FinalResultEvent
+    | FunctionToolCallEvent
+    | FunctionToolResultEvent
+    | OutputToolCallEvent
+    | OutputToolResultEvent
+    | BuiltinToolCallEvent
+    | BuiltinToolResultEvent
+    | AgentRunResultEvent[str]
+)
 
 
 # AnthropicModelName is str | Literal['claude-...', ...]. Extract only the known

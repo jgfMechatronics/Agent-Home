@@ -87,7 +87,7 @@ async def send_message(
                                               deps=deps, 
                                               agent_app_state=agent_app_state,
                                               user_prompt=body.message):
-            yield event
+            yield map_to_sse(event)
     except Exception as e:
         # TODO (low priority): put more thought into logging strategy (log levels, handler chain, structured logging)
         logger.exception("Unexpected error in send_message for agent %s", agent_id)
