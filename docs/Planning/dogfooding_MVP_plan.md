@@ -34,7 +34,7 @@ This document outlines what key features we are still missing leading up to dogf
 
 - [xr] Gap 6: Agent Config Management Console
 - [xr] Gap 2: Web Search / Fetch Webpage
-- [ ] Gap 5: Inter-Agent Comms
+- [xr] Gap 5: Inter-Agent Comms (Prototype complete, on branch Prototype/InterAgentComms. No PR intentionally)
 - [ ] Gap 3: Conversation History Portability (minimal spike only)
 - [ ] Gap 8: Timestamp-as-Index Ordering
 - [ ] Gap 4: Full Context Reconstruction for ModelResponse
