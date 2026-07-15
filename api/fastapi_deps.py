@@ -6,10 +6,13 @@ app.py and db/connection.py remain free of FastAPI route concerns.
 Domain exceptions (AgentNotFoundError, AgentLockedError) are translated to HTTP responses
 by app-level exception handlers registered in api/app.py — not caught here.
 """
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST
 from agent.types import AgentAppState, AgentDeps
@@ -28,10 +31,16 @@ async def get_session_dep(request: Request) -> AsyncIterator[AsyncSession]:
         yield session
 
 
+def get_engine(request: Request) -> "AsyncEngine":
+    """FastAPI dependency: returns the app-wide database engine from app.state."""
+    return request.app.state.engine
+
+
 async def get_agent_and_deps(
     agent_id: str,
     session: AsyncSession = Depends(get_session_dep),
     agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
+    engine: "AsyncEngine" = Depends(get_engine),
 ) -> AsyncIterator[tuple[Agent, AgentDeps]]:
     """FastAPI yield dependency: acquires agent lock, yields (Agent, AgentDeps).
 
@@ -41,7 +50,7 @@ async def get_agent_and_deps(
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
-    factory = AgentFactory(agent_id, agent_app_state_reg, session)
+    factory = AgentFactory(agent_id, agent_app_state_reg, session, engine)
     async with factory.build_agent_and_deps() as (agent, deps):
         yield (agent, deps)
 
@@ -63,6 +72,7 @@ async def get_agent_deps(
       AgentLockedError   → 423
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
+    Note: engine not needed here — get_agent_deps is for quick non-agent operations only.
     """
     factory = AgentFactory(agent_id, agent_app_state_reg, session)
     async with factory.build_deps(timeout=LOCK_TIMEOUT_FAST) as deps:
