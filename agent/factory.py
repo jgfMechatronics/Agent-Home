@@ -16,7 +16,7 @@ from typing import AsyncIterator
 
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agent.crud import get_agent_record
 from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError, validate_model_name
@@ -44,11 +44,14 @@ class AgentFactory:
     which proves the caller holds the lock.
     """
 
-    def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState], session: AsyncSession):
-        """Resolve (or create) the agent slot from the registry, then discard the registry ref."""
+    def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState],
+                 session: AsyncSession, engine: AsyncEngine | None = None):
+        """Resolve (or create) the agent slot from the registry, then store refs needed for deps."""
         self._agent_id = agent_id
         self._agent_app_state = self._get_or_create_agent_app_state(agent_app_state_reg, agent_id)
+        self._agent_app_state_reg = agent_app_state_reg  # kept for passing to deps (send_message tool)
         self._session = session  # TODO: session also lives and is passed around in deps. ref spaghetti?
+        self._engine = engine
 
     @staticmethod
     def _get_or_create_agent_app_state(agent_app_state_reg: dict[str, AgentAppState], agent_id: str) -> AgentAppState:
@@ -75,7 +78,9 @@ class AgentFactory:
             if agent_record is None:
                 raise AgentNotFoundError(f"Agent {self._agent_id!r} not found")
 
-            deps = AgentDeps(self._session, agent_record)
+            deps = AgentDeps(self._session, agent_record,
+                             engine=self._engine,
+                             agent_app_state_reg=self._agent_app_state_reg)
             yield deps
         finally:
             # Clear cancel_requested on exit to prevent a stale signal (e.g. a cancel that arrived
