@@ -14,6 +14,7 @@ Fixtures from conftest used here:
 handle_message test is currently in agent.test_runner.py as those tests are currently entangled with the runner
 """
 # Standard library
+import json
 from datetime import datetime
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
@@ -21,14 +22,14 @@ from uuid import uuid4
 # Third-party
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
-from httpx import AsyncClient
+from fastapi import FastAPI, HTTPException
+from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Local
 from agent.factory import AgentNotFoundError, LOCK_TIMEOUT_FAST
 from agent.types import AgentAppState, AgentConfig, AgentDeps
-from api.fastapi_deps import get_agent_deps
+from api.fastapi_deps import get_agent_deps, get_agent_and_deps, get_session_dep
 from agent.crud import create_agent_record
 from conftest import make_deps, SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
@@ -36,6 +37,96 @@ from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockRe
 from memory.block_crud import DuplicateBlockError
 from api.routes import _parse_slash_cmd, _is_slash_cmd, _handle_slash_cmd, _handle_recompile, SlashCommandDef
 from fastapi.sse import ServerSentEvent
+from pydantic_ai import AgentRunResultEvent
+from pydantic_ai.messages import (
+    FunctionToolCallEvent, FunctionToolResultEvent,
+    PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ToolCallPart, ToolReturnPart,
+)
+
+# --- Module-level test data ---
+
+TOOL_CALL_PART = ToolCallPart(tool_name="memory_replace", args={"label": "notes"}, tool_call_id="call-1")
+TOOL_RETURN_PART = ToolReturnPart(tool_name="memory_replace", content="Updated.", tool_call_id="call-1")
+
+MINIMAL_STREAM = lambda: [AgentRunResultEvent(result=Mock())]
+TEXT_STREAM = lambda: [
+    PartStartEvent(index=0, part=TextPart(content="Hello")),
+    PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=" world")),
+    AgentRunResultEvent(result=Mock()),
+]
+TOOL_STREAM = lambda: [
+    FunctionToolCallEvent(part=TOOL_CALL_PART),
+    FunctionToolResultEvent(part=TOOL_RETURN_PART),
+    AgentRunResultEvent(result=Mock()),
+]
+
+
+# --- Fixtures ---
+
+@pytest.fixture
+def app() -> FastAPI:
+    """Fresh app instance per test — avoids state contamination."""
+    from api.app import _create_app
+    return _create_app()
+
+
+@pytest_asyncio.fixture
+async def client(app: FastAPI) -> AsyncClient:
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test"
+    ) as c:
+        yield c
+
+
+def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | None = None) -> Mock:
+    agent = Mock()
+    async def _stream(*args, **kwargs):
+        for event in (events or []):
+            yield event
+        if raises_mid_stream is not None:
+            raise raises_mid_stream
+    agent.run_stream_events = _stream
+    return agent
+
+
+@pytest.fixture(autouse=True)
+def override_db_session(app: FastAPI, session: AsyncSession):
+    async def _get_test_session():
+        yield session
+    app.dependency_overrides[get_session_dep] = _get_test_session
+    yield
+    app.dependency_overrides.pop(get_session_dep)
+
+
+VALID_SSE_PREFIXES = ("data: ", "event: ", "id: ", "retry: ", ":")
+
+
+async def collect_sse_events(response: Response) -> list[dict]:
+    events = []
+    current_event_type: str | None = None
+    async for line in response.aiter_lines():
+        if not line:
+            current_event_type = None
+            continue
+        assert any(line.startswith(prefix) for prefix in VALID_SSE_PREFIXES), (
+            f"Unexpected content in SSE stream: {line!r}"
+        )
+        if line.startswith("event: "):
+            current_event_type = line[7:]
+        elif line.startswith("data: "):
+            events.append({"event": current_event_type, "data": json.loads(line[6:])})
+    return events
+
+
+async def stream_and_collect(client: AsyncClient, agent_id, message: str = "test") -> list[dict]:
+    async with client.stream(
+        "POST",
+        f"/agents/{agent_id}/messages",
+        json={"message": message},
+    ) as response:
+        assert response.status_code == 200
+        return await collect_sse_events(response)
 
 
 # --- Test Classes ---
