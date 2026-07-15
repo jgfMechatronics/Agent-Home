@@ -622,6 +622,11 @@ class TestSendMessage:
         with pytest.raises(ModelRetry, match="Sender-Agent"):
             await send_message(self.ctx, target_name="Sender-Agent", content="hi")
 
+    async def test_rejects_self_message(self):
+        """Raises ModelRetry when agent tries to message itself."""
+        with pytest.raises(ModelRetry, match="cannot send.*yourself|self"):
+            await send_message(self.ctx, target_name="sender-agent", content="talking to myself")
+
     async def test_raises_model_retry_when_registry_not_configured(self):
         """Raises ModelRetry when deps lacks agent_app_state_reg."""
         await self._create_target()
