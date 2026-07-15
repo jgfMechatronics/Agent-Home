@@ -592,21 +592,19 @@ class TestSendMessage:
         self.deps = make_deps(session, sender)
         self.ctx = mock_run_context(self.deps)
 
-    async def test_target_not_found_returns_error(self):
-        """Returns an error string when no agent with that name exists."""
-        result = await send_message(self.ctx, target_name="ghost", content="hello")
-        assert "ghost" in result
-        assert "not found" in result.lower()
+    async def test_target_not_found_raises_model_retry(self):
+        """Raises ModelRetry when no agent with that name exists."""
+        with pytest.raises(ModelRetry, match="ghost"):
+            await send_message(self.ctx, target_name="ghost", content="hello")
 
     async def test_target_not_found_is_case_sensitive(self):
-        """Name lookup is case-sensitive — mismatched case reports not found."""
+        """Name lookup is case-sensitive — mismatched case raises ModelRetry."""
         # sender-agent exists but "Sender-Agent" (capitalised) should not match
-        result = await send_message(self.ctx, target_name="Sender-Agent", content="hi")
-        assert "Sender-Agent" in result
-        assert "not found" in result.lower()
+        with pytest.raises(ModelRetry, match="Sender-Agent"):
+            await send_message(self.ctx, target_name="Sender-Agent", content="hi")
 
-    async def test_returns_error_when_registry_not_configured(self):
-        """Returns error when deps lacks agent_app_state_reg (send_message not usable)."""
+    async def test_raises_model_retry_when_registry_not_configured(self):
+        """Raises ModelRetry when deps lacks agent_app_state_reg (send_message not usable)."""
         # Create a target so we pass the "not found" check
         target = AgentRecord(
             name="target-agent",
@@ -617,9 +615,8 @@ class TestSendMessage:
         await self.session.flush()
 
         # self.deps has no registry (make_deps doesn't set it)
-        result = await send_message(self.ctx, target_name="target-agent", content="hello")
-        assert "error" in result.lower()
-        assert "not configured" in result.lower()
+        with pytest.raises(ModelRetry, match="not configured"):
+            await send_message(self.ctx, target_name="target-agent", content="hello")
 
     async def test_happy_path_returns_success(self, mocker):
         """Returns success string when target found and delivery confirmed."""
@@ -651,8 +648,8 @@ class TestSendMessage:
         assert "delivered" in result.lower()
         assert "target-agent" in result
 
-    async def test_returns_busy_when_lock_unavailable(self, mocker):
-        """Returns busy error when target agent's lock cannot be acquired."""
+    async def test_raises_model_retry_when_target_busy(self, mocker):
+        """Raises ModelRetry when target agent's lock cannot be acquired."""
         # Create target agent
         target = AgentRecord(
             name="target-agent",
@@ -677,9 +674,8 @@ class TestSendMessage:
 
         mocker.patch("agent.tools._deliver_message", side_effect=mock_deliver)
 
-        result = await send_message(ctx_with_registry, target_name="target-agent", content="hello")
-        assert "busy" in result.lower() or "could not be reached" in result.lower()
-        assert "target-agent" in result
+        with pytest.raises(ModelRetry, match="target-agent"):
+            await send_message(ctx_with_registry, target_name="target-agent", content="hello")
 
 
 class TestDeliverMessage:
