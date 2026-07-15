@@ -626,10 +626,16 @@ async def handle_session_prompt(
     }))
 
 
-async def handle_session_cancel(state: BridgeState, msg: dict[str, Any]) -> None:
-    """Handle session/cancel notification — Phase 1: ignore."""
-    # This is a notification (no id), so we just silently ignore it
-    logger.debug("Ignoring session/cancel (Phase 1)")
+async def handle_session_cancel(state: BridgeState, msg: dict[str, Any], client: httpx.AsyncClient) -> None:
+    """Handle session/cancel notification — POST cancel to Agent Home."""
+    if not state.agent_id:
+        logger.warning("session/cancel received but no agent_id configured — ignoring")
+        return
+    try:
+        resp = await client.post(f"{state.server_url}/agents/{state.agent_id}/cancel")
+        logger.debug("Cancel request sent, status=%d", resp.status_code)
+    except Exception as e:
+        logger.warning("Failed to send cancel request: %s", e)
 
 
 # =============================================================================
@@ -645,9 +651,9 @@ async def dispatch(state: BridgeState, msg: dict[str, Any], client: httpx.AsyncC
     elif method == "session/new":
         await handle_session_new(state, msg, client)
     elif method == "session/prompt":
-        await handle_session_prompt(state, msg, client)
+        asyncio.create_task(handle_session_prompt(state, msg, client))
     elif method == "session/cancel":
-        await handle_session_cancel(state, msg)
+        await handle_session_cancel(state, msg, client)
     else:
         # Unknown method
         if "id" in msg:
