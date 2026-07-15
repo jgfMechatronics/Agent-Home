@@ -23,10 +23,10 @@ from memory.block_crud import get_block, update_block
 logger = logging.getLogger(__name__)
 
 # Timeout for acquiring the target agent's lock in the background task
-SEND_MESSAGE_LOCK_TIMEOUT_SECONDS: float = 60.0
+SEND_MESSAGE_LOCK_TIMEOUT_SECONDS: float = 20.0
 
 # GC-safe set: keeps tasks alive until done (event loop holds only weak refs to tasks)
-_BACKGROUND_TASKS: set[asyncio.Task] = set()
+background_tasks: set[asyncio.Task] = set()
 
 
 def _get_edit_line_info(content: str, edit_start_idx: int, new_text: str) -> tuple[int, int]:
@@ -226,12 +226,13 @@ async def memory_insert(
 # =============================================================================
 # Inter-agent communication
 # =============================================================================
+# NOTE: this architecture will likely be discarded in favor of a centralized fire-and-forget queue and 
+# server level background task for handling such agent runs. We're doing too much and passing too much down into
+# the tool level here, way too much responsibility for this tool. This prototype is useful for learning about overall
+# behavior though
 
 def _format_inter_agent_message(sender_name: str, content: str) -> str:
-    """Prepend the standard inter-agent origin marker to a message.
-
-    Format: '[INTER AGENT MESSAGE. From: <sender>]\\n<content>'
-    """
+    """Prepend the standard inter-agent origin marker to a message."""
     return f"[INTER AGENT MESSAGE. From: {sender_name}]\n{content}"
 
 
@@ -273,6 +274,7 @@ async def send_message(
         raise ModelRetry("send_message is not configured for this agent (missing registry).")
 
     # Extract engine from session — always available via session.bind
+    # This is intended to avoid passing engine down on deps. Eventually we hope to not need the engine at this level at all.
     engine = deps.session.bind
 
     # Spawn background task with delivery confirmation via Future
@@ -288,8 +290,8 @@ async def send_message(
             delivery_future=future,
         )
     )
-    _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
 
     # Await delivery confirmation (lock acquired or failed)
     success = await future
