@@ -698,6 +698,18 @@ class TestDeliverMessage:
 
         assert future.done() and future.result() is lock_acquired
 
+    @pytest.mark.xfail(reason="TODO: Integration test for final architecture — verify A→B delivery works and histories stay isolated")
+    async def test_cross_agent_delivery_and_history_isolation(self):
+        """Integration test: A sends to B, both histories are correct and isolated.
+        
+        Should verify:
+        - Message actually delivered to B
+        - A's history contains only A's messages
+        - B's history contains only B's messages (+ inter-agent message)
+        - No cross-contamination from contextvars or other shared state
+        """
+        pytest.fail("Not implemented — waiting for stable architecture")
+
 
 class TestFormatInterAgentMessage:
     """_format_inter_agent_message: pure helper for origin marker formatting."""
