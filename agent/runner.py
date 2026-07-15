@@ -26,7 +26,7 @@ async def run_stateful_agent(agent: Agent,
     Yields raw AgentEvent objects from pydantic_ai.Agent.run_stream_events(). The caller is responsible for
     converting these to ServerSentEvent format if needed (typically via map_to_sse in the API layer).
     
-    TODO: This function is currently tested through the send_message route. We should consider moving the bulk of that
+    TODO: This function is currently tested through the handle_message route. We should consider moving the bulk of that
     testing into unit testing of this function
     """
     records = await load_messages(deps.session, deps.agent_id, start_timestamp=deps.context_window_start)

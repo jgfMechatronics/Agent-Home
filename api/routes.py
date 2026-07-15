@@ -71,7 +71,7 @@ async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
 # --- Routes ---
 
 @router.post("/{agent_id}/messages", response_class=EventSourceResponse)
-async def send_message(
+async def handle_message(
     agent_id: str,
     body: MessageRequest,
     agent_and_deps: tuple[Agent, AgentDeps] = Depends(get_agent_and_deps),
@@ -90,7 +90,7 @@ async def send_message(
             yield map_to_sse(event)
     except Exception as e:
         # TODO (low priority): put more thought into logging strategy (log levels, handler chain, structured logging)
-        logger.exception("Unexpected error in send_message for agent %s", agent_id)
+        logger.exception("Unexpected error in handle_message for agent %s", agent_id)
         await deps.session.rollback()
         yield ServerSentEvent(
             data={"message": f"Unexpected internal server error: '{type(e).__name__}: {str(e)}'"},

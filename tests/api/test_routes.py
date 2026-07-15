@@ -11,7 +11,7 @@ Fixtures from conftest used here:
 - agent_record: Pre-created agent for tests that need an existing agent
 - agent_with_blocks: Agent with memory blocks attached
 
-send_message test is currently in agent.test_runner.py as those tests are currently entangled with the runner
+handle_message test is currently in agent.test_runner.py as those tests are currently entangled with the runner
 """
 # Standard library
 from datetime import datetime
@@ -542,7 +542,7 @@ class TestCreateMemoryBlock:
         This one is mapped internally by the route since this is the only place we expect it to occur....
         
         TODO: The above could be wrong, what if the agent tries to make a duplicate block with a tool call (future intended tool)?
-        Then send_messages could raise this exception! Consider moving to an app level handler like some of the others
+        Then handle_message could raise this exception! Consider moving to an app level handler like some of the others
         """
         self.mock_create_block.side_effect = DuplicateBlockError("block with label 'notes' already exists")
 
