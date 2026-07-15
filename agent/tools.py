@@ -321,7 +321,7 @@ async def _deliver_message(
         async with get_session(engine) as session:
             factory = AgentFactory(agent_id, agent_app_state_reg, session)
             try:
-                async with factory.build_agent_and_deps() as (agent, deps):
+                async with factory.build_agent_and_deps(timeout=timeout) as (agent, deps):
                     # Lock is held — signal delivery confirmation
                     delivery_future.set_result(True)
                     # Run agent to completion; discard yielded events (caller doesn't need them)
