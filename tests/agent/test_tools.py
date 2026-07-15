@@ -605,8 +605,8 @@ class TestSendMessage:
         assert "Sender-Agent" in result
         assert "not found" in result.lower()
 
-    async def test_returns_error_when_engine_not_configured(self):
-        """Returns error when deps lacks engine/registry (send_message not usable)."""
+    async def test_returns_error_when_registry_not_configured(self):
+        """Returns error when deps lacks agent_app_state_reg (send_message not usable)."""
         # Create a target so we pass the "not found" check
         target = AgentRecord(
             name="target-agent",
@@ -616,7 +616,7 @@ class TestSendMessage:
         self.session.add(target)
         await self.session.flush()
 
-        # self.deps has no engine/registry (make_deps doesn't set them)
+        # self.deps has no registry (make_deps doesn't set it)
         result = await send_message(self.ctx, target_name="target-agent", content="hello")
         assert "error" in result.lower()
         assert "not configured" in result.lower()
@@ -632,16 +632,14 @@ class TestSendMessage:
         self.session.add(target)
         await self.session.flush()
 
-        # Rebuild deps with engine and registry so send_message is "configured"
-        mock_engine = mocker.MagicMock()
+        # Rebuild deps with registry so send_message is "configured"
         mock_registry = {self.sender.id: mocker.MagicMock()}
-        deps_with_engine = AgentDeps(
+        deps_with_registry = AgentDeps(
             session=self.session,
             agent_record=self.sender,
-            engine=mock_engine,
             agent_app_state_reg=mock_registry,
         )
-        ctx_with_engine = mock_run_context(deps_with_engine)
+        ctx_with_registry = mock_run_context(deps_with_registry)
 
         # Mock _deliver_message to immediately signal success
         async def mock_deliver(agent_id, user_prompt, engine, agent_app_state_reg, delivery_future, timeout=60.0):
@@ -649,7 +647,7 @@ class TestSendMessage:
 
         mocker.patch("agent.tools._deliver_message", side_effect=mock_deliver)
 
-        result = await send_message(ctx_with_engine, target_name="target-agent", content="hello")
+        result = await send_message(ctx_with_registry, target_name="target-agent", content="hello")
         assert "delivered" in result.lower()
         assert "target-agent" in result
 
@@ -664,16 +662,14 @@ class TestSendMessage:
         self.session.add(target)
         await self.session.flush()
 
-        # Rebuild deps with engine and registry
-        mock_engine = mocker.MagicMock()
+        # Rebuild deps with registry
         mock_registry = {self.sender.id: mocker.MagicMock()}
-        deps_with_engine = AgentDeps(
+        deps_with_registry = AgentDeps(
             session=self.session,
             agent_record=self.sender,
-            engine=mock_engine,
             agent_app_state_reg=mock_registry,
         )
-        ctx_with_engine = mock_run_context(deps_with_engine)
+        ctx_with_registry = mock_run_context(deps_with_registry)
 
         # Mock _deliver_message to signal failure (lock not acquired)
         async def mock_deliver(agent_id, user_prompt, engine, agent_app_state_reg, delivery_future, timeout=60.0):
@@ -681,7 +677,7 @@ class TestSendMessage:
 
         mocker.patch("agent.tools._deliver_message", side_effect=mock_deliver)
 
-        result = await send_message(ctx_with_engine, target_name="target-agent", content="hello")
+        result = await send_message(ctx_with_registry, target_name="target-agent", content="hello")
         assert "busy" in result.lower() or "could not be reached" in result.lower()
         assert "target-agent" in result
 
