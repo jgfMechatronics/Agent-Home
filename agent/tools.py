@@ -265,9 +265,12 @@ async def send_message(
     # Format message with origin marker
     formatted_content = _format_inter_agent_message(sender_name=deps.name, content=content)
 
-    # Ensure engine + registry are available (only present when built via AgentFactory with engine)
-    if deps.engine is None or deps.agent_app_state_reg is None:
-        return "Error: send_message is not configured for this agent (missing engine or registry)."
+    # Ensure registry is available (only present when agent has send_message configured)
+    if deps.agent_app_state_reg is None:
+        return "Error: send_message is not configured for this agent (missing registry)."
+
+    # Extract engine from session — always available via session.bind
+    engine = deps.session.bind
 
     # Spawn background task with delivery confirmation via Future
     loop = asyncio.get_running_loop()
@@ -277,7 +280,7 @@ async def send_message(
         _deliver_message(
             agent_id=target_record.id,
             user_prompt=formatted_content,
-            engine=deps.engine,
+            engine=engine,
             agent_app_state_reg=deps.agent_app_state_reg,
             delivery_future=future,
         )
@@ -314,7 +317,7 @@ async def _deliver_message(
 
     try:
         async with get_session(engine) as session:
-            factory = AgentFactory(agent_id, agent_app_state_reg, session, engine)
+            factory = AgentFactory(agent_id, agent_app_state_reg, session)
             try:
                 async with factory.build_agent_and_deps() as (agent, deps):
                     # Lock is held — signal delivery confirmation
