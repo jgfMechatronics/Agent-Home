@@ -252,7 +252,10 @@ async def send_message(
         content: The message content to send
 
     Returns:
-        A string describing the outcome — success or reason for failure.
+        A confirmation string on success.
+
+    Raises:
+        ModelRetry: If target agent not found, registry not configured, or target is busy.
     """
     deps = ctx.deps
 
@@ -260,14 +263,14 @@ async def send_message(
     agents = await get_all_agents(deps.session)
     target_record = next((a for a in agents if a.name == target_name), None)
     if target_record is None:
-        return f"Error: Agent {target_name!r} not found."
+        raise ModelRetry(f"Agent {target_name!r} not found.")
 
     # Format message with origin marker
     formatted_content = _format_inter_agent_message(sender_name=deps.name, content=content)
 
     # Ensure registry is available (only present when agent has send_message configured)
     if deps.agent_app_state_reg is None:
-        return "Error: send_message is not configured for this agent (missing registry)."
+        raise ModelRetry("send_message is not configured for this agent (missing registry).")
 
     # Extract engine from session — always available via session.bind
     engine = deps.session.bind
@@ -293,8 +296,7 @@ async def send_message(
 
     if success:
         return f"Message delivered to {target_name!r}."
-    else:
-        return f"Error: Agent {target_name!r} is busy and could not be reached."
+    raise ModelRetry(f"Agent {target_name!r} is busy and could not be reached.")
 
 
 async def _deliver_message(
