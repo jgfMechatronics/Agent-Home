@@ -63,7 +63,6 @@ async def get_agent_deps(
       AgentLockedError   → 423
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
-    Note: engine is accessible via session.bind when needed — no need to pass separately.
     """
     factory = AgentFactory(agent_id, agent_app_state_reg, session)
     async with factory.build_deps(timeout=LOCK_TIMEOUT_FAST) as deps:
