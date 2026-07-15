@@ -1,8 +1,8 @@
 """
 Tests for agent runner, our loop on top of the pyantic AI loop (IE what recieves messages and drives the pyd AI loop)
 
-TODO: This is currently inappropriately tangled with the send_message route test because the implementation itself 
-is tangled with the send_message route. We can improve this if/when we switch to the StatefulAgent pattern
+TODO: This is currently inappropriately tangled with the handle_message route test because the implementation itself 
+is tangled with the handle_message route. We can improve this if/when we switch to the StatefulAgent pattern
 """
 
 # Standard library
@@ -118,16 +118,16 @@ class _BaseRouteTest:
     @pytest.fixture(autouse=True)
     def _base_route_patches(self):
         """
-        Patch route-level side effects
+        Patch agent runner side effects
         TODO: Consider autospec across the board. Currently only applied to persist_messages
         Came in from refactor where the signature matching for it was explicitly considered.
         """
         with (
-            patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load,
-            patch("api.routes.deserialize_messages") as mock_deserialize,
-            patch("api.routes.is_compaction_needed") as mock_needs_compact,
-            patch("api.routes.compact", new_callable=AsyncMock) as mock_compact,
-            patch("api.routes.persist_messages", autospec=True) as mock_persist_messages,
+            patch("agent.runner.load_messages", new_callable=AsyncMock) as mock_load,
+            patch("agent.runner.deserialize_messages") as mock_deserialize,
+            patch("agent.runner.is_compaction_needed") as mock_needs_compact,
+            patch("agent.runner.compact", new_callable=AsyncMock) as mock_compact,
+            patch("agent.runner.persist_messages", autospec=True) as mock_persist_messages,
         ):
             mock_load.return_value = []
             mock_deserialize.return_value = []
@@ -140,7 +140,7 @@ class _BaseRouteTest:
             yield
 
 
-class TestSendMessage(_BaseRouteTest):
+class TestHandleMessage(_BaseRouteTest):
     """
     POST /agents/{agent_id}/messages — main streaming endpoint.
     TODO (Low priority): This test class got a bit confusing, consider simplifying if possible
@@ -566,7 +566,7 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
                                                               "Comparison helper may not be accountinng for this type.")
 
 
-class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
+class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
     """Persistence contract tests using a real pydantic-ai Agent + FunctionModel."""
 
     async def test_happy_path_persists_full_message_list(self, client: AsyncClient):
@@ -576,7 +576,7 @@ class TestSendMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         Uses a real pydantic-ai Agent so new_messages() reflects actual pydantic-ai
         message structure.  Validates the full pipeline against the real library.
         
-        A more detailed/stronger version of the basic persistence test in TestSendMessage.
+        A more detailed/stronger version of the basic persistence test in TestHandleMessage.
         """
         fake_history = [ModelRequest(parts=[UserPromptPart(content="prior turn")])]
         self.mock_deserialize_msgs.return_value = fake_history
