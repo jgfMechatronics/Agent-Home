@@ -263,10 +263,12 @@ async def load_messages(
     session: AsyncSession,
     agent_id: str,
     start_timestamp: datetime | None = None,
+    start_exclusive: bool = False,
 ) -> list[MessageRecord]:
     """Load messages as ORM records in chronological order.
 
-    If start_timestamp is provided, returns only messages where timestamp >= start_timestamp.
+    If start_timestamp is provided, returns only messages where timestamp >= start_timestamp
+    (or strictly > start_timestamp when start_exclusive=True).
     Otherwise returns the full conversation history.
     """
     query = (
@@ -275,7 +277,12 @@ async def load_messages(
         .order_by(MessageRecord.timestamp)
     )
     if start_timestamp is not None:
-        query = query.where(MessageRecord.timestamp >= start_timestamp)
+        ts_filter = (
+            MessageRecord.timestamp > start_timestamp
+            if start_exclusive
+            else MessageRecord.timestamp >= start_timestamp
+        )
+        query = query.where(ts_filter)
 
     result = await session.execute(query)
     return list(result.scalars().all())
