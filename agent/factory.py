@@ -92,7 +92,7 @@ class AgentFactory:
 
 
     @asynccontextmanager
-    async def build_agent_and_deps(self) -> AsyncIterator[tuple[Agent[AgentDeps, DeferredToolRequests | str], AgentDeps]]:
+    async def build_agent_and_deps(self, timeout: float = LOCK_TIMEOUT_SECONDS) -> AsyncIterator[tuple[Agent[AgentDeps, DeferredToolRequests | str], AgentDeps]]:
         """Async context manager that yields a configured (Agent, AgentDeps) tuple.
         
         Wraps build_deps and constructs the Pydantic AI Agent with correct model and tools.
@@ -101,7 +101,7 @@ class AgentFactory:
         TODO: This doesn't actually manage context properly. It might release the lock but that seems to be pretty much ALL
         it does, it doesn't null out the resources actually associated with the lock!!!! Oops.
         """
-        async with self.build_deps() as deps:
+        async with self.build_deps(timeout=timeout) as deps:
             model = get_model(deps.config.model_name)
             
             model_settings = AnthropicModelSettings(
