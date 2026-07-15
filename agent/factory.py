@@ -42,6 +42,9 @@ class AgentFactory:
     Read-only operations can use session directly without factory.
     Write operations require build_deps() or build_agent_and_deps(),
     which proves the caller holds the lock.
+    NOTE: The changes to AgentFactory and AgentDeps on this branch (Prototype/InterAgentComms)
+    are likely temporary and will not be integrated to main in favor of a queue based design with a server idle task for 
+    running agents in background 
     """
 
     def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState],
