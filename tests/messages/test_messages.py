@@ -325,7 +325,7 @@ class TestLoadMessages(DBTestBase):
     Pre-seeds DB via persist_messages to ensure realistic records.
     """
 
-    async def test_returns_all_messages(self):
+    async def test_returns_all_messages_by_default(self):
         messages = [make_request(), make_response(), make_request(), make_response()]
         await persist_messages(self.deps, messages)
 
@@ -337,18 +337,17 @@ class TestLoadMessages(DBTestBase):
         assert records == []
 
     async def test_start_seq_id_filters_inclusive(self):
-        early = [make_request("early"), make_response("early reply")]
-        late = [make_request("late"), make_response("late reply")]
-        await persist_messages(self.deps, early)
-        await persist_messages(self.deps, late)
-
+        first = [make_request("first"), make_response("first reply")]
+        second = [make_request("second"), make_response("second reply")]
+        await persist_messages(self.deps, first)
+        await persist_messages(self.deps, second)
 
         all_records = await load_messages(self.session, self.agent.id)
-        cutoff_seq_id = all_records[1].seq_id  # second record (early reply)
+        cutoff_seq_id = all_records[1].seq_id  # trim to second record (first reply) and on
 
         records = await load_messages(self.session, self.agent.id, start_seq_id=cutoff_seq_id)
         # Should include the cutoff record and everything after (inclusive)
-        assert deserialize_messages(records) == [early[1]] + late
+        assert deserialize_messages(records) == [first[1]] + second
 
     async def test_results_in_seq_id_order(self):
         messages = [make_request("first"), make_response("second"), make_request("third")]
