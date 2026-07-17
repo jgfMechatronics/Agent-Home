@@ -15,6 +15,7 @@ This document outlines what key features we are still missing leading up to dogf
 - Gap 6: Agent Config Management Console
 - Gap 7: .AF Ingestion
 - Gap 8: Timestamp-as-Index Ordering
+- Gap 9: Compaction Warnings
 
 ## Deferred
 - Gap 1: Archival Memory
@@ -26,6 +27,7 @@ This document outlines what key features we are still missing leading up to dogf
 - **Gap 6: Agent Config Management Console** first — config routes are low effort and useful throughout development.
 - **Gap 3: Conversation History Portability → Gap 8: Timestamp-as-Index Ordering → Gap 4: Full Context Reconstruction for ModelResponse** must be done in this local order (seq_id depends on knowing the Letta message count; context reconstruction fields depend on seq_id).
 - **Gaps 2: Web Search / Fetch Webpage and 5: Inter-Agent Comms** are independent — slot in anywhere after Gap 6 and before Gap 7.
+- **Gap 9: Compaction Warnings** before Gap 7 — without these, context falls out silently and agents experience severe amnesia. Required before we can trust any live usage.
 - **Gap 7: .AF Ingestion** last — once ingestion works, we're ready to migrate.
 
 ---
@@ -34,10 +36,11 @@ This document outlines what key features we are still missing leading up to dogf
 
 - [xr] Gap 6: Agent Config Management Console
 - [xr] Gap 2: Web Search / Fetch Webpage
-- [ ] Gap 5: Inter-Agent Comms
-- [ ] Gap 3: Conversation History Portability (minimal spike only)
+- [xr] Gap 5: Inter-Agent Comms (Prototype complete, on branch Prototype/InterAgentComms. No PR intentionally)
+- [xr] Gap 3: Conversation History Portability (minimal spike only)
 - [ ] Gap 8: Timestamp-as-Index Ordering
 - [ ] Gap 4: Full Context Reconstruction for ModelResponse
+- [ ] Gap 9: Compaction Warnings
 - [ ] Gap 7: .AF Ingestion
 
 ---
@@ -95,6 +98,14 @@ We can probably go without this one initially, but it will quickly become an iss
 
 ### Decision + Rationale:
 **Include in MVP — GET/PUT full config routes only.** Full management console is out of scope. Two bare API routes suffice: `GET /agents/{id}/config` returns the full AgentConfig JSON, `PUT /agents/{id}/config` replaces it. A simple utility (dump → edit → upload) handles routine changes like compaction thresholds without DB surgery. No partial-update logic, no UI.
+
+---
+
+## Gap 9: Compaction Warnings
+Without compaction warnings, agents have no signal that their context is filling up. Old messages evict silently, memory consolidation never happens, and the agent experiences severe amnesia mid-conversation — not a graceful degradation, just unexplained gaps. This is essential before any real usage.
+
+### Decision + Rationale:
+**Required for MVP — no question.** Agents cannot function reliably without this. Implement before .AF ingestion — there's no point migrating agents into a system that will silently eat their context.
 
 ---
 
