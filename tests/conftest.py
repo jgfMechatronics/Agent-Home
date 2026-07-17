@@ -54,7 +54,7 @@ def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
 async def assign_seq_ids(session: AsyncSession, agent_id: str) -> None:
     """Assign sequential seq_ids to an agent's messages in insertion order.
 
-    Used in tests to simulate phase 2 seq_id assignment before testing
+    TODO: Used in tests to simulate phase 2 seq_id assignment before testing
     load_messages ordering and filtering behavior. Uses SQLite rowid as the
     insertion-order proxy — stable regardless of timestamp resolution.
     """

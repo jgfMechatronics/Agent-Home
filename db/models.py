@@ -106,8 +106,8 @@ class MessageRecord(Base):
     type: Mapped[str]
     content: Mapped[str]  # TEXT storing serialized ModelMessage JSON — not deserialized by SQLAlchemy
     total_tokens: Mapped[int | None]  # sum of input + output tokens for the LLM request associated with this message; None for ModelRequests and error rows
-    seq_id: Mapped[int | None]  # per-agent monotonic ordinal; set by persist_messages; NULL until assigned
-    timestamp: Mapped[datetime]  # honest metadata — not used for ordering
+    seq_id: Mapped[int | None]  # per-agent monotonic ordinal; Used for ordering in requests and such; TODO: NULL until assigned
+    timestamp: Mapped[datetime]
 
     def __repr__(self) -> str:
         return f"MessageRecord(id={self.id!r}, agent_id={self.agent_id!r}, type={self.type!r})"

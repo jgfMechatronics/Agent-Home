@@ -174,7 +174,7 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
     - Serialization failures inject an error ModelResponse in place of the bad message.
     - Both orphan replacements and serialization failures append a summary warning at the END of
       the chain (referencing the original message timestamp) so errors aren't buried in long histories.
-    - seq_id assignment happens separately (phase 2); rows are persisted with seq_id=NULL until then.
+    - TODO: seq_id assignment happens separately (phase 2); rows are persisted with seq_id=NULL until then.
     """
     if not messages:
         return None
