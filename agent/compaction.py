@@ -50,7 +50,7 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
 
     # TODO (low priority): we may eventually want a more sophisticated way to estiamte tokens, and some sort of 
     # check and loop on resulting in-context message token count to be more accurate if we find it necessary
-    sys_tokens = len(deps.compiled_system_prompt or "") / 4
+    sys_tokens = len(deps.compiled_system_prompt) / 4
     msg_tokens = total_tokens - sys_tokens
     avg_tokens_per_msg = msg_tokens / len(messages)
     if avg_tokens_per_msg <= 0:

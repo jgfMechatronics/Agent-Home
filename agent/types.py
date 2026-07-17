@@ -166,12 +166,11 @@ class AgentDeps:
         self._agent_record.system_instructions = value
 
     @property
-    def compiled_system_prompt(self) -> str | None:
+    def compiled_system_prompt(self) -> str:
         return self._agent_record.compiled_system_prompt
 
     @compiled_system_prompt.setter
     def compiled_system_prompt(self, value: str) -> None:
-        # Setters take non-None values intentionally — callers always provide a compiled string
         self._agent_record.compiled_system_prompt = value
 
     @property
