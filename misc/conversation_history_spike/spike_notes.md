@@ -52,3 +52,39 @@ and edge cases we expect to encounter in real usage:
 ## Source Agent
 
 Haiku (`agent-f9a53f59-a5bd-43eb-93aa-2f9b0e409c32`) — controlled exchange constructed July 16, 2026.
+
+# Result notes
+
+## Displaying in Toad
+display bug with special characters:
+"1\u2192Edit target\n2\u2192" vs   1→Edit target
+2→
+
+'<system-reminder>' xml tags are stripped.
+
+James F read through the conversation history and compared to the human readable version. everything appeared to be in tact, complete, in the right order, etc. no issues except the minor one noted above.
+
+Additionally we ran a few exchanges with an agent with the ported history in context to confirm it could be compiled into a valid request.
+Here is the resulting ported agent's summary of the conversation, which furthers the picture of accurate conversation history porting:
+
+"""
+Conversation History Porting Spike - Summary
+Objective: Build synthetic conversation history covering normal operations and edge cases to validate Letta → Agent-Home migration.
+Test Cases Executed:
+  1.  Normal Exchange (Thinking Enabled) - Initial response about refactoring work
+  2.  Normal Exchange (Thinking Disabled) - Response without thinking blocks
+  3.  ADE Environment Message - Message from alternative communication pathway (vs Letta code path)
+  4.  Tool Call - Auto-Approved - Bash echo command executed without approval gate
+  5.  Tool Call - User-Approved - File edit to /workspace/git/misc/edit_me.txt, user approved the operation
+  6.  Tool Call - Denied - Second edit attempt explicitly denied by user with reason "Test denial"
+  7.  Tool Call - Failed - Edit with invalid string to replace, tool execution failed with clear error
+  8.  Stream Cancellation - Mid-response interruption/cancellation by user
+  9.  Memory Tool Call - memory_insert to working-memory with spike progress notes
+ 10.  Headless Invocation - Sonnet reached out via YOLO_HEADLESS_INVOCATION to provide context
+ 11.  Compaction Warning - System alert about context limit, correctly disregarded per instructions
+ 12.  Compaction Cycle - Aggressive compaction executed (context reduced from ~50k to ~34k tokens)
+ 13.  Auto-Approved File Edit - Final test case with auto-approval active, successfully modified file with timestamp
+"""
+
+Lastly, opus ran a fidelity checking script on the data exported from agent home (which its self was imported from letta)
+JF didn't read it closely, but the intent was that it compared the export from AH to the original stuff. Opus ran the script and it passed.
