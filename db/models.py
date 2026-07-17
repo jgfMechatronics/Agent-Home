@@ -57,7 +57,7 @@ class AgentRecord(Base):
     system_instructions: Mapped[str] = mapped_column(default='')
     compiled_system_prompt: Mapped[str] = mapped_column(default='')
     sys_prompt_compiled_at: Mapped[datetime | None]
-    context_window_start: Mapped[int | None]
+    context_window_start: Mapped[int] = mapped_column(default=0)
     # SQLite uses utc internally by default, matches our intent
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
@@ -106,7 +106,7 @@ class MessageRecord(Base):
     type: Mapped[str]
     content: Mapped[str]  # TEXT storing serialized ModelMessage JSON — not deserialized by SQLAlchemy
     total_tokens: Mapped[int | None]  # sum of input + output tokens for the LLM request associated with this message; None for ModelRequests and error rows
-    seq_id: Mapped[int | None]  # per-agent monotonic ordinal; Used for ordering in requests and such; TODO: NULL until assigned
+    seq_id: Mapped[int]  # per-agent monotonic ordinal; Used for ordering message history per agent
     timestamp: Mapped[datetime]
 
     def __repr__(self) -> str:

@@ -65,10 +65,6 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     # If the candidate start message is a ToolReturnPart or RetryPromptPart, include
     # the preceding ToolCallPart message too.
     candidate = messages[-n_msg_to_keep]
-    if candidate.seq_id is None:
-        # TODO: seq_id not yet assigned (phase 2 not run) — skip compaction to avoid incorrect pointer
-        logger.warning("compact: candidate message has seq_id=None for agent %s; skipping compaction", deps.agent_id)
-        return
     if candidate.type == "ModelRequest":
         [deserialized] = deserialize_messages([candidate])
         if any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in deserialized.parts):

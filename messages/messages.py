@@ -229,20 +229,19 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
 async def load_messages(
     session: AsyncSession,
     agent_id: str,
-    start_seq_id: int | None = None,
+    start_seq_id: int = 0,
 ) -> list[MessageRecord]:
     """Load messages as ORM records in seq_id order.
 
-    If start_seq_id is provided, returns only messages where seq_id >= start_seq_id.
-    Otherwise returns the full conversation history.
+    Returns messages where seq_id >= start_seq_id. Defaults to 0, which returns
+    the full conversation history (all seq_ids are non-negative).
     """
     query = (
         select(MessageRecord)
         .where(MessageRecord.agent_id == agent_id)
+        .where(MessageRecord.seq_id >= start_seq_id)
         .order_by(MessageRecord.seq_id)
     )
-    if start_seq_id is not None:
-        query = query.where(MessageRecord.seq_id >= start_seq_id)
 
     result = await session.execute(query)
     return list(result.scalars().all())

@@ -321,7 +321,7 @@ class TestPersistMessages(DBTestBase):
 
 @pytest.mark.asyncio
 class TestLoadMessages(DBTestBase):
-    """Tests for load_messages(session, agent_id, start_seq_id=None).
+    """Tests for load_messages(session, agent_id, start_seq_id=0).
 
     Pre-seeds DB via persist_messages to ensure realistic records.
     Calls assign_seq_ids before ordering-dependent assertions.

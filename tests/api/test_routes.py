@@ -373,7 +373,7 @@ class TestGetMessages:
         )
 
     async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
-        """With ?full=true: calls load_messages with start_seq_id=None for full history."""
+        """With ?full=true: calls load_messages with start_seq_id=0 for full history."""
         expected_messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}]
         self.mock_load_messages.return_value = expected_messages
 
@@ -382,7 +382,7 @@ class TestGetMessages:
         assert response.status_code == 200
         assert response.json()["messages"] == expected_messages
         self.mock_load_messages.assert_called_once_with(
-            session, agent_record.id, start_seq_id=None
+            session, agent_record.id, start_seq_id=0
         )
 
     async def test_returns_reasonable_format(self):

@@ -162,12 +162,12 @@ class TestCompactCommon(CompactTestBase):
 
     async def test_advances_context_window_start(self, session: AsyncSession):
         """compact advances context_window_start pointer in DB."""
-        assert self.agent.context_window_start is None  # Initially null
+        assert self.agent.context_window_start == 0  # Defaults to 0 for fresh agents
         
         await compact(self.deps, total_tokens=self.total_tokens)
 
         await session.refresh(self.agent)
-        assert self.agent.context_window_start is not None
+        assert self.agent.context_window_start > 0
 
     async def test_does_not_delete_messages(self, session: AsyncSession):
         """compact does NOT delete any messages — pointer only."""
@@ -214,7 +214,7 @@ class TestCompactEdgeCases(CompactTestBase):
         
         await session.refresh(self.agent)
         # Should remain None — nothing to compact
-        assert self.agent.context_window_start is None
+        assert self.agent.context_window_start == 0
 
     async def test_targets_percentage_of_limit(self, session: AsyncSession):
         """compact targets compaction_target_fraction of soft_compaction_limit.

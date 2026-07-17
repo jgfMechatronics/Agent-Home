@@ -184,11 +184,11 @@ class AgentDeps:
         self._agent_record.sys_prompt_compiled_at = value
 
     @property
-    def context_window_start(self) -> int | None:
+    def context_window_start(self) -> int:
         return self._agent_record.context_window_start
 
     @context_window_start.setter
-    def context_window_start(self, value: int | None) -> None:
+    def context_window_start(self, value: int) -> None:
         self._agent_record.context_window_start = value
 
     async def commit_changes_refresh_agent_record(self) -> None:
