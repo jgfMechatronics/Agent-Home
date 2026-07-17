@@ -360,7 +360,7 @@ class TestGetMessages:
             yield
 
     async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
-        """Without ?full=true: calls load_messages with context_window_start as start_timestamp."""
+        """Without ?full=true: calls load_messages with context_window_start as start_seq_id."""
         expected_messages = [{"role": "user", "content": "test"}]
         self.mock_load_messages.return_value = expected_messages
 
@@ -369,11 +369,11 @@ class TestGetMessages:
         assert response.status_code == 200
         assert response.json()["messages"] == expected_messages
         self.mock_load_messages.assert_called_once_with(
-            session, agent_record.id, start_timestamp=agent_record.context_window_start
+            session, agent_record.id, start_seq_id=agent_record.context_window_start
         )
 
     async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
-        """With ?full=true: calls load_messages with start_timestamp=None for full history."""
+        """With ?full=true: calls load_messages with start_seq_id=None for full history."""
         expected_messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}]
         self.mock_load_messages.return_value = expected_messages
 
@@ -382,7 +382,7 @@ class TestGetMessages:
         assert response.status_code == 200
         assert response.json()["messages"] == expected_messages
         self.mock_load_messages.assert_called_once_with(
-            session, agent_record.id, start_timestamp=None
+            session, agent_record.id, start_seq_id=None
         )
 
     async def test_returns_reasonable_format(self):

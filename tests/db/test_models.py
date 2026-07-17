@@ -112,7 +112,7 @@ async def test_agent_record_stores_all_fields(session: AsyncSession):
         "system_instructions": "Be helpful.",
         "compiled_system_prompt": "<compiled>Be helpful.</compiled>",
         "sys_prompt_compiled_at": datetime(2026, 1, 1, 12, 0, 0),
-        "context_window_start": datetime(2026, 1, 1, 13, 0, 0),
+        "context_window_start": 42,
     }
     await assert_round_trips(session, AgentRecord(**fields), fields)
 

@@ -26,6 +26,7 @@ from agent.compaction import compact, is_compaction_needed
 from agent.types import AgentConfig, AgentDeps
 from conftest import (
     SAMPLE_AGENT_CONFIG,
+    assign_seq_ids,
     make_deps,
     make_request,
     make_response,
@@ -55,8 +56,9 @@ async def _persist_messages_load_records(
     deps: AgentDeps,
     messages: list[ModelMessage],
 ) -> list[MessageRecord]:
-    """Persist messages via the official persist_messages, then load and return the MessageRecords."""
+    """Persist messages via the official persist_messages, assign seq_ids, then load and return the MessageRecords."""
     await persist_messages(deps, messages)
+    await assign_seq_ids(deps.session, deps.agent_id)
     return await load_messages(deps.session, deps.agent_id)
 
 
@@ -202,7 +204,7 @@ class TestCompactEdgeCases(CompactTestBase):
         
         await session.refresh(self.agent)
         await session.refresh(self.messages[-4])
-        assert self.agent.context_window_start <= self.messages[-4].timestamp
+        assert self.agent.context_window_start <= self.messages[-4].seq_id
 
     async def test_no_op_with_four_or_fewer_messages(self, session: AsyncSession):
         """compact is a no-op when agent has 4 or fewer messages in context."""
@@ -232,8 +234,8 @@ class TestCompactEdgeCases(CompactTestBase):
         for m in self.messages:
             await session.refresh(m)
         
-        # Count messages still in context (timestamp >= context_window_start)
-        in_context = [m for m in self.messages if m.timestamp >= self.agent.context_window_start]
+        # Count messages still in context (seq_id >= context_window_start)
+        in_context = [m for m in self.messages if m.seq_id >= self.agent.context_window_start]
         
         # Clear of the 4-message guard — tests percentage targeting, not the guard
         assert 8 <= len(in_context) <= 10
@@ -283,17 +285,7 @@ class TestCompactToolPairAtomicity:
         """compact() walks back from the naive trim point to preserve tool pair atomicity.
 
         Token math — engineered to force the naive trim to land at records[6] (tool
-        response), which would orphan it from records[5] (tool call):
-
-            no system prompt → sys_tokens = 0
-            10 messages, total_tokens = 1250,  avg = 125 tok/msg
-
-            soft_compaction_limit = 1000,  compaction_target_fraction = 0.5
-            target_tokens = 0.5 × 1000 = 500
-            n_msg_to_keep = max(4, int(500 / 125)) = max(4, 4) = 4
-
-        Naive result: context_window_start = records[-4].timestamp = records[6].timestamp  ← ORPHAN
-        Fixed result: context_window_start = records[5].timestamp  ← pair kept intact
+        response), which would orphan it from records[5] (tool call):\n\n            no system prompt → sys_tokens = 0\n            10 messages, total_tokens = 1250,  avg = 125 tok/msg\n\n            soft_compaction_limit = 1000,  compaction_target_fraction = 0.5\n            target_tokens = 0.5 × 1000 = 500\n            n_msg_to_keep = max(4, int(500 / 125)) = max(4, 4) = 4\n\n        Naive result: context_window_start = records[-4].seq_id = records[6].seq_id  ← ORPHAN\n        Fixed result: context_window_start = records[5].seq_id  ← pair kept intact
         """
         config = _make_config(soft_compaction_limit=1000, compaction_target_fraction=0.5)
         data = await self._make_agent_with_tool_sequence(session, agent_record, tool_pair_generator, config=config)
@@ -307,4 +299,4 @@ class TestCompactToolPairAtomicity:
 
         await session.refresh(data["agent"])
         await session.refresh(data["records"][5])
-        assert data["agent"].context_window_start == data["records"][5].timestamp
+        assert data["agent"].context_window_start == data["records"][5].seq_id

@@ -2,7 +2,7 @@
 Message persistence and retrieval
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -27,17 +27,6 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-async def _get_last_timestamp(session: AsyncSession, agent_id: str) -> datetime | None:
-    """Return the timestamp of the most recent message for this agent, or None."""
-    result = await session.execute(
-        select(MessageRecord.timestamp)
-        .where(MessageRecord.agent_id == agent_id)
-        .order_by(MessageRecord.timestamp.desc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
-
 
 def _make_orphan_replacement(
     msg: ModelMessage, part_type: type
@@ -145,21 +134,6 @@ def _message_timestamp(msg: ModelMessage) -> datetime:
     return ts.replace(tzinfo=None) if ts.tzinfo is not None else ts
 
 
-def _bump_timestamp_if_needed(ts: datetime, last_timestamp: datetime | None, agent_id: str) -> datetime:
-    """Return ts, bumped forward by 1µs if it is not strictly newer than last_timestamp.
-
-    Logs a warning if a bump is needed — indicates a timekeeping problem upstream.
-    """
-    if last_timestamp is not None and ts <= last_timestamp:
-        log.warning(
-            "persist_messages: timestamp ordering violation for agent %s "
-            "(msg ts=%s <= last_timestamp=%s); bumping forward by 1µs",
-            agent_id, ts, last_timestamp,
-        )
-        return last_timestamp + timedelta(microseconds=1)
-    return ts
-
-
 def _handle_serialization_error(
     msg: ModelMessage,
     e: Exception,
@@ -200,14 +174,12 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
     - Serialization failures inject an error ModelResponse in place of the bad message.
     - Both orphan replacements and serialization failures append a summary warning at the END of
       the chain (referencing the original message timestamp) so errors aren't buried in long histories.
-    - Timestamps are validated against the last DB record; out-of-order timestamps are bumped
-      forward by 1 microsecond and a warning is logged.
+    - seq_id assignment happens separately (phase 2); rows are persisted with seq_id=NULL until then.
     """
     if not messages:
         return None
 
     messages, errors = _replace_orphaned_tool_messages(messages)
-    last_timestamp = await _get_last_timestamp(deps.session, deps.agent_id)
     last_total_tokens: int | None = None
 
     for msg in messages:
@@ -221,9 +193,6 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
             content, msg_type, msg, error_to_append = _handle_serialization_error(msg, e, deps.agent_id)
             errors.append(error_to_append)
 
-        curr_timestamp = _bump_timestamp_if_needed(_message_timestamp(msg), last_timestamp, deps.agent_id)
-        last_timestamp = curr_timestamp
-
         msg_total_tokens = msg.usage.total_tokens if isinstance(msg, ModelResponse) and msg.usage.has_values() else None
         if msg_total_tokens is not None:
             last_total_tokens = msg_total_tokens
@@ -232,7 +201,7 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
             type=msg_type,
             content=content,
             total_tokens=msg_total_tokens,
-            timestamp=curr_timestamp,
+            timestamp=_message_timestamp(msg),
         )
         deps.session.add(record)
 
@@ -245,14 +214,12 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
         )
         warning_msg = ModelResponse(parts=[TextPart(content=warning)])
         warning_content = _dump_msg_json(warning_msg)
-        warn_ts = _bump_timestamp_if_needed(_message_timestamp(warning_msg), last_timestamp, deps.agent_id)
-        last_timestamp = warn_ts
         deps.session.add(MessageRecord(
             agent_id=deps.agent_id,
             type="ModelResponse",
             content=warning_content,
             total_tokens=None,
-            timestamp=warn_ts,
+            timestamp=_message_timestamp(warning_msg),
         ))
 
     await deps.session.flush()
@@ -262,20 +229,20 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
 async def load_messages(
     session: AsyncSession,
     agent_id: str,
-    start_timestamp: datetime | None = None,
+    start_seq_id: int | None = None,
 ) -> list[MessageRecord]:
-    """Load messages as ORM records in chronological order.
+    """Load messages as ORM records in seq_id order.
 
-    If start_timestamp is provided, returns only messages where timestamp >= start_timestamp.
+    If start_seq_id is provided, returns only messages where seq_id >= start_seq_id.
     Otherwise returns the full conversation history.
     """
     query = (
         select(MessageRecord)
         .where(MessageRecord.agent_id == agent_id)
-        .order_by(MessageRecord.timestamp)
+        .order_by(MessageRecord.seq_id)
     )
-    if start_timestamp is not None:
-        query = query.where(MessageRecord.timestamp >= start_timestamp)
+    if start_seq_id is not None:
+        query = query.where(MessageRecord.seq_id >= start_seq_id)
 
     result = await session.execute(query)
     return list(result.scalars().all())
