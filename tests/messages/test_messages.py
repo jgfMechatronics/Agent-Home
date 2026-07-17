@@ -19,7 +19,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.usage import RequestUsage
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentDeps
@@ -51,11 +51,11 @@ def make_messages_batch(n: int) -> list[ModelMessage]:
 # ---------------------------------------------------------------------------
 
 async def fetch_all_records(session: AsyncSession, agent_id: str) -> list[MessageRecord]:
-    """Load all MessageRecords for an agent, in insertion order (rowid)."""
+    """Load all MessageRecords for an agent, in seq_id order."""
     result = await session.execute(
         select(MessageRecord)
         .where(MessageRecord.agent_id == agent_id)
-        .order_by(text("rowid"))
+        .order_by(MessageRecord.seq_id)
     )
     return list(result.scalars().all())
 
@@ -322,7 +322,6 @@ class TestPersistMessages(DBTestBase):
 class TestLoadMessages(DBTestBase):
     """Tests for load_messages(session, agent_id, start_seq_id=0).
 
-    Pre-seeds DB via persist_messages to ensure realistic records.
     Pre-seeds DB via persist_messages to ensure realistic records.
     """
 

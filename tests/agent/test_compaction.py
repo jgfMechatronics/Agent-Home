@@ -211,7 +211,7 @@ class TestCompactEdgeCases(CompactTestBase):
         await compact(self.deps, total_tokens=self.total_tokens)
         
         await session.refresh(self.agent)
-        # Should remain None — nothing to compact
+        # Should remain 0 — nothing to compact
         assert self.agent.context_window_start == 0
 
     async def test_targets_percentage_of_limit(self, session: AsyncSession):
