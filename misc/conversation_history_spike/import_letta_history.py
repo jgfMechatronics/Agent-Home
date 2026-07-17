@@ -341,6 +341,172 @@ def print_stats(converted: list[tuple[ModelMessage, datetime]]):
     print(f"  Parts: {user_prompt_count} UserPrompt, {thinking_count} Thinking, {text_count} Text, {tool_call_count} ToolCall, {tool_return_count} ToolReturn")
 
 
+def verify_conversion(letta_messages: list[dict], exported_file: str) -> bool:
+    """Verify that exported Agent Home messages faithfully represent the Letta source.
+    
+    Walks both in parallel, applying the same skip/combine logic, verifying content matches.
+    Returns True if everything matches, False otherwise.
+    """
+    # Load exported data
+    with open(exported_file) as f:
+        exported = json.load(f)
+    
+    errors = []
+    exported_idx = 0
+    letta_idx = 0
+    
+    while letta_idx < len(letta_messages):
+        msg = letta_messages[letta_idx]
+        msg_type = msg['message_type']
+        
+        # Skip approval_response_message
+        if msg_type == 'approval_response_message':
+            letta_idx += 1
+            continue
+        
+        # Skip summary messages
+        if is_summary_message(msg):
+            letta_idx += 1
+            continue
+        
+        if exported_idx >= len(exported):
+            errors.append(f"Letta idx {letta_idx}: Ran out of exported messages")
+            break
+        
+        exp = exported[exported_idx]['content']
+        
+        # user_message -> ModelRequest with UserPromptPart
+        if msg_type == 'user_message':
+            expected_content = extract_user_content(msg.get('content', ''))
+            if exp['kind'] != 'request':
+                errors.append(f"Letta idx {letta_idx}: Expected request, got {exp['kind']}")
+            elif not exp['parts'] or exp['parts'][0].get('part_kind') != 'user-prompt':
+                errors.append(f"Letta idx {letta_idx}: Expected user-prompt part")
+            elif exp['parts'][0]['content'] != expected_content:
+                errors.append(f"Letta idx {letta_idx}: User content mismatch")
+            exported_idx += 1
+            letta_idx += 1
+            continue
+        
+        # reasoning_message - check what follows
+        if msg_type == 'reasoning_message':
+            reasoning_content = msg.get('reasoning', '')
+            
+            if exp['kind'] != 'response':
+                errors.append(f"Letta idx {letta_idx}: Expected response for reasoning, got {exp['kind']}")
+                exported_idx += 1
+                letta_idx += 1
+                continue
+            
+            # Check thinking part
+            thinking_parts = [p for p in exp['parts'] if p.get('part_kind') == 'thinking']
+            if not thinking_parts:
+                errors.append(f"Letta idx {letta_idx}: Missing thinking part")
+            elif thinking_parts[0]['content'] != reasoning_content:
+                errors.append(f"Letta idx {letta_idx}: Reasoning content mismatch")
+            
+            # Check what follows in Letta
+            if letta_idx + 1 < len(letta_messages):
+                next_msg = letta_messages[letta_idx + 1]
+                next_type = next_msg['message_type']
+                
+                if next_type == 'assistant_message':
+                    # Should have text part
+                    text_parts = [p for p in exp['parts'] if p.get('part_kind') == 'text']
+                    if not text_parts:
+                        errors.append(f"Letta idx {letta_idx}: Missing text part for assistant")
+                    elif text_parts[0]['content'] != next_msg.get('content', ''):
+                        errors.append(f"Letta idx {letta_idx}: Assistant content mismatch")
+                    letta_idx += 2
+                    exported_idx += 1
+                    continue
+                
+                if next_type in ('tool_call_message', 'approval_request_message'):
+                    # Should have tool-call part
+                    tool_parts = [p for p in exp['parts'] if p.get('part_kind') == 'tool-call']
+                    tool_call = next_msg.get('tool_call', {})
+                    if not tool_parts:
+                        errors.append(f"Letta idx {letta_idx}: Missing tool-call part")
+                    else:
+                        if tool_parts[0]['tool_name'] != tool_call.get('name'):
+                            errors.append(f"Letta idx {letta_idx}: Tool name mismatch")
+                        if tool_parts[0]['tool_call_id'] != tool_call.get('tool_call_id'):
+                            errors.append(f"Letta idx {letta_idx}: Tool call ID mismatch")
+                    letta_idx += 2
+                    exported_idx += 1
+                    continue
+            
+            # Standalone reasoning
+            exported_idx += 1
+            letta_idx += 1
+            continue
+        
+        # assistant_message without preceding reasoning
+        if msg_type == 'assistant_message':
+            if exp['kind'] != 'response':
+                errors.append(f"Letta idx {letta_idx}: Expected response, got {exp['kind']}")
+            else:
+                text_parts = [p for p in exp['parts'] if p.get('part_kind') == 'text']
+                if not text_parts:
+                    errors.append(f"Letta idx {letta_idx}: Missing text part")
+                elif text_parts[0]['content'] != msg.get('content', ''):
+                    errors.append(f"Letta idx {letta_idx}: Assistant content mismatch")
+            exported_idx += 1
+            letta_idx += 1
+            continue
+        
+        # tool_call_message or approval_request_message without preceding reasoning
+        if msg_type in ('tool_call_message', 'approval_request_message'):
+            tool_call = msg.get('tool_call', {})
+            if exp['kind'] != 'response':
+                errors.append(f"Letta idx {letta_idx}: Expected response, got {exp['kind']}")
+            else:
+                tool_parts = [p for p in exp['parts'] if p.get('part_kind') == 'tool-call']
+                if not tool_parts:
+                    errors.append(f"Letta idx {letta_idx}: Missing tool-call part")
+                else:
+                    if tool_parts[0]['tool_name'] != tool_call.get('name'):
+                        errors.append(f"Letta idx {letta_idx}: Tool name mismatch")
+                    if tool_parts[0]['tool_call_id'] != tool_call.get('tool_call_id'):
+                        errors.append(f"Letta idx {letta_idx}: Tool call ID mismatch")
+            exported_idx += 1
+            letta_idx += 1
+            continue
+        
+        # tool_return_message
+        if msg_type == 'tool_return_message':
+            if exp['kind'] != 'request':
+                errors.append(f"Letta idx {letta_idx}: Expected request for tool return, got {exp['kind']}")
+            else:
+                return_parts = [p for p in exp['parts'] if p.get('part_kind') == 'tool-return']
+                if not return_parts:
+                    errors.append(f"Letta idx {letta_idx}: Missing tool-return part")
+                else:
+                    if return_parts[0]['tool_call_id'] != msg.get('tool_call_id'):
+                        errors.append(f"Letta idx {letta_idx}: Tool return ID mismatch")
+                    expected_outcome = 'success' if msg.get('status') == 'success' else 'failed'
+                    if return_parts[0]['outcome'] != expected_outcome:
+                        errors.append(f"Letta idx {letta_idx}: Tool return outcome mismatch")
+            exported_idx += 1
+            letta_idx += 1
+            continue
+        
+        # Unknown - skip
+        letta_idx += 1
+    
+    # Report results
+    if errors:
+        print(f"VERIFICATION FAILED - {len(errors)} errors:")
+        for e in errors[:10]:  # Show first 10
+            print(f"  {e}")
+        if len(errors) > 10:
+            print(f"  ... and {len(errors) - 10} more")
+        return False
+    else:
+        print(f"VERIFICATION PASSED - {exported_idx} messages verified")
+        return True
+
+
 # Default system prompt for the test agent
 DEFAULT_SYSTEM_PROMPT = """=== IMPORTANT: TEST AGENT WITH IMPORTED HISTORY ===
 
@@ -375,6 +541,12 @@ async def async_main(args):
     
     if args.stats:
         print_stats(converted)
+    
+    if args.verify:
+        success = verify_conversion(letta_messages, args.verify)
+        if not success:
+            sys.exit(1)
+        return
     
     if args.do_import:
         # Import to database
@@ -427,6 +599,7 @@ Examples:
     parser.add_argument('--agent-name', default='history-import-test', help='Name for the imported agent')
     parser.add_argument('--system-prompt', help='Custom system prompt (default: test agent warning)')
     parser.add_argument('--export-file', help='Export imported messages to JSON for verification')
+    parser.add_argument('--verify', metavar='EXPORTED_JSON', help='Verify exported JSON matches Letta source')
     args = parser.parse_args()
     
     if args.do_import:
