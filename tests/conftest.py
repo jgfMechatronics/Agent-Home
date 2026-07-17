@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event, select, text
+from sqlalchemy import event
 
 # Prevent AnthropicModel construction from failing in tests that don't make real API calls
 os.environ.setdefault("ANTHROPIC_API_KEY", "test")
@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from agent.types import AgentConfig, AgentDeps
 from api.fastapi_deps import get_session_dep
-from db.models import AgentRecord, Base, MemoryBlockRecord, MessageRecord
+from db.models import AgentRecord, Base, MemoryBlockRecord
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     ModelRequest,
@@ -49,24 +49,6 @@ def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
     TODO: this fixture is stupid and should go
     """
     return AgentDeps(session=session, agent_record=agent)
-
-
-async def assign_seq_ids(session: AsyncSession, agent_id: str) -> None:
-    """Assign sequential seq_ids to an agent's messages in insertion order.
-
-    TODO: Used in tests to simulate phase 2 seq_id assignment before testing
-    load_messages ordering and filtering behavior. Uses SQLite rowid as the
-    insertion-order proxy — stable regardless of timestamp resolution.
-    """
-    result = await session.execute(
-        select(MessageRecord)
-        .where(MessageRecord.agent_id == agent_id)
-        .order_by(text("rowid"))
-    )
-    records = list(result.scalars().all())
-    for i, record in enumerate(records):
-        record.seq_id = i
-    await session.flush()
 
 
 @pytest_asyncio.fixture

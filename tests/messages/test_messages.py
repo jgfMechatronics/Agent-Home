@@ -29,7 +29,6 @@ from messages.messages import deserialize_messages, load_messages, persist_messa
 # Plain helpers (not fixtures) — import directly for use in test bodies
 from conftest import (
     SAMPLE_AGENT_CONFIG,
-    assign_seq_ids,
     make_deps,
     make_request,
     make_response,
@@ -324,13 +323,13 @@ class TestLoadMessages(DBTestBase):
     """Tests for load_messages(session, agent_id, start_seq_id=0).
 
     Pre-seeds DB via persist_messages to ensure realistic records.
-    Calls assign_seq_ids before ordering-dependent assertions.
+    Pre-seeds DB via persist_messages to ensure realistic records.
     """
 
     async def test_returns_all_messages(self):
         messages = [make_request(), make_response(), make_request(), make_response()]
         await persist_messages(self.deps, messages)
-        await assign_seq_ids(self.session, self.agent.id)
+
         records = await load_messages(self.session, self.agent.id)
         assert deserialize_messages(records) == messages
 
@@ -343,7 +342,7 @@ class TestLoadMessages(DBTestBase):
         late = [make_request("late"), make_response("late reply")]
         await persist_messages(self.deps, early)
         await persist_messages(self.deps, late)
-        await assign_seq_ids(self.session, self.agent.id)
+
 
         all_records = await load_messages(self.session, self.agent.id)
         cutoff_seq_id = all_records[1].seq_id  # second record (early reply)
@@ -355,7 +354,7 @@ class TestLoadMessages(DBTestBase):
     async def test_results_in_seq_id_order(self):
         messages = [make_request("first"), make_response("second"), make_request("third")]
         await persist_messages(self.deps, messages)
-        await assign_seq_ids(self.session, self.agent.id)
+
         records = await load_messages(self.session, self.agent.id)
         seq_ids = [r.seq_id for r in records]
         assert seq_ids == sorted(seq_ids)
@@ -387,7 +386,7 @@ class TestLoadMessages(DBTestBase):
     async def test_start_seq_id_ahead_of_all_returns_empty(self):
         """When start_seq_id is larger than every message's seq_id, the result is empty."""
         await persist_messages(self.deps, [make_request(), make_response()])
-        await assign_seq_ids(self.session, self.agent.id)
+
         records = await load_messages(self.session, self.agent.id, start_seq_id=999999)
         assert records == []
 
@@ -468,7 +467,7 @@ class TestRoundTrip(DBTestBase):
     async def test_request_response_round_trip(self):
         original = [make_request("round-trip me"), make_response("got it")]
         await persist_messages(self.deps, original)
-        await assign_seq_ids(self.session, self.agent.id)
+
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)
 
@@ -477,7 +476,7 @@ class TestRoundTrip(DBTestBase):
     async def test_tool_pair_round_trip(self):
         response_with_call, request_with_return = make_tool_pair()
         await persist_messages(self.deps, [response_with_call, request_with_return])
-        await assign_seq_ids(self.session, self.agent.id)
+
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)
 

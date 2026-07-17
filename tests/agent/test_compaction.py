@@ -26,7 +26,6 @@ from agent.compaction import compact, is_compaction_needed
 from agent.types import AgentConfig, AgentDeps
 from conftest import (
     SAMPLE_AGENT_CONFIG,
-    assign_seq_ids,
     make_deps,
     make_request,
     make_response,
@@ -56,9 +55,8 @@ async def _persist_messages_load_records(
     deps: AgentDeps,
     messages: list[ModelMessage],
 ) -> list[MessageRecord]:
-    """Persist messages via the official persist_messages, assign seq_ids, then load and return the MessageRecords."""
+    """Persist messages via the official persist_messages and return the MessageRecords."""
     await persist_messages(deps, messages)
-    await assign_seq_ids(deps.session, deps.agent_id)
     return await load_messages(deps.session, deps.agent_id)
 
 
