@@ -55,7 +55,7 @@ async def _persist_messages_load_records(
     deps: AgentDeps,
     messages: list[ModelMessage],
 ) -> list[MessageRecord]:
-    """Persist messages via the official persist_messages and return the MessageRecords."""
+    """Persist messages via the official persist_messages, then load and return the MessageRecords."""
     await persist_messages(deps, messages)
     return await load_messages(deps.session, deps.agent_id)
 
@@ -283,7 +283,17 @@ class TestCompactToolPairAtomicity:
         """compact() walks back from the naive trim point to preserve tool pair atomicity.
 
         Token math — engineered to force the naive trim to land at records[6] (tool
-        response), which would orphan it from records[5] (tool call):\n\n            no system prompt → sys_tokens = 0\n            10 messages, total_tokens = 1250,  avg = 125 tok/msg\n\n            soft_compaction_limit = 1000,  compaction_target_fraction = 0.5\n            target_tokens = 0.5 × 1000 = 500\n            n_msg_to_keep = max(4, int(500 / 125)) = max(4, 4) = 4\n\n        Naive result: context_window_start = records[-4].seq_id = records[6].seq_id  ← ORPHAN\n        Fixed result: context_window_start = records[5].seq_id  ← pair kept intact
+        response), which would orphan it from records[5] (tool call):
+
+            no system prompt → sys_tokens = 0
+            10 messages, total_tokens = 1250,  avg = 125 tok/msg
+
+            soft_compaction_limit = 1000,  compaction_target_fraction = 0.5
+            target_tokens = 0.5 × 1000 = 500
+            n_msg_to_keep = max(4, int(500 / 125)) = max(4, 4) = 4
+
+        Naive result: context_window_start = records[-4].seq_id = records[6].seq_id  ← ORPHAN
+        Fixed result: context_window_start = records[5].seq_id  ← pair kept intact
         """
         config = _make_config(soft_compaction_limit=1000, compaction_target_fraction=0.5)
         data = await self._make_agent_with_tool_sequence(session, agent_record, tool_pair_generator, config=config)
