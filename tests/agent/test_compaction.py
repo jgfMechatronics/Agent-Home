@@ -26,6 +26,7 @@ from agent.compaction import compact, is_compaction_needed
 from agent.types import AgentConfig, AgentDeps
 from conftest import (
     SAMPLE_AGENT_CONFIG,
+    make_alternating_messages,
     make_deps,
     make_request,
     make_response,
@@ -85,10 +86,7 @@ async def _make_agent_with_messages(
     await session.flush()
 
     deps = make_deps(session, agent)
-    pydantic_msgs = [
-        make_request(f"msg {i}") if i % 2 == 0 else make_response(f"resp {i}")
-        for i in range(message_count)
-    ]
+    pydantic_msgs = make_alternating_messages(message_count)
     messages = await _persist_messages_load_records(deps, pydantic_msgs)
 
     return {"agent": agent, "messages": messages, "deps": deps}

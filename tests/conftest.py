@@ -19,6 +19,7 @@ from api.fastapi_deps import get_session_dep
 from db.models import AgentRecord, Base, MemoryBlockRecord
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
@@ -77,6 +78,14 @@ def make_request(content: str = "hello") -> ModelRequest:
 def make_response(content: str = "hi") -> ModelResponse:
     """Minimal ModelResponse with a single TextPart."""
     return ModelResponse(parts=[TextPart(content=content)])
+
+
+def make_alternating_messages(count: int, prefix: str = "msg") -> list[ModelMessage]:
+    """Generate count alternating request/response messages."""
+    return [
+        make_request(f"{prefix} {i}") if i % 2 == 0 else make_response(f"{prefix} {i}")
+        for i in range(count)
+    ]
 
 
 def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:

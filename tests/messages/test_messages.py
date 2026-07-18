@@ -29,6 +29,7 @@ from messages.messages import deserialize_messages, load_messages, persist_messa
 # Plain helpers (not fixtures) — import directly for use in test bodies
 from conftest import (
     SAMPLE_AGENT_CONFIG,
+    make_alternating_messages,
     make_deps,
     make_request,
     make_response,
@@ -39,11 +40,7 @@ from conftest import (
 
 def make_messages_batch(n: int) -> list[ModelMessage]:
     """Generate n alternating request/response pairs for performance tests."""
-    messages: list[ModelMessage] = []
-    for i in range(n):
-        messages.append(make_request(f"msg {i}"))
-        messages.append(make_response(f"resp {i}"))
-    return messages
+    return make_alternating_messages(n * 2)
 
 
 # ---------------------------------------------------------------------------
@@ -170,20 +167,10 @@ class TestPersistMessages(DBTestBase):
     ])
     async def test_assigns_sequential_seq_ids(self, existing_count: int, new_count: int):
         """persist_messages assigns sequential seq_ids starting from MAX(existing) + 1."""
-        # Set up existing messages if any
         if existing_count > 0:
-            existing = [
-                make_request(f"existing {i}") if i % 2 == 0 else make_response(f"existing {i}")
-                for i in range(existing_count)
-            ]
-            await persist_messages(self.deps, existing)
+            await persist_messages(self.deps, make_alternating_messages(existing_count, "existing"))
 
-        # Persist new messages
-        new_messages = [
-            make_request(f"new {i}") if i % 2 == 0 else make_response(f"new {i}")
-            for i in range(new_count)
-        ]
-        await persist_messages(self.deps, new_messages)
+        await persist_messages(self.deps, make_alternating_messages(new_count, "new"))
 
         # Load all and verify seq_ids
         all_records = await load_messages(self.session, self.agent.id)
