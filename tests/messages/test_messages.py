@@ -167,9 +167,8 @@ class TestPersistMessages(DBTestBase):
     ])
     async def test_assigns_sequential_seq_ids(self, existing_count: int, new_count: int):
         """persist_messages assigns sequential seq_ids starting from MAX(existing) + 1."""
-        if existing_count > 0:
-            await persist_messages(self.deps, make_alternating_messages(existing_count, "existing"))
-
+        # will be no op for the 0 case, helper returns empty list
+        await persist_messages(self.deps, make_alternating_messages(existing_count, "existing"))
         await persist_messages(self.deps, make_alternating_messages(new_count, "new"))
 
         # Load all and verify seq_ids
