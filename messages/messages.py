@@ -161,7 +161,12 @@ def _handle_serialization_error(
 # Functions
 # ---------------------------------------------------------------------------
 
-async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int | None:
+async def persist_messages(
+    deps: AgentDeps,
+    messages: list[ModelMessage],
+    *,
+    _is_error_pass: bool = False,
+) -> int | None:
     """Save each ModelMessage as its own row; set total_tokens from ModelResponse.usage where available.
 
     total_tokens is extracted from each ModelResponse's usage (input + output tokens for that request).
@@ -212,27 +217,21 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
         )
         deps.session.add(record)
 
-    # Append notification of any errors that were encountered to the end of the message string
-    # Continue seq_id sequence from where we left off
-    error_seq_start = next_seq_id + len(messages)
-    for j, (original_timestamp, error_text) in enumerate(errors):
-        warning = (
-            f"WARNING: A problem was encountered while persisting messages from the last turn: "
-            f"'{error_text}'. A warning was injected in place of the problematic message, "
-            f"problematic message timestamp was {original_timestamp}"
-        )
-        warning_msg = ModelResponse(parts=[TextPart(content=warning)])
-        warning_content = _dump_msg_json(warning_msg)
-        deps.session.add(MessageRecord(
-            agent_id=deps.agent_id,
-            type="ModelResponse",
-            content=warning_content,
-            total_tokens=None,
-            seq_id=error_seq_start + j,
-            timestamp=_message_timestamp(warning_msg),
-        ))
+    # Persist error warnings via recursion (errors are simple TextPart messages, won't fail)
+    if errors and not _is_error_pass:
+        warning_messages = [
+            ModelResponse(parts=[TextPart(content=(
+                f"WARNING: A problem was encountered while persisting messages from the last turn: "
+                f"'{error_text}'. A warning was injected in place of the problematic message, "
+                f"problematic message timestamp was {original_timestamp}"
+            ))])
+            for original_timestamp, error_text in errors
+        ]
+        await deps.session.flush()  # Ensure main messages visible to recursive call's MAX query
+        await persist_messages(deps, warning_messages, _is_error_pass=True)
+    else:
+        await deps.session.flush()
 
-    await deps.session.flush()
     return last_total_tokens
 
 
