@@ -218,7 +218,9 @@ async def persist_messages(
         deps.session.add(record)
 
     # Persist error warnings via recursion (errors are simple TextPart messages, won't fail)
-    if errors and not _is_error_pass:
+    if errors:
+        if _is_error_pass:
+            raise RuntimeError("Persistence errors during attempt to persist error notifications")
         warning_messages = [
             ModelResponse(parts=[TextPart(content=(
                 f"WARNING: A problem was encountered while persisting messages from the last turn: "
