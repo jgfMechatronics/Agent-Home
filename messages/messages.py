@@ -183,7 +183,7 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
         select(func.max(MessageRecord.seq_id)).where(MessageRecord.agent_id == deps.agent_id)
     )
     max_seq_id = result.scalar()
-    next_seq_id = 0 if max_seq_id is None else max_seq_id + 1
+    next_seq_id = max_seq_id + 1 if max_seq_id is not None else 0
 
     messages, errors = _replace_orphaned_tool_messages(messages)
     last_total_tokens: int | None = None
