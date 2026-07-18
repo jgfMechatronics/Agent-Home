@@ -249,6 +249,7 @@ class TestPersistMessages(DBTestBase):
         error record, with a summary warning appended at the end of the chain."""
         records = await self._persist_and_fetch([orphan_msg])
         assert len(records) == 2  # positional error + summary warning
+        assert [r.seq_id for r in records] == [0, 1]  # sequential including warning
 
         # Original orphaned message was dropped — no record should contain the orphaned part type
         for record in records:
@@ -313,6 +314,7 @@ class TestPersistMessages(DBTestBase):
 
         records = await fetch_all_records(self.session, self.agent.id)
         assert len(records) == 4  # good, positional error, good2, summary warning
+        assert [r.seq_id for r in records] == [0, 1, 2, 3]  # sequential including warning
 
         error_text = "[persist_messages serialization error]: ValueError: sim failure"
 
