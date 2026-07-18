@@ -177,7 +177,6 @@ async def _persist_error_warnings(
 # Functions
 # ---------------------------------------------------------------------------
 
-
 async def persist_messages(
     deps: AgentDeps,
     messages: list[ModelMessage],
@@ -201,6 +200,8 @@ async def persist_messages(
         return None
 
     # Get next seq_id: MAX(seq_id) + 1, or 0 if no messages exist
+    # NOTE: Concurrent calls would race on this query. Agent-level locking in the runner
+    # (AgentAppState.lock) ensures only one persist_messages runs per agent at a time.
     result = await deps.session.execute(
         select(func.max(MessageRecord.seq_id)).where(MessageRecord.agent_id == deps.agent_id)
     )
