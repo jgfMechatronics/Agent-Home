@@ -161,6 +161,23 @@ def _handle_serialization_error(
 # Functions
 # ---------------------------------------------------------------------------
 
+async def _persist_error_warnings(
+    deps: AgentDeps,
+    errors: list[tuple[datetime | None, str]],
+) -> None:
+    """Build and persist error warning messages via recursive call to persist_messages."""
+    warning_messages = [
+        ModelResponse(parts=[TextPart(content=(
+            f"WARNING: A problem was encountered while persisting messages from the last turn: "
+            f"'{error_text}'. A warning was injected in place of the problematic message, "
+            f"problematic message timestamp was {original_timestamp}"
+        ))])
+        for original_timestamp, error_text in errors
+    ]
+    await deps.session.flush()  # Ensure main messages visible to recursive call's MAX query
+    await persist_messages(deps, warning_messages, _is_error_pass=True)
+
+
 async def persist_messages(
     deps: AgentDeps,
     messages: list[ModelMessage],
@@ -221,16 +238,7 @@ async def persist_messages(
     if errors:
         if _is_error_pass:
             raise RuntimeError("Persistence errors during attempt to persist error notifications")
-        warning_messages = [
-            ModelResponse(parts=[TextPart(content=(
-                f"WARNING: A problem was encountered while persisting messages from the last turn: "
-                f"'{error_text}'. A warning was injected in place of the problematic message, "
-                f"problematic message timestamp was {original_timestamp}"
-            ))])
-            for original_timestamp, error_text in errors
-        ]
-        await deps.session.flush()  # Ensure main messages visible to recursive call's MAX query
-        await persist_messages(deps, warning_messages, _is_error_pass=True)
+        await _persist_error_warnings(deps, errors)
     else:
         await deps.session.flush()
 
