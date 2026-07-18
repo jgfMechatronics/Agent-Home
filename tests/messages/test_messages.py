@@ -162,6 +162,38 @@ class TestPersistMessages(DBTestBase):
         records = await self._persist_and_fetch([])
         assert records == []
 
+    @pytest.mark.parametrize("existing_count,new_count", [
+        (0, 1),   # empty DB, single message → seq_id = 0
+        (0, 3),   # empty DB, multiple messages → seq_ids = 0, 1, 2
+        (1, 2),   # one existing (seq_id=0), add two → seq_ids = 1, 2
+        (5, 3),   # five existing (seq_ids 0-4), add three → seq_ids = 5, 6, 7
+    ])
+    async def test_assigns_sequential_seq_ids(self, existing_count: int, new_count: int):
+        """persist_messages assigns sequential seq_ids starting from MAX(existing) + 1."""
+        # Set up existing messages if any
+        if existing_count > 0:
+            existing = [
+                make_request(f"existing {i}") if i % 2 == 0 else make_response(f"existing {i}")
+                for i in range(existing_count)
+            ]
+            await persist_messages(self.deps, existing)
+
+        # Persist new messages
+        new_messages = [
+            make_request(f"new {i}") if i % 2 == 0 else make_response(f"new {i}")
+            for i in range(new_count)
+        ]
+        await persist_messages(self.deps, new_messages)
+
+        # Load all and verify seq_ids
+        all_records = await load_messages(self.session, self.agent.id)
+        assert len(all_records) == existing_count + new_count
+
+        # All records should have sequential seq_ids starting from 0
+        expected_seq_ids = list(range(existing_count + new_count))
+        actual_seq_ids = [r.seq_id for r in all_records]
+        assert actual_seq_ids == expected_seq_ids
+
     @pytest.mark.parametrize("pair_fn", [make_tool_pair, make_retry_pair])
     async def test_persists_tool_call_pair(self, pair_fn):
         """A matched tool-call / tool-response pair should survive persist unchanged,

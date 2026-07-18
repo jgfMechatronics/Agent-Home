@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     UserPromptPart,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentDeps
@@ -178,10 +178,17 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
     if not messages:
         return None
 
+    # Get next seq_id: MAX(seq_id) + 1, or 0 if no messages exist
+    result = await deps.session.execute(
+        select(func.max(MessageRecord.seq_id)).where(MessageRecord.agent_id == deps.agent_id)
+    )
+    max_seq_id = result.scalar()
+    next_seq_id = 0 if max_seq_id is None else max_seq_id + 1
+
     messages, errors = _replace_orphaned_tool_messages(messages)
     last_total_tokens: int | None = None
 
-    for msg in messages:
+    for i, msg in enumerate(messages):
         try:
             # NOTE: The per msg serialization allows us to eliminate specific messages which have serialization failures,
             # but likely costs us some performance. This is an optimization opportunity: could have happy path try serializing the whole
@@ -200,12 +207,15 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
             type=msg_type,
             content=content,
             total_tokens=msg_total_tokens,
+            seq_id=next_seq_id + i,
             timestamp=_message_timestamp(msg),
         )
         deps.session.add(record)
 
     # Append notification of any errors that were encountered to the end of the message string
-    for original_timestamp, error_text in errors:
+    # Continue seq_id sequence from where we left off
+    error_seq_start = next_seq_id + len(messages)
+    for j, (original_timestamp, error_text) in enumerate(errors):
         warning = (
             f"WARNING: A problem was encountered while persisting messages from the last turn: "
             f"'{error_text}'. A warning was injected in place of the problematic message, "
@@ -218,6 +228,7 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
             type="ModelResponse",
             content=warning_content,
             total_tokens=None,
+            seq_id=error_seq_start + j,
             timestamp=_message_timestamp(warning_msg),
         ))
 
