@@ -26,6 +26,7 @@ from agent.compaction import compact, is_compaction_needed
 from agent.types import AgentConfig, AgentDeps
 from conftest import (
     SAMPLE_AGENT_CONFIG,
+    make_alternating_messages,
     make_deps,
     make_request,
     make_response,
@@ -85,10 +86,7 @@ async def _make_agent_with_messages(
     await session.flush()
 
     deps = make_deps(session, agent)
-    pydantic_msgs = [
-        make_request(f"msg {i}") if i % 2 == 0 else make_response(f"resp {i}")
-        for i in range(message_count)
-    ]
+    pydantic_msgs = make_alternating_messages(message_count)
     messages = await _persist_messages_load_records(deps, pydantic_msgs)
 
     return {"agent": agent, "messages": messages, "deps": deps}
@@ -160,12 +158,12 @@ class TestCompactCommon(CompactTestBase):
 
     async def test_advances_context_window_start(self, session: AsyncSession):
         """compact advances context_window_start pointer in DB."""
-        assert self.agent.context_window_start is None  # Initially null
+        assert self.agent.context_window_start == 0  # Defaults to 0 for fresh agents
         
         await compact(self.deps, total_tokens=self.total_tokens)
 
         await session.refresh(self.agent)
-        assert self.agent.context_window_start is not None
+        assert self.agent.context_window_start > 0
 
     async def test_does_not_delete_messages(self, session: AsyncSession):
         """compact does NOT delete any messages — pointer only."""
@@ -202,7 +200,7 @@ class TestCompactEdgeCases(CompactTestBase):
         
         await session.refresh(self.agent)
         await session.refresh(self.messages[-4])
-        assert self.agent.context_window_start <= self.messages[-4].timestamp
+        assert self.agent.context_window_start <= self.messages[-4].seq_id
 
     async def test_no_op_with_four_or_fewer_messages(self, session: AsyncSession):
         """compact is a no-op when agent has 4 or fewer messages in context."""
@@ -211,8 +209,8 @@ class TestCompactEdgeCases(CompactTestBase):
         await compact(self.deps, total_tokens=self.total_tokens)
         
         await session.refresh(self.agent)
-        # Should remain None — nothing to compact
-        assert self.agent.context_window_start is None
+        # Should remain 0 — nothing to compact
+        assert self.agent.context_window_start == 0
 
     async def test_targets_percentage_of_limit(self, session: AsyncSession):
         """compact targets compaction_target_fraction of soft_compaction_limit.
@@ -232,8 +230,8 @@ class TestCompactEdgeCases(CompactTestBase):
         for m in self.messages:
             await session.refresh(m)
         
-        # Count messages still in context (timestamp >= context_window_start)
-        in_context = [m for m in self.messages if m.timestamp >= self.agent.context_window_start]
+        # Count messages still in context (seq_id >= context_window_start)
+        in_context = [m for m in self.messages if m.seq_id >= self.agent.context_window_start]
         
         # Clear of the 4-message guard — tests percentage targeting, not the guard
         assert 8 <= len(in_context) <= 10
@@ -292,8 +290,8 @@ class TestCompactToolPairAtomicity:
             target_tokens = 0.5 × 1000 = 500
             n_msg_to_keep = max(4, int(500 / 125)) = max(4, 4) = 4
 
-        Naive result: context_window_start = records[-4].timestamp = records[6].timestamp  ← ORPHAN
-        Fixed result: context_window_start = records[5].timestamp  ← pair kept intact
+        Naive result: context_window_start = records[-4].seq_id = records[6].seq_id  ← ORPHAN
+        Fixed result: context_window_start = records[5].seq_id  ← pair kept intact
         """
         config = _make_config(soft_compaction_limit=1000, compaction_target_fraction=0.5)
         data = await self._make_agent_with_tool_sequence(session, agent_record, tool_pair_generator, config=config)
@@ -307,4 +305,4 @@ class TestCompactToolPairAtomicity:
 
         await session.refresh(data["agent"])
         await session.refresh(data["records"][5])
-        assert data["agent"].context_window_start == data["records"][5].timestamp
+        assert data["agent"].context_window_start == data["records"][5].seq_id

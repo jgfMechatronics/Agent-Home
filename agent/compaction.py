@@ -41,7 +41,7 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     - Calls compile_system_prompt after advancing pointer
     """
     messages = await load_messages(
-        deps.session, deps.agent_id, start_timestamp=deps.context_window_start
+        deps.session, deps.agent_id, start_seq_id=deps.context_window_start
     )
 
     # small context guard/avoid div by 0
@@ -50,7 +50,7 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
 
     # TODO (low priority): we may eventually want a more sophisticated way to estiamte tokens, and some sort of 
     # check and loop on resulting in-context message token count to be more accurate if we find it necessary
-    sys_tokens = len(deps.compiled_system_prompt or "") / 4
+    sys_tokens = len(deps.compiled_system_prompt) / 4
     msg_tokens = total_tokens - sys_tokens
     avg_tokens_per_msg = msg_tokens / len(messages)
     if avg_tokens_per_msg <= 0:
@@ -76,6 +76,6 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     if n_msg_to_keep >= len(messages):
         return
 
-    deps.context_window_start = messages[-n_msg_to_keep].timestamp
+    deps.context_window_start = messages[-n_msg_to_keep].seq_id
     await compile_system_prompt(deps)
     await deps.commit_changes_refresh_agent_record()

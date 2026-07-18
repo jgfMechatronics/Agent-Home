@@ -7,7 +7,6 @@ from datetime import datetime
 
 import pytest
 import pytest_asyncio
-import asyncio
 from unittest.mock import patch
 from pydantic_ai.messages import (
     ModelMessage,
@@ -30,6 +29,7 @@ from messages.messages import deserialize_messages, load_messages, persist_messa
 # Plain helpers (not fixtures) — import directly for use in test bodies
 from conftest import (
     SAMPLE_AGENT_CONFIG,
+    make_alternating_messages,
     make_deps,
     make_request,
     make_response,
@@ -40,11 +40,7 @@ from conftest import (
 
 def make_messages_batch(n: int) -> list[ModelMessage]:
     """Generate n alternating request/response pairs for performance tests."""
-    messages: list[ModelMessage] = []
-    for i in range(n):
-        messages.append(make_request(f"msg {i}"))
-        messages.append(make_response(f"resp {i}"))
-    return messages
+    return make_alternating_messages(n * 2)
 
 
 # ---------------------------------------------------------------------------
@@ -52,11 +48,11 @@ def make_messages_batch(n: int) -> list[ModelMessage]:
 # ---------------------------------------------------------------------------
 
 async def fetch_all_records(session: AsyncSession, agent_id: str) -> list[MessageRecord]:
-    """Load all MessageRecords for an agent, ordered by timestamp."""
+    """Load all MessageRecords for an agent, in seq_id order."""
     result = await session.execute(
         select(MessageRecord)
         .where(MessageRecord.agent_id == agent_id)
-        .order_by(MessageRecord.timestamp)
+        .order_by(MessageRecord.seq_id)
     )
     return list(result.scalars().all())
 
@@ -163,6 +159,27 @@ class TestPersistMessages(DBTestBase):
         records = await self._persist_and_fetch([])
         assert records == []
 
+    @pytest.mark.parametrize("existing_count,new_count", [
+        (0, 1),   # empty DB, single message → seq_id = 0
+        (0, 3),   # empty DB, multiple messages → seq_ids = 0, 1, 2
+        (1, 2),   # one existing (seq_id=0), add two → seq_ids = 1, 2
+        (5, 3),   # five existing (seq_ids 0-4), add three → seq_ids = 5, 6, 7
+    ])
+    async def test_assigns_sequential_seq_ids(self, existing_count: int, new_count: int):
+        """persist_messages assigns sequential seq_ids starting from MAX(existing) + 1."""
+        # will be no op for the 0 case, helper returns empty list
+        await persist_messages(self.deps, make_alternating_messages(existing_count, "existing"))
+        await persist_messages(self.deps, make_alternating_messages(new_count, "new"))
+
+        # Load all and verify seq_ids
+        all_records = await load_messages(self.session, self.agent.id)
+        assert len(all_records) == existing_count + new_count
+
+        # All records should have sequential seq_ids starting from 0
+        expected_seq_ids = list(range(existing_count + new_count))
+        actual_seq_ids = [r.seq_id for r in all_records]
+        assert actual_seq_ids == expected_seq_ids
+
     @pytest.mark.parametrize("pair_fn", [make_tool_pair, make_retry_pair])
     async def test_persists_tool_call_pair(self, pair_fn):
         """A matched tool-call / tool-response pair should survive persist unchanged,
@@ -179,9 +196,8 @@ class TestPersistMessages(DBTestBase):
 
     async def test_records_isolated_per_agent(self):
         """
-        Messages persisted for one agent must not affect another agent's records,
-        and _get_last_timestamp must not cross agent boundaries for ordering.
-        Here we also test that new messages for a given agent do not affect same agent's old msgs
+        Messages persisted for one agent must not affect another agent's records.
+        Also verifies that new messages for a given agent do not affect that agent's old msgs.
         """
         other_agent = AgentRecord(
             name="other-agent",
@@ -233,6 +249,7 @@ class TestPersistMessages(DBTestBase):
         error record, with a summary warning appended at the end of the chain."""
         records = await self._persist_and_fetch([orphan_msg])
         assert len(records) == 2  # positional error + summary warning
+        assert [r.seq_id for r in records] == [0, 1]  # sequential including warning
 
         # Original orphaned message was dropped — no record should contain the orphaned part type
         for record in records:
@@ -297,6 +314,7 @@ class TestPersistMessages(DBTestBase):
 
         records = await fetch_all_records(self.session, self.agent.id)
         assert len(records) == 4  # good, positional error, good2, summary warning
+        assert [r.seq_id for r in records] == [0, 1, 2, 3]  # sequential including warning
 
         error_text = "[persist_messages serialization error]: ValueError: sim failure"
 
@@ -316,42 +334,21 @@ class TestPersistMessages(DBTestBase):
         # Exception logged
         assert any("sim failure" in r.message for r in caplog.records)
 
-    async def test_timestamp_ordering_preserved_when_new_messages_are_older(self, caplog):
-        """If a new message's timestamp is older than the last DB record, it should be
-        bumped forward to preserve chronological order, and a warning should be logged."""
-        # Persist a first message normally
-        await persist_messages(self.deps, [make_request("first")])
-
-        # Force that record's timestamp into the far future
-        records = await fetch_all_records(self.session, self.agent.id)
-        far_future = datetime(9999, 12, 31, 23, 59, 58)
-        records[0].timestamp = far_future
-        await self.session.flush()
-
-        # Persist a second message — its natural timestamp will be far older
-        with caplog.at_level(logging.WARNING):
-            await persist_messages(self.deps, [make_response("second")])
-
-        records = await fetch_all_records(self.session, self.agent.id)
-        assert len(records) == 2
-        assert records[1].timestamp > records[0].timestamp
-        assert any("timestamp ordering violation" in r.message for r in caplog.records)
-
-
 # ---------------------------------------------------------------------------
 # TestLoadMessages
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 class TestLoadMessages(DBTestBase):
-    """Tests for load_messages(session, agent_id, start_timestamp=None).
+    """Tests for load_messages(session, agent_id, start_seq_id=0).
 
     Pre-seeds DB via persist_messages to ensure realistic records.
     """
 
-    async def test_returns_all_messages_when_no_start_timestamp(self):
+    async def test_returns_all_messages_by_default(self):
         messages = [make_request(), make_response(), make_request(), make_response()]
         await persist_messages(self.deps, messages)
+
         records = await load_messages(self.session, self.agent.id)
         assert deserialize_messages(records) == messages
 
@@ -359,32 +356,26 @@ class TestLoadMessages(DBTestBase):
         records = await load_messages(self.session, self.agent.id)
         assert records == []
 
-    async def test_start_timestamp_filters_inclusive(self):
-        early = [make_request("early"), make_response("early reply")]
-        await persist_messages(self.deps, early)
+    async def test_start_seq_id_filters_inclusive(self):
+        first = [make_request("first"), make_response("first reply")]
+        second = [make_request("second"), make_response("second reply")]
+        await persist_messages(self.deps, first)
+        await persist_messages(self.deps, second)
 
-        # Record the cutoff timestamp before persisting the second batch
-        cutoff_record = (await fetch_all_records(self.session, self.agent.id))[-1]
-        cutoff = cutoff_record.timestamp
-        await asyncio.sleep(0.1) # ensure timestamp unique from early
-        late = [make_request("late"), make_response("late reply")]
-        await persist_messages(self.deps, late)
+        all_records = await load_messages(self.session, self.agent.id)
+        cutoff_seq_id = all_records[1].seq_id  # trim to second record (first reply) and on
 
-        records = await load_messages(self.session, self.agent.id, start_timestamp=cutoff)
+        records = await load_messages(self.session, self.agent.id, start_seq_id=cutoff_seq_id)
         # Should include the cutoff record and everything after (inclusive)
-        assert deserialize_messages(records) == [early[1]] + late
+        assert deserialize_messages(records) == [first[1]] + second
 
-    async def test_results_in_chronological_order(self):
-        msg1 = make_request("first")
-        await asyncio.sleep(0.005) # Ensure distinct timestamps
-        msg2 = make_response("second")
-        await asyncio.sleep(0.005)
-        msg3 = make_request("third")
-        messages = [msg1, msg2, msg3]
+    async def test_results_in_seq_id_order(self):
+        messages = [make_request("first"), make_response("second"), make_request("third")]
         await persist_messages(self.deps, messages)
+
         records = await load_messages(self.session, self.agent.id)
-        timestamps = [r.timestamp for r in records]
-        assert timestamps == sorted(timestamps)
+        seq_ids = [r.seq_id for r in records]
+        assert seq_ids == sorted(seq_ids)
 
     async def test_returns_only_records_for_given_agent(self):
         """Records from other agents must not appear in results."""
@@ -410,11 +401,11 @@ class TestLoadMessages(DBTestBase):
         assert len(records) == 1
         assert isinstance(records[0], MessageRecord)
 
-    async def test_start_timestamp_ahead_of_all_messages_returns_empty(self):
-        """When start_timestamp is later than every message, the result is empty."""
+    async def test_start_seq_id_ahead_of_all_returns_empty(self):
+        """When start_seq_id is larger than every message's seq_id, the result is empty."""
         await persist_messages(self.deps, [make_request(), make_response()])
-        far_future = datetime(9999, 12, 31, 23, 59, 59)
-        records = await load_messages(self.session, self.agent.id, start_timestamp=far_future)
+
+        records = await load_messages(self.session, self.agent.id, start_seq_id=999999)
         assert records == []
 
 
@@ -494,6 +485,7 @@ class TestRoundTrip(DBTestBase):
     async def test_request_response_round_trip(self):
         original = [make_request("round-trip me"), make_response("got it")]
         await persist_messages(self.deps, original)
+
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)
 
@@ -502,6 +494,7 @@ class TestRoundTrip(DBTestBase):
     async def test_tool_pair_round_trip(self):
         response_with_call, request_with_return = make_tool_pair()
         await persist_messages(self.deps, [response_with_call, request_with_return])
+
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)
 

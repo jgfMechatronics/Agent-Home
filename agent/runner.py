@@ -29,7 +29,7 @@ async def run_stateful_agent(agent: Agent,
     TODO: This function is currently tested through the handle_message route. We should consider moving the bulk of that
     testing into unit testing of this function
     """
-    records = await load_messages(deps.session, deps.agent_id, start_timestamp=deps.context_window_start)
+    records = await load_messages(deps.session, deps.agent_id, start_seq_id=deps.context_window_start)
     message_history = deserialize_messages(records)
 
     with capture_run_messages() as messages:

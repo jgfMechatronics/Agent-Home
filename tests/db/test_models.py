@@ -37,7 +37,7 @@ def memory_block_record(agent_record: AgentRecord) -> MemoryBlockRecord:
 @pytest.fixture
 def message_record(agent_record: AgentRecord) -> MessageRecord:
     """An unpersisted MessageRecord for use in tests that need an existing message."""
-    return MessageRecord(agent_id=agent_record.id, timestamp=datetime(2026, 1, 1, 12, 0, 0), **PARTIAL_MESSAGE_FIELDS)
+    return MessageRecord(agent_id=agent_record.id, seq_id=0, timestamp=datetime(2026, 1, 1, 12, 0, 0), **PARTIAL_MESSAGE_FIELDS)
 
 
 async def assert_round_trips(session: AsyncSession, record: Any, expected_fields: dict):
@@ -87,7 +87,7 @@ async def assert_updated_at_bumps_on_modify(session: AsyncSession, record: Any, 
 @pytest.mark.parametrize("make_record", [
     lambda agent_id: AgentRecord(name="uuid-test", agent_config=SAMPLE_AGENT_CONFIG, system_instructions=""),
     lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="uuid-test", content="", **PARTIAL_MEMORY_BLOCK_FIELDS),
-    lambda agent_id: MessageRecord(agent_id=agent_id, timestamp=datetime.now(timezone.utc), **PARTIAL_MESSAGE_FIELDS),
+    lambda agent_id: MessageRecord(agent_id=agent_id, seq_id=0, timestamp=datetime.now(timezone.utc), **PARTIAL_MESSAGE_FIELDS),
 ])
 async def test_id_auto_generated_as_uuid_string(session: AsyncSession, agent_record: AgentRecord, make_record: Any):
     """All models auto-generate a UUID string id on insert — not required at construction."""
@@ -112,7 +112,7 @@ async def test_agent_record_stores_all_fields(session: AsyncSession):
         "system_instructions": "Be helpful.",
         "compiled_system_prompt": "<compiled>Be helpful.</compiled>",
         "sys_prompt_compiled_at": datetime(2026, 1, 1, 12, 0, 0),
-        "context_window_start": datetime(2026, 1, 1, 13, 0, 0),
+        "context_window_start": 42,
     }
     await assert_round_trips(session, AgentRecord(**fields), fields)
 
@@ -141,7 +141,7 @@ async def test_agent_record_defaults(session: AsyncSession):
     session.add(agent)
     await session.flush()
     await session.refresh(agent)
-    assert agent.context_window_start is None
+    assert agent.context_window_start == 0
     assert agent.sys_prompt_compiled_at is None
     assert agent.system_instructions == ""
 
@@ -200,6 +200,7 @@ async def test_message_record_stores_all_fields(session: AsyncSession, message_r
     message_record.total_tokens = 150  # use a non-null value to verify integer persistence
     fields = {
         "agent_id": message_record.agent_id,
+        "seq_id": message_record.seq_id,
         "type": message_record.type,
         "content": message_record.content,
         "total_tokens": message_record.total_tokens,

@@ -31,7 +31,7 @@ class TestCreateAgentRecord:
         assert record_to_check.name == "test-agent"
         assert record_to_check.system_instructions == "You are helpful."
         assert record_to_check.agent_config == SAMPLE_AGENT_CONFIG
-        assert record_to_check.context_window_start is None
+        assert record_to_check.context_window_start == 0
         assert await load_messages(self.session, self.record.id) == []
         assert record_to_check.compiled_system_prompt is not None
         assert "You are helpful." in record_to_check.compiled_system_prompt

@@ -2,7 +2,7 @@
 Message persistence and retrieval
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     UserPromptPart,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentDeps
@@ -27,17 +27,6 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-async def _get_last_timestamp(session: AsyncSession, agent_id: str) -> datetime | None:
-    """Return the timestamp of the most recent message for this agent, or None."""
-    result = await session.execute(
-        select(MessageRecord.timestamp)
-        .where(MessageRecord.agent_id == agent_id)
-        .order_by(MessageRecord.timestamp.desc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
-
 
 def _make_orphan_replacement(
     msg: ModelMessage, part_type: type
@@ -145,21 +134,6 @@ def _message_timestamp(msg: ModelMessage) -> datetime:
     return ts.replace(tzinfo=None) if ts.tzinfo is not None else ts
 
 
-def _bump_timestamp_if_needed(ts: datetime, last_timestamp: datetime | None, agent_id: str) -> datetime:
-    """Return ts, bumped forward by 1µs if it is not strictly newer than last_timestamp.
-
-    Logs a warning if a bump is needed — indicates a timekeeping problem upstream.
-    """
-    if last_timestamp is not None and ts <= last_timestamp:
-        log.warning(
-            "persist_messages: timestamp ordering violation for agent %s "
-            "(msg ts=%s <= last_timestamp=%s); bumping forward by 1µs",
-            agent_id, ts, last_timestamp,
-        )
-        return last_timestamp + timedelta(microseconds=1)
-    return ts
-
-
 def _handle_serialization_error(
     msg: ModelMessage,
     e: Exception,
@@ -183,11 +157,33 @@ def _handle_serialization_error(
     return content, "ModelResponse", error_msg, error_to_append
 
 
+async def _persist_error_warnings(
+    deps: AgentDeps,
+    errors: list[tuple[datetime | None, str]],
+) -> None:
+    """Build and persist error warning messages via recursive call to persist_messages."""
+    warning_messages = [
+        ModelResponse(parts=[TextPart(content=(
+            f"WARNING: A problem was encountered while persisting messages from the last turn: "
+            f"'{error_text}'. A warning was injected in place of the problematic message, "
+            f"problematic message timestamp was {original_timestamp}"
+        ))])
+        for original_timestamp, error_text in errors
+    ]
+    await deps.session.flush()  # Ensure main messages visible to recursive call's MAX query
+    await persist_messages(deps, warning_messages, _is_error_pass=True)
+
 # ---------------------------------------------------------------------------
 # Functions
 # ---------------------------------------------------------------------------
 
-async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int | None:
+
+async def persist_messages(
+    deps: AgentDeps,
+    messages: list[ModelMessage],
+    *,
+    _is_error_pass: bool = False,
+) -> int | None:
     """Save each ModelMessage as its own row; set total_tokens from ModelResponse.usage where available.
 
     total_tokens is extracted from each ModelResponse's usage (input + output tokens for that request).
@@ -200,17 +196,21 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
     - Serialization failures inject an error ModelResponse in place of the bad message.
     - Both orphan replacements and serialization failures append a summary warning at the END of
       the chain (referencing the original message timestamp) so errors aren't buried in long histories.
-    - Timestamps are validated against the last DB record; out-of-order timestamps are bumped
-      forward by 1 microsecond and a warning is logged.
     """
     if not messages:
         return None
 
+    # Get next seq_id: MAX(seq_id) + 1, or 0 if no messages exist
+    result = await deps.session.execute(
+        select(func.max(MessageRecord.seq_id)).where(MessageRecord.agent_id == deps.agent_id)
+    )
+    max_seq_id = result.scalar()
+    next_seq_id = max_seq_id + 1 if max_seq_id is not None else 0
+
     messages, errors = _replace_orphaned_tool_messages(messages)
-    last_timestamp = await _get_last_timestamp(deps.session, deps.agent_id)
     last_total_tokens: int | None = None
 
-    for msg in messages:
+    for i, msg in enumerate(messages):
         try:
             # NOTE: The per msg serialization allows us to eliminate specific messages which have serialization failures,
             # but likely costs us some performance. This is an optimization opportunity: could have happy path try serializing the whole
@@ -221,9 +221,6 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
             content, msg_type, msg, error_to_append = _handle_serialization_error(msg, e, deps.agent_id)
             errors.append(error_to_append)
 
-        curr_timestamp = _bump_timestamp_if_needed(_message_timestamp(msg), last_timestamp, deps.agent_id)
-        last_timestamp = curr_timestamp
-
         msg_total_tokens = msg.usage.total_tokens if isinstance(msg, ModelResponse) and msg.usage.has_values() else None
         if msg_total_tokens is not None:
             last_total_tokens = msg_total_tokens
@@ -232,50 +229,38 @@ async def persist_messages(deps: AgentDeps, messages: list[ModelMessage]) -> int
             type=msg_type,
             content=content,
             total_tokens=msg_total_tokens,
-            timestamp=curr_timestamp,
+            seq_id=next_seq_id + i,
+            timestamp=_message_timestamp(msg),
         )
         deps.session.add(record)
 
-    # Append notification of any errors that were encountered to the end of the message string
-    for original_timestamp, error_text in errors:
-        warning = (
-            f"WARNING: A problem was encountered while persisting messages from the last turn: "
-            f"'{error_text}'. A warning was injected in place of the problematic message, "
-            f"problematic message timestamp was {original_timestamp}"
-        )
-        warning_msg = ModelResponse(parts=[TextPart(content=warning)])
-        warning_content = _dump_msg_json(warning_msg)
-        warn_ts = _bump_timestamp_if_needed(_message_timestamp(warning_msg), last_timestamp, deps.agent_id)
-        last_timestamp = warn_ts
-        deps.session.add(MessageRecord(
-            agent_id=deps.agent_id,
-            type="ModelResponse",
-            content=warning_content,
-            total_tokens=None,
-            timestamp=warn_ts,
-        ))
+    # Persist error warnings via recursion (errors are simple TextPart messages, won't fail)
+    if errors:
+        if _is_error_pass:
+            raise RuntimeError("Persistence errors during attempt to persist error notifications")
+        await _persist_error_warnings(deps, errors)
+    else:
+        await deps.session.flush()
 
-    await deps.session.flush()
     return last_total_tokens
 
 
 async def load_messages(
     session: AsyncSession,
     agent_id: str,
-    start_timestamp: datetime | None = None,
+    start_seq_id: int = 0,
 ) -> list[MessageRecord]:
-    """Load messages as ORM records in chronological order.
+    """Load messages as ORM records in seq_id order.
 
-    If start_timestamp is provided, returns only messages where timestamp >= start_timestamp.
-    Otherwise returns the full conversation history.
+    Returns messages where seq_id >= start_seq_id. Defaults to 0, which returns
+    the full conversation history (all seq_ids are non-negative).
     """
     query = (
         select(MessageRecord)
         .where(MessageRecord.agent_id == agent_id)
-        .order_by(MessageRecord.timestamp)
+        .where(MessageRecord.seq_id >= start_seq_id)
+        .order_by(MessageRecord.seq_id)
     )
-    if start_timestamp is not None:
-        query = query.where(MessageRecord.timestamp >= start_timestamp)
 
     result = await session.execute(query)
     return list(result.scalars().all())
