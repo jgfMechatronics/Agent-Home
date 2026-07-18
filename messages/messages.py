@@ -157,10 +157,6 @@ def _handle_serialization_error(
     return content, "ModelResponse", error_msg, error_to_append
 
 
-# ---------------------------------------------------------------------------
-# Functions
-# ---------------------------------------------------------------------------
-
 async def _persist_error_warnings(
     deps: AgentDeps,
     errors: list[tuple[datetime | None, str]],
@@ -176,6 +172,10 @@ async def _persist_error_warnings(
     ]
     await deps.session.flush()  # Ensure main messages visible to recursive call's MAX query
     await persist_messages(deps, warning_messages, _is_error_pass=True)
+
+# ---------------------------------------------------------------------------
+# Functions
+# ---------------------------------------------------------------------------
 
 
 async def persist_messages(
@@ -238,7 +238,7 @@ async def persist_messages(
     if errors:
         if _is_error_pass:
             raise RuntimeError("Persistence errors during attempt to persist error notifications")
-        await _persist_error_warnings(deps, errors)
+        await _persist_error_warnings(deps, errors) # recursive
     else:
         await deps.session.flush()
 
