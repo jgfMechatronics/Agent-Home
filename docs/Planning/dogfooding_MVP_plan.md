@@ -40,6 +40,7 @@ This document outlines what key features we are still missing leading up to dogf
 - [xr] Gap 3: Conversation History Portability (minimal spike only)
 - [xr] Gap 8: Timestamp-as-Index Ordering
 - [ ] Gap 4: Full Context Reconstruction for ModelResponse
+- [ ] Gap 10: Enable mid run compaction
 - [ ] Gap 9: Compaction Warnings
 - [ ] Gap 7: .AF Ingestion
 
