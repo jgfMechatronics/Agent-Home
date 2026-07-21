@@ -36,8 +36,10 @@ class ToolSchemaSnapshot(Base):
 # New fields on MessageRecord:
 system_prompt_hash: Mapped[str] = mapped_column(ForeignKey("system_prompt_snapshots.id"))
 tool_schema_hash: Mapped[str] = mapped_column(ForeignKey("tool_schema_snapshots.id"))
-context_window_start_msg_id: Mapped[str | None]  # UUID of first in-context message
+context_window_start_msg_id: Mapped[str]  # UUID of first in-context message (NOT nullable)
 ```
+
+**Note on `context_window_start_msg_id`:** NOT nullable. The first message in an agent's history points to itself. This avoids carrying nullability forever just for that edge case.
 
 ## Key Design Decisions
 
@@ -96,18 +98,21 @@ SQLite doesn't compress like Postgres TOAST. Content-addressable storage is esse
 
 ## Implementation Order (Top-Down)
 
-1. **Reconstructor** — Write first with mock/stubbed data. This is what consumes the data, so it defines the interface.
-2. **DB models** — Add new tables and MessageRecord fields
-3. **Persistence logic** — Add hashing and upsert logic to runner.py / persist_messages
+1. **DB models** — Add new tables and MessageRecord fields (Sonnet)
+2. **Reconstructor + tests** — TDD against the models. Defines the contract. (Opus)
+3. **Persistence logic** — Add hashing and upsert logic to runner.py / persist_messages (Sonnet)
 
 ## Reconstruction Algorithm
 
-Given a MessageRecord:
-1. Look up `system_prompt_hash` → get compiled system prompt from SystemPromptSnapshot
-2. Look up `tool_schema_hash` → get tool schemas from ToolSchemaSnapshot
-3. Look up `context_window_start_msg_id` → get UUID, find that message's seq_id
-4. Query messages from context_window_start seq_id through target message seq_id
-5. Assemble: system prompt + tools + message history = full context
+Given a message_id (UUID):
+1. Fetch target MessageRecord by UUID
+2. Look up `system_prompt_hash` → get compiled system prompt from SystemPromptSnapshot
+3. Look up `tool_schema_hash` → get tool schemas from ToolSchemaSnapshot
+4. Look up `context_window_start_msg_id` → fetch that message → get its seq_id
+5. Query messages where `seq_id >= start_seq_id AND seq_id < target.seq_id` (exclusive of target)
+6. Return: `ReconstructedContext(system_prompt, tool_schemas, messages, target_message, agent_id)`
+
+**Edge case:** If target IS the context_window_start (target.id == context_window_start_msg_id), then messages = [] (empty list). Valid, not an error.
 
 ## Open Items
 
