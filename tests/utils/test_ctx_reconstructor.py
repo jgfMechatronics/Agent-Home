@@ -154,3 +154,17 @@ class TestReconstructContext:
         
         # Compare message IDs (order matters)
         assert [m.id for m in result.messages] == [m.id for m in expected.messages]
+
+    def test_handles_multi_tenant(self):
+        # Throw a few agents worth of snapshots and message history in there
+        assert False
+    
+    def test_extracts_correct_slice_of_msg_history(self):
+        # Put messages before and after ctx start + target to confirm it grabs a slice from the middle correctly
+        assert False
+
+    # The above 3 tests can involve varying the setup conditions with the same expected output, and can be commonized as such.
+    # They do NOT need to be implemented exactly as laid out (3 seperate tests)
+
+    def test_ctx_window_start_is_target_msg(self):
+        assert False
