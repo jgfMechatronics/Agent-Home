@@ -60,46 +60,46 @@ async def reconstruct_context(session: AsyncSession, target_message_id: str) -> 
         ValueError: If target_message_id not found
     """
     # 1. Fetch target message
-    result = await session.execute(
+    target = await session.execute(
         select(MessageRecord).where(MessageRecord.id == target_message_id)
     )
-    target = result.scalar_one_or_none()
+    target = target.scalar_one_or_none()
     if target is None:
         raise ValueError(f"Message not found: {target_message_id}")
     
     # 2. Fetch system prompt snapshot
-    result = await session.execute(
+    sys_snapshot = await session.execute(
         select(SystemPromptSnapshot).where(
             SystemPromptSnapshot.id == target.system_prompt_hash
         )
     )
-    sys_snapshot = result.scalar_one()
+    sys_snapshot = sys_snapshot.scalar_one()
     
     # 3. Fetch tool schema snapshot
-    result = await session.execute(
+    tool_snapshot = await session.execute(
         select(ToolSchemaSnapshot).where(
             ToolSchemaSnapshot.id == target.tool_schema_hash
         )
     )
-    tool_snapshot = result.scalar_one()
+    tool_snapshot = tool_snapshot.scalar_one()
     
     # 4. Fetch context_window_start message to get its seq_id
-    result = await session.execute(
+    context_start = await session.execute(
         select(MessageRecord).where(
             MessageRecord.id == target.context_window_start_msg_id
         )
     )
-    context_start = result.scalar_one()
+    context_start = context_start.scalar_one()
     
     # 5. Fetch all messages from context_window_start (inclusive) to target (exclusive)
-    result = await session.execute(
+    messages = await session.execute(
         select(MessageRecord)
         .where(MessageRecord.agent_id == target.agent_id)
         .where(MessageRecord.seq_id >= context_start.seq_id)
         .where(MessageRecord.seq_id < target.seq_id)
         .order_by(MessageRecord.seq_id)
     )
-    messages = list(result.scalars().all())
+    messages = list(messages.scalars().all())
     
     return ReconstructedContext(
         system_prompt=sys_snapshot.content,
