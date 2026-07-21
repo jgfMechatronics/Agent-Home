@@ -343,6 +343,7 @@ class TestLoadMessages(DBTestBase):
     """Tests for load_messages(session, agent_id, start_seq_id=0).
 
     Pre-seeds DB via persist_messages to ensure realistic records.
+    TODO: Update with make_alternating fixture or whatever it was called
     """
 
     async def test_returns_all_messages_by_default(self):
@@ -368,6 +369,20 @@ class TestLoadMessages(DBTestBase):
         records = await load_messages(self.session, self.agent.id, start_seq_id=cutoff_seq_id)
         # Should include the cutoff record and everything after (inclusive)
         assert deserialize_messages(records) == [first[1]] + second
+
+    async def test_end_seq_id_filters_exclusive(self):
+        """end_seq_id excludes messages at or after that seq_id."""
+        messages = [make_request("0"), make_response("1"), make_request("2"), make_response("3")]
+        await persist_messages(self.deps, messages)
+
+        all_records = await load_messages(self.session, self.agent.id)
+        # Get messages 1 and 2 (exclusive of 0 and 3)
+        records = await load_messages(
+            self.session, self.agent.id,
+            start_seq_id=all_records[1].seq_id,
+            end_seq_id=all_records[3].seq_id,
+        )
+        assert deserialize_messages(records) == messages[1:3]
 
     async def test_results_in_seq_id_order(self):
         messages = [make_request("first"), make_response("second"), make_request("third")]

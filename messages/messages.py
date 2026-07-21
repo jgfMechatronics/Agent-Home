@@ -250,11 +250,12 @@ async def load_messages(
     session: AsyncSession,
     agent_id: str,
     start_seq_id: int = 0,
+    end_seq_id: int | None = None,
 ) -> list[MessageRecord]:
     """Load messages as ORM records in seq_id order.
 
-    Returns messages where seq_id >= start_seq_id. Defaults to 0, which returns
-    the full conversation history (all seq_ids are non-negative).
+    Returns messages where seq_id >= start_seq_id (and < end_seq_id if provided).
+    Defaults to 0, which returns the full conversation history (all seq_ids are non-negative).
     """
     query = (
         select(MessageRecord)
@@ -262,6 +263,8 @@ async def load_messages(
         .where(MessageRecord.seq_id >= start_seq_id)
         .order_by(MessageRecord.seq_id)
     )
+    if end_seq_id is not None:
+        query = query.where(MessageRecord.seq_id < end_seq_id)
 
     result = await session.execute(query)
     return list(result.scalars().all())

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import MessageRecord, SystemPromptSnapshot, ToolSchemaSnapshot
+from messages.messages import load_messages
 
 
 @dataclass
@@ -92,14 +93,12 @@ async def reconstruct_context(session: AsyncSession, target_message_id: str) -> 
     context_start = context_start.scalar_one()
     
     # 5. Fetch all messages from context_window_start (inclusive) to target (exclusive)
-    messages = await session.execute(
-        select(MessageRecord)
-        .where(MessageRecord.agent_id == target.agent_id)
-        .where(MessageRecord.seq_id >= context_start.seq_id)
-        .where(MessageRecord.seq_id < target.seq_id)
-        .order_by(MessageRecord.seq_id)
+    messages = await load_messages(
+        session,
+        target.agent_id,
+        start_seq_id=context_start.seq_id,
+        end_seq_id=target.seq_id,
     )
-    messages = list(messages.scalars().all())
     
     return ReconstructedContext(
         system_prompt=sys_snapshot.content,
