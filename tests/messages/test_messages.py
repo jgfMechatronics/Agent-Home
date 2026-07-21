@@ -18,12 +18,13 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentDeps
-from db.models import AgentRecord, MessageRecord, utcnow
+from db.models import AgentRecord, MessageRecord, SystemPromptSnapshot, ToolSchemaSnapshot, utcnow
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
@@ -38,14 +39,27 @@ from conftest import (
 )
 
 
-def make_messages_batch(n: int) -> list[ModelMessage]:
-    """Generate n alternating request/response pairs for performance tests."""
-    return make_alternating_messages(n * 2)
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+SAMPLE_TOOL_SCHEMAS = [
+    ToolDefinition(
+        name="memory_replace",
+        description="Replace text in a memory block.",
+        parameters_json_schema={
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "old_string": {"type": "string"},
+                "new_string": {"type": "string"},
+            },
+            "required": ["label", "old_string", "new_string"],
+            "additionalProperties": False,
+        },
+    )
+]
+
 
 async def fetch_all_records(session: AsyncSession, agent_id: str) -> list[MessageRecord]:
     """Load all MessageRecords for an agent, in seq_id order."""
@@ -55,6 +69,11 @@ async def fetch_all_records(session: AsyncSession, agent_id: str) -> list[Messag
         .order_by(MessageRecord.seq_id)
     )
     return list(result.scalars().all())
+
+
+def make_messages_batch(n: int) -> list[ModelMessage]:
+    """Generate n alternating request/response pairs for performance tests."""
+    return make_alternating_messages(n * 2)
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +88,11 @@ class DBTestBase:
         self.session = session
         self.agent = agent_record
         self.deps = make_deps(session, agent_record)
+
+    async def _persist_and_fetch(self, messages, tool_schemas=None) -> list[MessageRecord]:
+        schemas = tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS
+        await persist_messages(self.deps, messages, schemas)
+        return await fetch_all_records(self.session, self.agent.id)
 
 
 @pytest.mark.asyncio
@@ -85,10 +109,6 @@ class TestPersistMessages(DBTestBase):
             parts=[TextPart(content="with usage")],
             usage=RequestUsage(input_tokens=30, output_tokens=12),
         )
-
-    async def _persist_and_fetch(self, messages) -> list[MessageRecord]:
-        await persist_messages(self.deps, messages)
-        return await fetch_all_records(self.session, self.agent.id)
 
     async def test_creates_one_record_per_message(self):
         records = await self._persist_and_fetch([make_request(), make_response()])
@@ -333,6 +353,41 @@ class TestPersistMessages(DBTestBase):
 
         # Exception logged
         assert any("sim failure" in r.message for r in caplog.records)
+
+# ---------------------------------------------------------------------------
+# TestPersistMessagesSnapshots
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestPersistMessagesSnapshots(DBTestBase):
+    """Tests for the snapshot and context-capture fields added to persist_messages.
+
+    Verifies that system prompt snapshots, tool schema snapshots, and
+    context_window_start_msg_id are stored correctly on each persisted MessageRecord.
+    """
+
+    async def test_fresh_snapshots_creates_snapshot_rows(self):
+        """First persist with unseen content: creates one SystemPromptSnapshot and one
+        ToolSchemaSnapshot row, and all persisted records reference them correctly."""
+        self.agent.compiled_system_prompt = "You are a helpful test assistant."
+        messages = [make_request("hello"), make_response("world")]
+
+        records = await self._persist_and_fetch(messages)
+
+        sys_result = await self.session.execute(select(SystemPromptSnapshot))
+        sys_snapshots = sys_result.scalars().all()
+        assert len(sys_snapshots) == 1
+        assert sys_snapshots[0].content == self.deps.compiled_system_prompt
+
+        tool_result = await self.session.execute(select(ToolSchemaSnapshot))
+        tool_snapshots = tool_result.scalars().all()
+        assert len(tool_snapshots) == 1
+
+        assert len(records) == 2
+        for record in records:
+            assert record.system_prompt_hash == sys_snapshots[0].id
+            assert record.tool_schema_hash == tool_snapshots[0].id
+
 
 # ---------------------------------------------------------------------------
 # TestLoadMessages

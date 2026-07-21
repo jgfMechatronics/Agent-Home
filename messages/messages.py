@@ -1,7 +1,11 @@
 """
 Message persistence and retrieval
 """
+import dataclasses
+import hashlib
+import json
 import logging
+import uuid
 from datetime import datetime
 
 from pydantic_ai.messages import (
@@ -15,11 +19,13 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     UserPromptPart,
 )
+from pydantic_ai.tools import ToolDefinition
 from sqlalchemy import func, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentDeps
-from db.models import MessageRecord, utcnow
+from db.models import MessageRecord, SystemPromptSnapshot, ToolSchemaSnapshot, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -157,9 +163,55 @@ def _handle_serialization_error(
     return content, "ModelResponse", error_msg, error_to_append
 
 
+def _compute_sha256(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+async def _ensure_content_snapshotted(
+    session: AsyncSession,
+    model_type: type[SystemPromptSnapshot | ToolSchemaSnapshot],
+    content: str,
+) -> str:
+    """Hash content, insert a snapshot row of the given type if not already present, return the hash id."""
+    hash_id = _compute_sha256(content)
+    stmt = sqlite_insert(model_type).values(
+        id=hash_id,
+        content=content,
+        created_at=utcnow(),
+    ).on_conflict_do_nothing(index_elements=["id"])
+    await session.execute(stmt)
+    return hash_id
+
+
+async def _ensure_system_prompt_snapshotted(session: AsyncSession, sys_prompt: str) -> str:
+    """Insert a SystemPromptSnapshot for the given compiled system prompt (if not already present). Returns the hash id."""
+    return await _ensure_content_snapshotted(session, SystemPromptSnapshot, sys_prompt)
+
+
+async def _ensure_tool_schema_snapshotted(session: AsyncSession, schemas: list[ToolDefinition]) -> str:
+    """Insert a ToolSchemaSnapshot for the given tool definitions (if not already present). Returns the hash id."""
+    content = json.dumps([dataclasses.asdict(s) for s in schemas], separators=(",", ":"))
+    return await _ensure_content_snapshotted(session, ToolSchemaSnapshot, content)
+
+
+async def _get_context_window_start_msg_id(
+    session: AsyncSession,
+    agent_id: str,
+    start_seq_id: int,
+) -> str | None:
+    """Return the UUID of the MessageRecord at start_seq_id, or None if it doesn't exist yet."""
+    result = await session.execute(
+        select(MessageRecord.id)
+        .where(MessageRecord.agent_id == agent_id)
+        .where(MessageRecord.seq_id == start_seq_id)
+    )
+    return result.scalar()
+
+
 async def _persist_error_warnings(
     deps: AgentDeps,
     errors: list[tuple[datetime | None, str]],
+    tool_schemas: list[ToolDefinition],
 ) -> None:
     """Build and persist error warning messages via recursive call to persist_messages."""
     warning_messages = [
@@ -171,7 +223,8 @@ async def _persist_error_warnings(
         for original_timestamp, error_text in errors
     ]
     await deps.session.flush()  # Ensure main messages visible to recursive call's MAX query
-    await persist_messages(deps, warning_messages, _is_error_pass=True)
+    await persist_messages(deps, warning_messages, tool_schemas, _is_error_pass=True)
+
 
 # ---------------------------------------------------------------------------
 # Functions
@@ -180,6 +233,7 @@ async def _persist_error_warnings(
 async def persist_messages(
     deps: AgentDeps,
     messages: list[ModelMessage],
+    tool_schemas: list[ToolDefinition],
     *,
     _is_error_pass: bool = False,
 ) -> int | None:
@@ -208,6 +262,15 @@ async def persist_messages(
     max_seq_id = result.scalar()
     next_seq_id = max_seq_id + 1 if max_seq_id is not None else 0
 
+    # Snapshot hashes — computed once per call; **assumed** stable across the batch
+    system_prompt_hash = await _ensure_system_prompt_snapshotted(deps.session, deps.compiled_system_prompt)
+    tool_schema_hash = await _ensure_tool_schema_snapshotted(deps.session, tool_schemas)
+
+    # context_window_start_msg_id — look up existing start, or resolve self-referentially on first insert
+    context_window_start_msg_id = await _get_context_window_start_msg_id(
+        deps.session, deps.agent_id, deps.context_window_start
+    )
+
     messages, errors = _replace_orphaned_tool_messages(messages)
     last_total_tokens: int | None = None
 
@@ -225,13 +288,25 @@ async def persist_messages(
         msg_total_tokens = msg.usage.total_tokens if isinstance(msg, ModelResponse) and msg.usage.has_values() else None
         if msg_total_tokens is not None:
             last_total_tokens = msg_total_tokens
+
+        # Generate UUID explicitly so we can use it for self-referential context_window_start_msg_id
+        # (SQLAlchemy column defaults are not applied until INSERT — record.id would be None otherwise)
+        record_id = str(uuid.uuid4())
+        if context_window_start_msg_id is None:
+            # Self-referential for the very first message: no prior history exists in the DB
+            context_window_start_msg_id = record_id
+        
         record = MessageRecord(
+            id=record_id,
             agent_id=deps.agent_id,
             type=msg_type,
             content=content,
             total_tokens=msg_total_tokens,
             seq_id=next_seq_id + i,
             timestamp=_message_timestamp(msg),
+            system_prompt_hash=system_prompt_hash,
+            tool_schema_hash=tool_schema_hash,
+            context_window_start_msg_id=context_window_start_msg_id,
         )
         deps.session.add(record)
 
@@ -239,7 +314,7 @@ async def persist_messages(
     if errors:
         if _is_error_pass:
             raise RuntimeError("Persistence errors during attempt to persist error notifications")
-        await _persist_error_warnings(deps, errors)
+        await _persist_error_warnings(deps, errors, tool_schemas)
     else:
         await deps.session.flush()
 
