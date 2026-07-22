@@ -2,9 +2,7 @@
 Tests for messages/messages.py — persist_messages, load_messages, deserialize_messages.
 """
 import json
-import logging
 import time
-from datetime import datetime
 
 import pytest
 import pytest_asyncio
@@ -12,7 +10,6 @@ from unittest.mock import patch
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
-    ModelRequest,
     ModelResponse,
     RetryPromptPart,
     TextPart,
@@ -24,7 +21,6 @@ from pydantic_ai.usage import RequestUsage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import AgentDeps
 from db.models import AgentRecord, MessageRecord, SystemPromptSnapshot, ToolSchemaSnapshot, utcnow
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
