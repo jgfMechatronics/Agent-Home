@@ -60,7 +60,6 @@ async def reconstruct_context(session: AsyncSession, target_message_id: str) -> 
     Raises:
         ValueError: If target_message_id not found
     """
-    # 1. Fetch target message
     target = await session.execute(
         select(MessageRecord).where(MessageRecord.id == target_message_id)
     )
@@ -68,7 +67,6 @@ async def reconstruct_context(session: AsyncSession, target_message_id: str) -> 
     if target is None:
         raise ValueError(f"Message not found: {target_message_id}")
     
-    # 2. Fetch system prompt snapshot
     sys_snapshot = await session.execute(
         select(SystemPromptSnapshot).where(
             SystemPromptSnapshot.id == target.system_prompt_hash
@@ -76,7 +74,6 @@ async def reconstruct_context(session: AsyncSession, target_message_id: str) -> 
     )
     sys_snapshot = sys_snapshot.scalar_one()
     
-    # 3. Fetch tool schema snapshot
     tool_snapshot = await session.execute(
         select(ToolSchemaSnapshot).where(
             ToolSchemaSnapshot.id == target.tool_schema_hash
@@ -84,7 +81,7 @@ async def reconstruct_context(session: AsyncSession, target_message_id: str) -> 
     )
     tool_snapshot = tool_snapshot.scalar_one()
     
-    # 4. Fetch context_window_start message to get its seq_id
+    # Fetch context_window_start message to get its seq_id
     context_start = await session.execute(
         select(MessageRecord).where(
             MessageRecord.id == target.context_window_start_msg_id
@@ -92,7 +89,6 @@ async def reconstruct_context(session: AsyncSession, target_message_id: str) -> 
     )
     context_start = context_start.scalar_one()
     
-    # 5. Fetch all messages from context_window_start (inclusive) to target (exclusive)
     messages = await load_messages(
         session,
         target.agent_id,

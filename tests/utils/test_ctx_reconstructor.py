@@ -1,7 +1,6 @@
 """
 Tests for utils/ctx_reconstructor.py — context reconstruction from stored snapshots.
 """
-import hashlib
 import json
 from uuid import uuid4
 
@@ -16,25 +15,18 @@ from db.models import (
     ToolSchemaSnapshot,
     utcnow,
 )
+from messages.messages import _compute_sha256
 from utils.ctx_reconstructor import reconstruct_context
-
-
-def _hash_content(content: str) -> str:
-    """
-    SHA256 hash of content, matching the content-addressable storage pattern.
-    TODO: Use the actual hash function that we use for generating the hashes on persistence here
-    """
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 async def _create_snapshots(session: AsyncSession) -> tuple[str, str, str, list[dict]]:
     """Create and persist snapshots. Returns (sys_hash, tool_hash, sys_content, tool_list)."""
     system_prompt = "You are a helpful assistant."
-    system_prompt_hash = _hash_content(system_prompt)
+    system_prompt_hash = _compute_sha256(system_prompt)
     
     tool_list = [{"name": "test_tool", "description": "A test tool"}]
     tool_schemas_json = json.dumps(tool_list, sort_keys=True)
-    tool_schema_hash = _hash_content(tool_schemas_json)
+    tool_schema_hash = _compute_sha256(tool_schemas_json)
     
     session.add_all([
         SystemPromptSnapshot(id=system_prompt_hash, content=system_prompt, created_at=utcnow()),
@@ -44,7 +36,8 @@ async def _create_snapshots(session: AsyncSession) -> tuple[str, str, str, list[
     
     return system_prompt_hash, tool_schema_hash, system_prompt, tool_list
 
-
+# REVIEW: Parametrize on snapshot env. The current soln only has the single targeted hash. we can strengthen the test by parameterizing on a callable in place of create snapshots, where the first callable behaves as create snapshots does now, and the second callable adds some noise to the snapshots. Basically just an extra set of snapshots, one system prompt and one schema, to make sure that the reconstructor can deal with there being multiple snapshots in there where it has to grab the correct one.
+# The new helper function can just call the base create snapshots itself, and then within the new helper function it can just add some noise to the session.
 @pytest.mark.asyncio
 class TestReconstructContext:
     """Tests for reconstruct_context(session, message_id)."""
@@ -64,6 +57,9 @@ class TestReconstructContext:
         msg_id: str | None = None,
     ) -> MessageRecord:
         """Create MessageRecord using class snapshot hashes."""
+        # REVIEW: the make_alternating_messages or whatever is going to need to be updated to support the new
+        # If this particular helper is too specific and we would have to modify the behavior of make alternating messages just to make it work here, then skip this to-do and just delete the to-do.
+        # Lets talk about this one before execution
         msg_id = msg_id or str(uuid4())
         is_request = seq_id % 2 == 0
         return MessageRecord(
@@ -79,6 +75,8 @@ class TestReconstructContext:
             context_window_start_msg_id=context_window_start_msg_id,
         )
 
+    # REVIEW: Promote session to a class member, then any args passed to this fcn (inc session) that are common to all tests can just be removed as args and instead referenced via self
+    # propagate self reference instead of per test fixture, and do the same for agent_record if possible (agent_record may not be relevant to this fcn)
     async def _assert_reconstruction(
         self,
         session: AsyncSession,
@@ -135,6 +133,7 @@ class TestReconstructContext:
         await session.flush()
         
         other_msg0_id = str(uuid4())
+        # REVIEW: not a fan of this for loop pattern, lets talk about what we can do to improve. Possibly involving the REVIEW item about using make_alternating
         other_msgs = [
             self._make_message(other_agent.id, i, other_msg0_id, 
                                msg_id=other_msg0_id if i == 0 else None)
