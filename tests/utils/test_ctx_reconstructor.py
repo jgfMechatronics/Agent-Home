@@ -6,6 +6,7 @@ import json
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
@@ -24,31 +25,6 @@ def _hash_content(content: str) -> str:
     TODO: Use the actual hash function that we use for generating the hashes on persistence here
     """
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
-
-
-def _make_message(
-    agent_id: str,
-    seq_id: int,
-    system_prompt_hash: str,
-    tool_schema_hash: str,
-    context_window_start_msg_id: str,
-    msg_id: str | None = None,
-) -> MessageRecord:
-    """Helper to create MessageRecord with sensible defaults."""
-    msg_id = msg_id or str(uuid4())
-    is_request = seq_id % 2 == 0  # Even = request, odd = response
-    return MessageRecord(
-        id=msg_id,
-        agent_id=agent_id,
-        type="ModelRequest" if is_request else "ModelResponse",
-        content=f'{{"parts": [{{"type": "text", "content": "msg {seq_id}"}}]}}',
-        total_tokens=None if is_request else 100,
-        seq_id=seq_id,
-        timestamp=utcnow(),
-        system_prompt_hash=system_prompt_hash,
-        tool_schema_hash=tool_schema_hash,
-        context_window_start_msg_id=context_window_start_msg_id,
-    )
 
 
 async def _create_snapshots(session: AsyncSession) -> tuple[str, str, str, list[dict]]:
@@ -72,7 +48,37 @@ async def _create_snapshots(session: AsyncSession) -> tuple[str, str, str, list[
 @pytest.mark.asyncio
 class TestReconstructContext:
     """Tests for reconstruct_context(session, message_id)."""
-    # TODO: Iterate further when Opus back online.
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup_snapshots(self, session: AsyncSession):
+        """Create snapshots once per test, store as member vars."""
+        self.sys_hash, self.tool_hash, self.sys_prompt, self.tool_list = (
+            await _create_snapshots(session)
+        )
+
+    def _make_message(
+        self,
+        agent_id: str,
+        seq_id: int,
+        context_window_start_msg_id: str,
+        msg_id: str | None = None,
+    ) -> MessageRecord:
+        """Create MessageRecord using class snapshot hashes."""
+        msg_id = msg_id or str(uuid4())
+        is_request = seq_id % 2 == 0
+        return MessageRecord(
+            id=msg_id,
+            agent_id=agent_id,
+            type="ModelRequest" if is_request else "ModelResponse",
+            content=f'{{"parts": [{{"type": "text", "content": "msg {seq_id}"}}]}}',
+            total_tokens=None if is_request else 100,
+            seq_id=seq_id,
+            timestamp=utcnow(),
+            system_prompt_hash=self.sys_hash,
+            tool_schema_hash=self.tool_hash,
+            context_window_start_msg_id=context_window_start_msg_id,
+        )
+
     async def _assert_reconstruction(
         self,
         session: AsyncSession,
@@ -95,20 +101,18 @@ class TestReconstructContext:
         self, session: AsyncSession, agent_record: AgentRecord
     ):
         """Basic case: 3 messages, target is last, context_window_start is first."""
-        sys_hash, tool_hash, sys_prompt, tool_list = await _create_snapshots(session)
-        
         # Create messages: msg0 (ctx start) -> msg1 -> msg2 (target)
         msg0_id = str(uuid4())
-        msg0 = _make_message(agent_record.id, 0, sys_hash, tool_hash, msg0_id, msg_id=msg0_id)
-        msg1 = _make_message(agent_record.id, 1, sys_hash, tool_hash, msg0_id)
-        msg2 = _make_message(agent_record.id, 2, sys_hash, tool_hash, msg0_id)
+        msg0 = self._make_message(agent_record.id, 0, msg0_id, msg_id=msg0_id)
+        msg1 = self._make_message(agent_record.id, 1, msg0_id)
+        msg2 = self._make_message(agent_record.id, 2, msg0_id)
         
         session.add_all([msg0, msg1, msg2])
         await session.flush()
         
         await self._assert_reconstruction(
             session, target=msg2, expected_messages=[msg0, msg1],
-            expected_system_prompt=sys_prompt, expected_tool_schemas=tool_list,
+            expected_system_prompt=self.sys_prompt, expected_tool_schemas=self.tool_list,
             expected_agent_id=agent_record.id,
         )
 
@@ -121,8 +125,6 @@ class TestReconstructContext:
         - Messages before context_window_start (earlier conversation)
         - Messages after target (later in same conversation)
         """
-        sys_hash, tool_hash, sys_prompt, tool_list = await _create_snapshots(session)
-        
         # --- Noise: other agent's messages ---
         other_agent = AgentRecord(
             name="other-agent",
@@ -134,8 +136,8 @@ class TestReconstructContext:
         
         other_msg0_id = str(uuid4())
         other_msgs = [
-            _make_message(other_agent.id, i, sys_hash, tool_hash, other_msg0_id, 
-                         msg_id=other_msg0_id if i == 0 else None)
+            self._make_message(other_agent.id, i, other_msg0_id, 
+                               msg_id=other_msg0_id if i == 0 else None)
             for i in range(3)
         ]
         session.add_all(other_msgs)
@@ -143,24 +145,24 @@ class TestReconstructContext:
         # --- Noise: earlier conversation (before context_window_start) ---
         old_ctx_start_id = str(uuid4())
         old_msgs = [
-            _make_message(agent_record.id, i, sys_hash, tool_hash, old_ctx_start_id,
-                         msg_id=old_ctx_start_id if i == 0 else None)
+            self._make_message(agent_record.id, i, old_ctx_start_id,
+                               msg_id=old_ctx_start_id if i == 0 else None)
             for i in range(3)
         ]
         session.add_all(old_msgs)
         
         # --- The actual context window we care about (seq_ids 3, 4, 5) ---
         msg0_id = str(uuid4())
-        msg0 = _make_message(agent_record.id, 3, sys_hash, tool_hash, msg0_id, msg_id=msg0_id)
-        msg1 = _make_message(agent_record.id, 4, sys_hash, tool_hash, msg0_id)
-        msg2 = _make_message(agent_record.id, 5, sys_hash, tool_hash, msg0_id)
+        msg0 = self._make_message(agent_record.id, 3, msg0_id, msg_id=msg0_id)
+        msg1 = self._make_message(agent_record.id, 4, msg0_id)
+        msg2 = self._make_message(agent_record.id, 5, msg0_id)
         session.add_all([msg0, msg1, msg2])
         
         # --- Noise: later messages (after target, different context window) ---
         later_ctx_start_id = str(uuid4())
         later_msgs = [
-            _make_message(agent_record.id, 6 + i, sys_hash, tool_hash, later_ctx_start_id,
-                         msg_id=later_ctx_start_id if i == 0 else None)
+            self._make_message(agent_record.id, 6 + i, later_ctx_start_id,
+                               msg_id=later_ctx_start_id if i == 0 else None)
             for i in range(2)
         ]
         session.add_all(later_msgs)
@@ -170,7 +172,7 @@ class TestReconstructContext:
         # Same assertions as clean environment
         await self._assert_reconstruction(
             session, target=msg2, expected_messages=[msg0, msg1],
-            expected_system_prompt=sys_prompt, expected_tool_schemas=tool_list,
+            expected_system_prompt=self.sys_prompt, expected_tool_schemas=self.tool_list,
             expected_agent_id=agent_record.id,
         )
 
@@ -178,16 +180,14 @@ class TestReconstructContext:
         self, session: AsyncSession, agent_record: AgentRecord
     ):
         """Edge case: target message IS the context_window_start (points to itself)."""
-        sys_hash, tool_hash, sys_prompt, tool_list = await _create_snapshots(session)
-        
         msg_id = str(uuid4())
-        msg = _make_message(agent_record.id, 0, sys_hash, tool_hash, msg_id, msg_id=msg_id)
+        msg = self._make_message(agent_record.id, 0, msg_id, msg_id=msg_id)
         session.add(msg)
         await session.flush()
         
         await self._assert_reconstruction(
             session, target=msg, expected_messages=[],
-            expected_system_prompt=sys_prompt, expected_tool_schemas=tool_list,
+            expected_system_prompt=self.sys_prompt, expected_tool_schemas=self.tool_list,
             expected_agent_id=agent_record.id,
         )
 
