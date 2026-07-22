@@ -60,6 +60,22 @@ SAMPLE_TOOL_SCHEMAS = [
     )
 ]
 
+MUTATED_TOOL_SCHEMAS = [
+    ToolDefinition(
+        name="memory_insert",
+        description="Insert text into a memory block.",
+        parameters_json_schema={
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "new_string": {"type": "string"},
+            },
+            "required": ["label", "new_string"],
+            "additionalProperties": False,
+        },
+    )
+]
+
 
 async def fetch_all_records(session: AsyncSession, agent_id: str) -> list[MessageRecord]:
     """Load all MessageRecords for an agent, in seq_id order."""
@@ -360,33 +376,63 @@ class TestPersistMessages(DBTestBase):
 
 @pytest.mark.asyncio
 class TestPersistMessagesSnapshots(DBTestBase):
-    """Tests for the snapshot and context-capture fields added to persist_messages.
+    """Tests for the snapshot and context-capture fields added to persist_messages."""
 
-    Verifies that system prompt snapshots, tool schema snapshots, and
-    context_window_start_msg_id are stored correctly on each persisted MessageRecord.
-    """
+    async def _sys_snapshots(self):
+        return (await self.session.execute(select(SystemPromptSnapshot))).scalars().all()
 
-    async def test_fresh_snapshots_creates_snapshot_rows(self):
-        """First persist with unseen content: creates one SystemPromptSnapshot and one
-        ToolSchemaSnapshot row, and all persisted records reference them correctly."""
-        self.agent.compiled_system_prompt = "You are a helpful test assistant."
-        messages = [make_request("hello"), make_response("world")]
+    async def _tool_snapshots(self):
+        return (await self.session.execute(select(ToolSchemaSnapshot))).scalars().all()
 
-        records = await self._persist_and_fetch(messages)
+    @pytest.mark.parametrize("prompt", ["You are a helpful test assistant.", ""])
+    async def test_snapshot_stores_correct_system_prompt_content(self, prompt):
+        """Snapshot row stores the exact system prompt string, including empty string."""
+        self.agent.compiled_system_prompt = prompt
+        await self._persist_and_fetch([make_request()])
+        assert (await self._sys_snapshots())[0].content == prompt
 
-        sys_result = await self.session.execute(select(SystemPromptSnapshot))
-        sys_snapshots = sys_result.scalars().all()
-        assert len(sys_snapshots) == 1
-        assert sys_snapshots[0].content == self.deps.compiled_system_prompt
+    @pytest.mark.parametrize("second_prompt,expected_count", [
+        ("prompt A", 1), ("prompt B", 2)
+    ])
+    async def test_system_prompt_snapshot_dedup(self, second_prompt, expected_count):
+        """Same prompt reuses the existing snapshot row; a changed prompt creates a new one.
+        Records reference distinct snapshots when the prompt changed."""
+        self.agent.compiled_system_prompt = "prompt A"
+        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        self.agent.compiled_system_prompt = second_prompt
+        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        records = await fetch_all_records(self.session, self.agent.id)
+        assert len(await self._sys_snapshots()) == expected_count == len({r.system_prompt_hash for r in records})
 
-        tool_result = await self.session.execute(select(ToolSchemaSnapshot))
-        tool_snapshots = tool_result.scalars().all()
-        assert len(tool_snapshots) == 1
+    @pytest.mark.parametrize("second_schemas,expected_count", [
+        (SAMPLE_TOOL_SCHEMAS, 1), (MUTATED_TOOL_SCHEMAS, 2)
+    ])
+    async def test_tool_schema_snapshot_dedup(self, second_schemas, expected_count):
+        """Same schemas reuse the existing snapshot row; changed schemas create a new one.
+        Records reference distinct snapshots when the schemas changed."""
+        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        await persist_messages(self.deps, [make_request()], second_schemas)
+        records = await fetch_all_records(self.session, self.agent.id)
+        assert len(await self._tool_snapshots()) == expected_count == len({r.tool_schema_hash for r in records})
 
-        assert len(records) == 2
-        for record in records:
-            assert record.system_prompt_hash == sys_snapshots[0].id
-            assert record.tool_schema_hash == tool_snapshots[0].id
+    @pytest.mark.parametrize("n_messages", [1, 3])
+    async def test_context_window_start_all_records_share_first_record_id(self, n_messages):
+        """All records in one persist call share context_window_start_msg_id == first record's id.
+        n=1 verifies the self-referential case; n=3 verifies the full-batch case."""
+        records = await self._persist_and_fetch(make_alternating_messages(n_messages))
+        assert all(r.context_window_start_msg_id == records[0].id for r in records)
+
+    async def test_context_window_start_stable_across_calls(self):
+        """Subsequent persist calls all reference the UUID of the very first message ever persisted."""
+        first_records = await self._persist_and_fetch([make_request(), make_response()])
+        await persist_messages(self.deps, [make_request(), make_response()], SAMPLE_TOOL_SCHEMAS)
+        all_records = await fetch_all_records(self.session, self.agent.id)
+        assert all(r.context_window_start_msg_id == first_records[0].id for r in all_records)
+
+    async def test_empty_tool_schemas_persist_without_error(self):
+        """Empty tool schema list produces a valid snapshot row."""
+        records = await self._persist_and_fetch([make_request()], tool_schemas=[])
+        assert records[0].tool_schema_hash
 
 
 # ---------------------------------------------------------------------------
