@@ -11,11 +11,17 @@ StatefulAgent Pattern:
   - Could own lifespan. Lock acquisition/release and such. AgentFactory could then be an object which only exists long enough to construct a StatefulAgent, or could just be a free function
 """
 import asyncio
+import json
+import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import AsyncIterator
 
+import httpx
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import get_agent_record
@@ -122,6 +128,21 @@ class AgentFactory:
             yield (agent, deps)
 
 
+_REQUEST_LOG_DIR = Path("/workspace/git/misc/llm_requests")
+_factory_logger = logging.getLogger(__name__)
+
+
+async def _log_request(request: httpx.Request) -> None:
+    """TEMP: Log raw LLM request body to a timestamped file for visual inspection."""
+    try:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        path = _REQUEST_LOG_DIR / f"request_{ts}.json"
+        body = json.loads(request.content)
+        path.write_text(json.dumps(body, indent=2))
+    except Exception as e:
+        _factory_logger.warning(f"Failed to log LLM request: {e}")
+
+
 def get_model(model_name: str) -> AnthropicModel:
     """Map a model name string to a Pydantic AI model instance.
     
@@ -130,4 +151,5 @@ def get_model(model_name: str) -> AnthropicModel:
     so this is a belt-and-suspenders guard.
     """
     validate_model_name(model_name)  # raises ValueError for unknown names
-    return AnthropicModel(model_name)
+    http_client = httpx.AsyncClient(event_hooks={"request": [_log_request]})
+    return AnthropicModel(model_name, provider=AnthropicProvider(http_client=http_client))
