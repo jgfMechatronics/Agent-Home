@@ -20,12 +20,13 @@ from messages.messages import deserialize_messages, load_messages, persist_messa
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pydantic_ai.tools import ToolDefinition
     from pydantic_ai.toolsets import AbstractToolset
 
 logger = logging.getLogger(__name__)
 
 
-def _extract_tool_definitions(toolsets: Sequence[AbstractToolset], agent_id: str):
+def _extract_tool_definitions(toolsets: Sequence[AbstractToolset], agent_id: str) -> list[ToolDefinition]:
     tool_schemas = []
     for ts in toolsets:
         if isinstance(ts, FunctionToolset):
@@ -34,6 +35,25 @@ def _extract_tool_definitions(toolsets: Sequence[AbstractToolset], agent_id: str
         else:
             logger.error(f"Error, agent {agent_id} has toolset {ts.label} which is not a FunctionToolset.\n"
                          "Tool definition logging for context reconstruction will be missing this toolset!!!")
+    return tool_schemas
+
+
+async def _check_and_handle_cancel(
+    agent_app_state: AgentAppState,
+    deps: AgentDeps,
+    tool_schemas: list[ToolDefinition],
+) -> bool:
+    if not agent_app_state.cancel_requested.is_set():
+        return False
+    # NOTE: Ideally this would be a ModelRequest (user message), but pydantic-ai merges
+    # consecutive ModelRequests, breaking cursor-based persistence. Using ModelResponse
+    # avoids the merge. Consider switching back after migrating to agent.iter().
+    cancel_notice = ModelResponse(parts=[TextPart(
+        content="<system_message>Turn cancelled by user.</system_message>"
+    )])
+    await persist_messages(deps=deps, messages=[cancel_notice], tool_schemas=tool_schemas)
+    await deps.commit_changes_refresh_agent_record()
+    return True
 
 
 async def run_stateful_agent(agent: Agent,
@@ -87,15 +107,7 @@ async def run_stateful_agent(agent: Agent,
                     if total_tokens is not None:
                         last_total_tokens_value = total_tokens
 
-                if agent_app_state.cancel_requested.is_set():
-                    # NOTE: Ideally this would be a ModelRequest (user message), but pydantic-ai merges
-                    # consecutive ModelRequests, breaking cursor-based persistence. Using ModelResponse
-                    # avoids the merge. Consider switching back after migrating to agent.iter().
-                    cancel_notice = ModelResponse(parts=[TextPart(
-                        content="<system_message>Turn cancelled by user.</system_message>"
-                    )])
-                    await persist_messages(deps=deps, messages=[cancel_notice], tool_schemas=tool_schemas)
-                    await deps.commit_changes_refresh_agent_record()
+                if await _check_and_handle_cancel(agent_app_state, deps, tool_schemas):
                     return
 
                 if isinstance(event, AgentRunResultEvent):
