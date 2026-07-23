@@ -21,7 +21,7 @@ from db.models import (
     AgentRecord,
     MessageRecord,
     SystemPromptSnapshot,
-    ToolSchemaSnapshot,
+    ToolDefinitionSnapshot,
     utcnow,
 )
 from memory.system_prompt_compilation import compile_system_prompt
@@ -42,15 +42,15 @@ async def _create_snapshots(session: AsyncSession) -> tuple[str, str, str]:
     system_prompt_hash = _compute_sha256(system_prompt)
 
     tool_json = json.dumps([dataclasses.asdict(UNIT_TEST_TOOL_DEF)], separators=(",", ":"))
-    tool_schema_hash = _compute_sha256(tool_json)
+    tool_definition_hash = _compute_sha256(tool_json)
 
     session.add_all([
         SystemPromptSnapshot(id=system_prompt_hash, content=system_prompt, created_at=utcnow()),
-        ToolSchemaSnapshot(id=tool_schema_hash, content=tool_json, created_at=utcnow()),
+        ToolDefinitionSnapshot(id=tool_definition_hash, content=tool_json, created_at=utcnow()),
     ])
     await session.flush()
 
-    return system_prompt_hash, tool_schema_hash, system_prompt
+    return system_prompt_hash, tool_definition_hash, system_prompt
 
 
 async def _create_snapshots_with_noise(session: AsyncSession) -> tuple[str, str, str]:
@@ -64,7 +64,7 @@ async def _create_snapshots_with_noise(session: AsyncSession) -> tuple[str, str,
     
     session.add_all([
         SystemPromptSnapshot(id=_compute_sha256(noise_prompt), content=noise_prompt, created_at=utcnow()),
-        ToolSchemaSnapshot(id=_compute_sha256(noise_tools_json), content=noise_tools_json, created_at=utcnow()),
+        ToolDefinitionSnapshot(id=_compute_sha256(noise_tools_json), content=noise_tools_json, created_at=utcnow()),
     ])
     await session.flush()
     
@@ -102,7 +102,7 @@ class TestReconstructContext:
             seq_id=seq_id,
             timestamp=utcnow(),
             system_prompt_hash=self.sys_hash,
-            tool_schema_hash=self.tool_hash,
+            tool_definition_hash=self.tool_hash,
             context_window_start_msg_id=context_window_start_msg_id,
         )
 

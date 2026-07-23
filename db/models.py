@@ -109,9 +109,9 @@ class MessageRecord(Base):
     seq_id: Mapped[int]  # per-agent monotonic ordinal; Used for ordering message history per agent
     timestamp: Mapped[datetime]
 
-    # Context reconstruction fields. See SystemPromptSnapshot and ToolSchemaSnapshot.
+    # Context reconstruction fields. See SystemPromptSnapshot and ToolDefinitionSnapshot.
     system_prompt_hash: Mapped[str] = mapped_column(ForeignKey("system_prompt_snapshots.id"))
-    tool_schema_hash: Mapped[str] = mapped_column(ForeignKey("tool_schema_snapshots.id"))
+    tool_definition_hash: Mapped[str] = mapped_column(ForeignKey("tool_definition_snapshots.id"))
     # UUID of first in-context message when this message was persisted; points to self for first message in agent's history
     context_window_start_msg_id: Mapped[str]
 
@@ -138,7 +138,7 @@ class SystemPromptSnapshot(Base):
         return f"SystemPromptSnapshot(id={self.id!r})"
 
 
-class ToolSchemaSnapshot(Base):
+class ToolDefinitionSnapshot(Base):
     """Content-addressable store for tool schema arrays.
 
     The SHA256 hex digest of the JSON content serves as the primary key — identical
@@ -147,11 +147,11 @@ class ToolSchemaSnapshot(Base):
     broken reconstruction is not.
     """
 
-    __tablename__ = "tool_schema_snapshots"
+    __tablename__ = "tool_definition_snapshots"
 
     id: Mapped[str] = mapped_column(primary_key=True)  # SHA256 hex digest of content
     content: Mapped[str]  # JSON array of tool schema dicts
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     def __repr__(self) -> str:
-        return f"ToolSchemaSnapshot(id={self.id!r})"
+        return f"ToolDefinitionSnapshot(id={self.id!r})"

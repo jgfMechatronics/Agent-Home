@@ -21,7 +21,7 @@ from pydantic_ai.usage import RequestUsage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import AgentRecord, MessageRecord, SystemPromptSnapshot, ToolSchemaSnapshot, utcnow
+from db.models import AgentRecord, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
@@ -379,7 +379,7 @@ class TestPersistMessagesSnapshots(DBTestBase):
         return (await self.session.execute(select(SystemPromptSnapshot))).scalars().all()
 
     async def _tool_snapshots(self):
-        return (await self.session.execute(select(ToolSchemaSnapshot))).scalars().all()
+        return (await self.session.execute(select(ToolDefinitionSnapshot))).scalars().all()
 
     @pytest.mark.parametrize("prompt", ["You are a helpful test assistant.", ""])
     async def test_snapshot_stores_correct_system_prompt_content(self, prompt):
@@ -396,7 +396,7 @@ class TestPersistMessagesSnapshots(DBTestBase):
         records = await self._persist_and_fetch([make_request()], tool_schemas=tool_schemas)
         snap = (await self._tool_snapshots())[0]
         assert [ToolDefinition(**d) for d in json.loads(snap.content)] == tool_schemas
-        assert records[0].tool_schema_hash == snap.id
+        assert records[0].tool_definition_hash == snap.id
 
     @pytest.mark.parametrize("second_prompt,expected_count", [
         ("prompt A", 1), ("prompt B", 2)
@@ -422,7 +422,7 @@ class TestPersistMessagesSnapshots(DBTestBase):
         await persist_messages(self.deps, [make_request()], second_schemas)
         snaps, records = await self._tool_snapshots(), await fetch_all_records(self.session, self.agent.id)
         assert len(snaps) == expected_count
-        assert {r.tool_schema_hash for r in records} == {s.id for s in snaps}
+        assert {r.tool_definition_hash for r in records} == {s.id for s in snaps}
 
     @pytest.mark.parametrize("n_messages", [1, 3])
     async def test_context_window_start_all_records_share_first_record_id(self, n_messages):

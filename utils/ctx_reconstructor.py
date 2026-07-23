@@ -13,7 +13,7 @@ from pydantic_ai.tools import ToolDefinition
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import MessageRecord, SystemPromptSnapshot, ToolSchemaSnapshot
+from db.models import MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot
 from messages.messages import load_messages
 
 
@@ -76,8 +76,8 @@ async def reconstruct_context(session: AsyncSession, target_message_id: str) -> 
     sys_snapshot = sys_snapshot.scalar_one()
     
     tool_snapshot = await session.execute(
-        select(ToolSchemaSnapshot).where(
-            ToolSchemaSnapshot.id == target.tool_schema_hash
+        select(ToolDefinitionSnapshot).where(
+            ToolDefinitionSnapshot.id == target.tool_definition_hash
         )
     )
     tool_snapshot = tool_snapshot.scalar_one()
