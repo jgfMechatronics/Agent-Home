@@ -139,12 +139,7 @@ class TestReconstructContext:
     async def test_reconstructs_context_clean_environment(self):
         """Basic case: 3 messages, target is last, context_window_start is first."""
         # Create messages: msg0 (ctx start) -> msg1 -> msg2 (target)
-        msg0_id = str(uuid4())
-        msg0 = self._make_message(self.agent_record.id, 0, msg0_id, msg_id=msg0_id)
-        msg1 = self._make_message(self.agent_record.id, 1, msg0_id)
-        msg2 = self._make_message(self.agent_record.id, 2, msg0_id)
-        
-        self.session.add_all([msg0, msg1, msg2])
+        msg0, msg1, msg2 = self._create_and_add_context_window(self.agent_record.id, 3)
         await self.session.flush()
         
         await self._assert_reconstruction(
