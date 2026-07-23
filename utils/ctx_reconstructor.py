@@ -13,7 +13,8 @@ from pydantic_ai.tools import ToolDefinition
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot
+from agent.types import AgentConfig
+from db.models import AgentConfigSnapshot, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot
 from messages.messages import load_messages
 
 
@@ -24,6 +25,7 @@ class ReconstructedContext:
     Attributes:
         system_prompt: The compiled system prompt that was active
         tool_definitions: List of ToolDefinition objects that were available
+        agent_config: The agent configuration (model_name, thinking_enabled, etc.)
         messages: MessageRecords from context_window_start up to (exclusive) target
         target_message: The message you asked about (the focal point)
         agent_id: The agent this context belongs to
@@ -43,6 +45,7 @@ class ReconstructedContext:
     """
     system_prompt: str
     tool_definitions: list[ToolDefinition]
+    agent_config: AgentConfig
     messages: list[MessageRecord]
     target_message: MessageRecord
     agent_id: str
@@ -82,6 +85,13 @@ async def reconstruct_context(session: AsyncSession, target_message_id: str) -> 
     )
     tool_snapshot = tool_snapshot.scalar_one()
     
+    config_snapshot = await session.execute(
+        select(AgentConfigSnapshot).where(
+            AgentConfigSnapshot.id == target.agent_config_hash
+        )
+    )
+    config_snapshot = config_snapshot.scalar_one()
+    
     # Fetch context_window_start message to get its seq_id
     context_start = await session.execute(
         select(MessageRecord).where(
@@ -100,6 +110,7 @@ async def reconstruct_context(session: AsyncSession, target_message_id: str) -> 
     return ReconstructedContext(
         system_prompt=sys_snapshot.content,
         tool_definitions=[ToolDefinition(**d) for d in json.loads(tool_snapshot.content)],
+        agent_config=AgentConfig.model_validate_json(config_snapshot.content),
         messages=messages,
         target_message=target,
         agent_id=target.agent_id,
