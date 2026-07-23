@@ -1,6 +1,7 @@
 """
 Tests for utils/ctx_reconstructor.py — context reconstruction from stored snapshots.
 """
+import dataclasses
 import json
 from unittest.mock import patch
 from uuid import uuid4
@@ -12,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory
-from agent.runner import run_stateful_agent
+from agent.runner import _extract_tool_definitions, run_stateful_agent
 from agent.tools import TOOL_REGISTRY
 from agent.types import AgentAppState, AgentConfig, AgentDeps
 from db.models import (
@@ -25,10 +26,6 @@ from db.models import (
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import _compute_sha256, deserialize_messages
 from utils.ctx_reconstructor import ReconstructedContext, reconstruct_context
-
-# Constants for integration tests
-ALL_TOOL_NAMES = list(TOOL_REGISTRY.keys())
-INTEGRATION_SYSTEM_INSTRUCTIONS = "You are an integration test agent."
 
 
 async def _create_snapshots(session: AsyncSession) -> tuple[str, str, str, list[dict]]:
@@ -202,82 +199,107 @@ class TestReconstructContext:
 # Integration Tests — Full round-trip through run_stateful_agent
 # =============================================================================
 
+ALL_TOOL_NAMES = list(TOOL_REGISTRY.keys())
+INTEGRATION_SYSTEM_INSTRUCTIONS = "You are an integration test agent."
+EXPECTED_COMPILED_SYS_PROMPT = "<system_instructions>\n" + INTEGRATION_SYSTEM_INSTRUCTIONS + "\n</system_instructions>"
+
 @pytest.mark.asyncio
 class TestReconstructContextIntegration:
     """Integration tests: run_stateful_agent → DB persistence → reconstruct_context."""
 
-    @pytest_asyncio.fixture
-    async def agent(self, session: AsyncSession) -> AgentRecord:
-        """AgentRecord with all tools attached and known system instructions."""
-        agent = AgentRecord(
-            name="integration-test-agent",
-            agent_config=AgentConfig(model_name="claude-sonnet-4-20250514", tool_names=ALL_TOOL_NAMES, soft_compaction_limit=10000),
-            system_instructions=INTEGRATION_SYSTEM_INSTRUCTIONS,
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
+        """Configure agent_record for integration tests, store common fixtures as member data."""
+        self.session = session
+        self.agent_record = agent_record
+        
+        # Configure for integration tests: all tools, known system instructions
+        agent_record.agent_config = AgentConfig(
+            model_name="claude-sonnet-4-20250514",
+            tool_names=ALL_TOOL_NAMES,
+            soft_compaction_limit=10000,
         )
-        session.add(agent)
-        await session.flush()
-        await compile_system_prompt(AgentDeps(session, agent))
-        return agent
+        agent_record.system_instructions = INTEGRATION_SYSTEM_INSTRUCTIONS
+        await compile_system_prompt(AgentDeps(session, agent_record))
 
-    async def _run_and_reconstruct(self, session: AsyncSession, agent: AgentRecord, prompt: str,
-                                   test_model: TestModel) -> ReconstructedContext:
-        """Run agent turn and reconstruct context from last message."""
+    async def _run_and_reconstruct(
+        self, prompt: str, test_model: TestModel
+    ) -> tuple[ReconstructedContext, list[dict]]:
+        """Run agent turn and reconstruct context from last message.
+        
+        Returns (reconstructed_context, expected_tool_schemas) for verification.
+        """
         agent_app_state_reg: dict[str, AgentAppState] = {}
         with patch("agent.factory.get_model", return_value=test_model):
-            factory = AgentFactory(agent.id, agent_app_state_reg, session)
+            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
             async with factory.build_agent_and_deps() as (pydantic_agent, deps):
-                async for _ in run_stateful_agent(pydantic_agent, deps, agent_app_state_reg[agent.id], prompt):
+                # Capture expected tool schemas from the live agent (ground truth)
+                expected_tool_schemas = [
+                    dataclasses.asdict(td) for td in _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
+                ]
+                async for _ in run_stateful_agent(pydantic_agent, deps, agent_app_state_reg[self.agent_record.id], prompt):
                     pass
-        last_msg_id = (await session.execute(
-            select(MessageRecord.id).where(MessageRecord.agent_id == agent.id).order_by(MessageRecord.seq_id.desc()).limit(1)
+        last_msg_id = (await self.session.execute(
+            select(MessageRecord.id)
+            .where(MessageRecord.agent_id == self.agent_record.id)
+            .order_by(MessageRecord.seq_id.desc())
+            .limit(1)
         )).scalar_one()
-        return await reconstruct_context(session, last_msg_id)
+        reconstructed = await reconstruct_context(self.session, last_msg_id)
+        return reconstructed, expected_tool_schemas
 
-    def _assert_standard_result(self, result: ReconstructedContext, agent: AgentRecord):
-        """Common assertions for integration tests with original config."""
-        assert INTEGRATION_SYSTEM_INSTRUCTIONS in result.system_prompt
-        assert len(result.tool_schemas) == len(ALL_TOOL_NAMES)
-        assert result.agent_id == agent.id
+    def _assert_standard_result(self, result: ReconstructedContext, expected_tool_schemas: list[dict]):
+        """Common assertions for integration tests."""
+        assert EXPECTED_COMPILED_SYS_PROMPT == result.system_prompt
+        assert result.agent_id == self.agent_record.id
+        # Verify tool schemas match ground truth from the live agent
+        assert {s["name"] for s in expected_tool_schemas} == set(ALL_TOOL_NAMES), "Sanity: expected schemas cover all tools"
+        assert result.tool_schemas == expected_tool_schemas
 
     @pytest.mark.parametrize("call_tools,min_messages", [([], 1), (["duckduckgo_search"], 3)], ids=["text_only", "with_tool"])
-    async def test_round_trip(self, session: AsyncSession, agent: AgentRecord, call_tools: list, min_messages: int):
+    async def test_round_trip(self, call_tools: list, min_messages: int):
         """Round-trip: run agent, reconstruct context, verify structure."""
-        result = await self._run_and_reconstruct(session, agent, "Hello", TestModel(custom_output_text="Hi!", call_tools=call_tools))
-        self._assert_standard_result(result, agent)
+        result, expected_tools = await self._run_and_reconstruct("Hello", TestModel(custom_output_text="Hi!", call_tools=call_tools))
+        self._assert_standard_result(result, expected_tools)
         assert len(deserialize_messages(result.messages)) >= min_messages
 
-    async def test_context_grows_across_runs(self, session: AsyncSession, agent: AgentRecord):
+    async def test_context_grows_across_runs(self):
         """Second run includes first run's messages; context_window_start unchanged."""
         model = TestModel(custom_output_text="Response", call_tools=[])
-        first = await self._run_and_reconstruct(session, agent, "First", model)
-        second = await self._run_and_reconstruct(session, agent, "Second", model)
+        first, first_tools = await self._run_and_reconstruct("First", model)
+        second, second_tools = await self._run_and_reconstruct("Second", model)
 
         assert len(second.messages) > len(first.messages)
         assert second.messages[0].id == first.messages[0].id  # Same context window start
         assert second.system_prompt == first.system_prompt
+        assert first.tool_schemas == first_tools
+        assert second.tool_schemas == second_tools
 
-    async def test_mutated_config_snapshot_dedup(self, session: AsyncSession, agent: AgentRecord):
+    async def test_mutated_config_snapshot_dedup(self):
         """After config mutation, old messages keep original snapshot, new get updated."""
         model = TestModel(custom_output_text="Response", call_tools=[])
 
         # First run with original config
-        first = await self._run_and_reconstruct(session, agent, "First", model)
+        first, first_expected_tools = await self._run_and_reconstruct("First", model)
 
         # Mutate config
         new_instructions = "MUTATED personality."
-        agent.system_instructions = new_instructions
-        agent.agent_config = AgentConfig(model_name="claude-sonnet-4-20250514", tool_names=["memory_replace"], soft_compaction_limit=10000)
-        await compile_system_prompt(AgentDeps(session, agent))
-        await session.commit()
-        await session.refresh(agent)
+        self.agent_record.system_instructions = new_instructions
+        self.agent_record.agent_config = AgentConfig(
+            model_name="claude-sonnet-4-20250514", tool_names=["memory_replace"], soft_compaction_limit=10000
+        )
+        await compile_system_prompt(AgentDeps(self.session, self.agent_record))
+        await self.session.commit()
+        await self.session.refresh(self.agent_record)
 
         # Second run with mutated config
-        second = await self._run_and_reconstruct(session, agent, "Second", model)
+        second, second_expected_tools = await self._run_and_reconstruct("Second", model)
 
         # First run's snapshot unchanged
-        self._assert_standard_result(first, agent)
+        self._assert_standard_result(first, first_expected_tools)
 
         # Second run has mutated snapshot
         assert new_instructions in second.system_prompt
         assert INTEGRATION_SYSTEM_INSTRUCTIONS not in second.system_prompt
-        assert len(second.tool_schemas) == 1
+        assert second.tool_schemas == second_expected_tools
+        assert [schema["name"] for schema in second.tool_schemas] == ["memory_replace"]
