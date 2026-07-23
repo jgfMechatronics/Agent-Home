@@ -25,7 +25,7 @@ from db.models import (
     utcnow,
 )
 from memory.system_prompt_compilation import compile_system_prompt
-from messages.messages import _compute_sha256, deserialize_messages
+from messages.messages import _compute_sha256, deserialize_messages, load_messages
 from utils.ctx_reconstructor import ReconstructedContext, reconstruct_context
 
 
@@ -229,10 +229,10 @@ class TestReconstructContextIntegration:
 
     async def _run_and_reconstruct(
         self, prompt: str, test_model: TestModel
-    ) -> tuple[ReconstructedContext, list[ToolDefinition]]:
+    ) -> tuple[ReconstructedContext, list[ToolDefinition], list[MessageRecord]]:
         """Run agent turn and reconstruct context from last message.
 
-        Returns (reconstructed_context, expected_tool_definitions) for verification.
+        Returns (reconstructed_context, expected_tool_definitions, expected_messages) for verification.
         """
         agent_app_state_reg: dict[str, AgentAppState] = {}
 
@@ -243,40 +243,49 @@ class TestReconstructContextIntegration:
                 expected_tool_definitions = _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
                 async for _ in run_stateful_agent(pydantic_agent, deps, agent_app_state_reg[self.agent_record.id], prompt):
                     pass
-            # REVIEW: Grab the new messages from the agent run result event, then store or return those to check msg identity
-            # do the check in at least the basic happy path test, better yet in the common assertions if not too cumbersome
-            # you can reuse a helper if we have one for converting to message records.
 
-        last_msg_id = (await self.session.execute(
-            select(MessageRecord.id)
-            .where(MessageRecord.agent_id == self.agent_record.id)
-            .order_by(MessageRecord.seq_id.desc())
-            .limit(1)
-        )).scalar_one()
+        # Get all persisted messages as ground truth
+        expected_messages = await load_messages(self.session, self.agent_record.id)
+
+        last_msg_id = expected_messages[-1].id
         reconstructed = await reconstruct_context(self.session, last_msg_id)
-        return reconstructed, expected_tool_definitions
+        return reconstructed, expected_tool_definitions, expected_messages
 
-    def _assert_standard_result(self, result: ReconstructedContext, expected_tool_definitions: list[ToolDefinition]):
+    def _assert_standard_result(
+        self,
+        result: ReconstructedContext,
+        expected_tool_definitions: list[ToolDefinition],
+        expected_messages: list[MessageRecord],
+    ):
         """Common assertions for integration tests."""
         assert EXPECTED_COMPILED_SYS_PROMPT == result.system_prompt
         assert result.agent_id == self.agent_record.id
         # Verify tool definitions match ground truth from the live agent
         assert {td.name for td in expected_tool_definitions} == set(ALL_TOOL_NAMES), "Sanity: expected definitions cover all tools"
         assert result.tool_definitions == expected_tool_definitions
+        # Verify reconstructed messages match persisted messages
+        assert result.messages + [result.target_message] == expected_messages
 
     @pytest.mark.parametrize("call_tools,min_messages", [([], 1), (["duckduckgo_search"], 3)], ids=["text_only", "with_tool"])
     async def test_round_trip(self, call_tools: list, min_messages: int):
         """Round-trip: run agent, reconstruct context, verify structure."""
-        result, expected_tools = await self._run_and_reconstruct("Hello", TestModel(custom_output_text="Hi!", call_tools=call_tools))
-        self._assert_standard_result(result, expected_tools)
+        result, expected_tools, expected_msgs = await self._run_and_reconstruct(
+            "Hello", TestModel(custom_output_text="Hi!", call_tools=call_tools)
+        )
+        self._assert_standard_result(result, expected_tools, expected_msgs)
         assert len(deserialize_messages(result.messages)) >= min_messages
 
     async def test_context_grows_across_runs(self):
         """Second run includes first run's messages; context_window_start unchanged."""
         model = TestModel(custom_output_text="Response", call_tools=[])
-        first, first_tools = await self._run_and_reconstruct("First", model)
-        second, second_tools = await self._run_and_reconstruct("Second", model)
-        # REVIEW: If possible here, use the stronger assertion of identity of the full message list, as described in previous REVIEW Item
+        first, first_tools, first_msgs = await self._run_and_reconstruct("First", model)
+        second, second_tools, second_msgs = await self._run_and_reconstruct("Second", model)
+
+        # Verify message identity via full list comparison
+        assert first.messages + [first.target_message] == first_msgs
+        assert second.messages + [second.target_message] == second_msgs
+
+        # Second run includes first run's messages
         assert len(second.messages) > len(first.messages)
         assert second.messages[0].id == first.messages[0].id  # Same context window start
         assert second.system_prompt == first.system_prompt
@@ -288,7 +297,7 @@ class TestReconstructContextIntegration:
         model = TestModel(custom_output_text="Response", call_tools=[])
 
         # First run with original config
-        first, first_expected_tools = await self._run_and_reconstruct("First", model)
+        first, first_expected_tools, first_msgs = await self._run_and_reconstruct("First", model)
 
         # Mutate config
         new_instructions = "MUTATED personality."
@@ -301,13 +310,15 @@ class TestReconstructContextIntegration:
         await self.session.refresh(self.agent_record)
 
         # Second run with mutated config
-        second, second_expected_tools = await self._run_and_reconstruct("Second", model)
+        second, second_expected_tools, second_msgs = await self._run_and_reconstruct("Second", model)
 
         # First run's snapshot unchanged
-        self._assert_standard_result(first, first_expected_tools)
+        self._assert_standard_result(first, first_expected_tools, first_msgs)
 
         # Second run has mutated snapshot
         assert new_instructions in second.system_prompt
         assert INTEGRATION_SYSTEM_INSTRUCTIONS not in second.system_prompt
         assert second.tool_definitions == second_expected_tools
         assert [td.name for td in second.tool_definitions] == ["memory_replace"]
+        # Verify message identity for second run (second_msgs includes ALL messages, not just from this run)
+        assert second.messages + [second.target_message] == second_msgs
