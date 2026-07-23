@@ -235,6 +235,7 @@ class TestReconstructContextIntegration:
         Returns (reconstructed_context, expected_tool_definitions) for verification.
         """
         agent_app_state_reg: dict[str, AgentAppState] = {}
+
         with patch("agent.factory.get_model", return_value=test_model):
             factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
             async with factory.build_agent_and_deps() as (pydantic_agent, deps):
@@ -242,6 +243,10 @@ class TestReconstructContextIntegration:
                 expected_tool_definitions = _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
                 async for _ in run_stateful_agent(pydantic_agent, deps, agent_app_state_reg[self.agent_record.id], prompt):
                     pass
+            # REVIEW: Grab the new messages from the agent run result event, then store or return those to check msg identity
+            # do the check in at least the basic happy path test, better yet in the common assertions if not too cumbersome
+            # you can reuse a helper if we have one for converting to message records.
+
         last_msg_id = (await self.session.execute(
             select(MessageRecord.id)
             .where(MessageRecord.agent_id == self.agent_record.id)
@@ -271,7 +276,7 @@ class TestReconstructContextIntegration:
         model = TestModel(custom_output_text="Response", call_tools=[])
         first, first_tools = await self._run_and_reconstruct("First", model)
         second, second_tools = await self._run_and_reconstruct("Second", model)
-
+        # REVIEW: If possible here, use the stronger assertion of identity of the full message list, as described in previous REVIEW Item
         assert len(second.messages) > len(first.messages)
         assert second.messages[0].id == first.messages[0].id  # Same context window start
         assert second.system_prompt == first.system_prompt
