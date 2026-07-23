@@ -109,9 +109,10 @@ class MessageRecord(Base):
     seq_id: Mapped[int]  # per-agent monotonic ordinal; Used for ordering message history per agent
     timestamp: Mapped[datetime]
 
-    # Context reconstruction fields. See SystemPromptSnapshot and ToolDefinitionSnapshot.
+    # Context reconstruction fields. See SystemPromptSnapshot, ToolDefinitionSnapshot, AgentConfigSnapshot.
     system_prompt_hash: Mapped[str] = mapped_column(ForeignKey("system_prompt_snapshots.id"))
     tool_definition_hash: Mapped[str] = mapped_column(ForeignKey("tool_definition_snapshots.id"))
+    agent_config_hash: Mapped[str] = mapped_column(ForeignKey("agent_config_snapshots.id"))
     # UUID of first in-context message when this message was persisted; points to self for first message in agent's history
     context_window_start_msg_id: Mapped[str]
 
@@ -119,8 +120,8 @@ class MessageRecord(Base):
         return f"MessageRecord(id={self.id!r}, agent_id={self.agent_id!r}, type={self.type!r})"
 
 
-class SystemPromptSnapshot(Base):
-    """Content-addressable store for compiled system prompts.
+class BaseSnapshot(Base):
+    """Abstract base for content-addressable snapshot tables.
 
     The SHA256 hex digest of the content serves as the primary key — identical
     content is stored once regardless of which agent or turn produced it.
@@ -128,30 +129,35 @@ class SystemPromptSnapshot(Base):
     broken reconstruction is not.
     """
 
-    __tablename__ = "system_prompt_snapshots"
+    __abstract__ = True
 
     id: Mapped[str] = mapped_column(primary_key=True)  # SHA256 hex digest of content
     content: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
+
+class SystemPromptSnapshot(BaseSnapshot):
+    """Content-addressable store for compiled system prompts."""
+
+    __tablename__ = "system_prompt_snapshots"
+
     def __repr__(self) -> str:
         return f"SystemPromptSnapshot(id={self.id!r})"
 
 
-class ToolDefinitionSnapshot(Base):
-    """Content-addressable store for tool schema arrays.
-
-    The SHA256 hex digest of the JSON content serves as the primary key — identical
-    tool sets are stored once regardless of how many messages reference them.
-    No cascade delete: snapshot rows are permanent. Orphaned snapshots are acceptable;
-    broken reconstruction is not.
-    """
+class ToolDefinitionSnapshot(BaseSnapshot):
+    """Content-addressable store for tool definition arrays (JSON-serialized list of ToolDefinition dicts)."""
 
     __tablename__ = "tool_definition_snapshots"
 
-    id: Mapped[str] = mapped_column(primary_key=True)  # SHA256 hex digest of content
-    content: Mapped[str]  # JSON array of tool schema dicts
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)
-
     def __repr__(self) -> str:
         return f"ToolDefinitionSnapshot(id={self.id!r})"
+
+
+class AgentConfigSnapshot(BaseSnapshot):
+    """Content-addressable store for agent configuration at time of message persistence."""
+
+    __tablename__ = "agent_config_snapshots"
+
+    def __repr__(self) -> str:
+        return f"AgentConfigSnapshot(id={self.id!r})"
