@@ -1,3 +1,4 @@
+import logging
 from typing import AsyncGenerator
 
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
@@ -11,9 +12,28 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 
+from pydantic_ai.toolsets.function import FunctionToolset
+
 from agent.compaction import compact, is_compaction_needed
 from agent.types import AgentAppState, AgentDeps
 from messages.messages import deserialize_messages, load_messages, persist_messages
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pydantic_ai.toolsets import AbstractToolset
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_tool_definitions(toolsets: Sequence[AbstractToolset], agent_id: str):
+    tool_schemas = []
+    for ts in toolsets:
+        if isinstance(ts, FunctionToolset):
+            for tool in ts.tools.values():
+                tool_schemas.append(tool.tool_def)
+        else:
+            logger.error(f"Error, agent {agent_id} has toolset {ts.label} which is not a FunctionToolset.\n"
+                         "Tool definition logging for context reconstruction will be missing this toolset!!!")
 
 
 async def run_stateful_agent(agent: Agent,
@@ -31,6 +51,8 @@ async def run_stateful_agent(agent: Agent,
     """
     records = await load_messages(deps.session, deps.agent_id, start_seq_id=deps.context_window_start)
     message_history = deserialize_messages(records)
+
+    tool_schemas = _extract_tool_definitions(agent.toolsets, deps.agent_id)
 
     with capture_run_messages() as messages:
         async with agent.run_stream_events(user_prompt=user_prompt,
@@ -59,7 +81,7 @@ async def run_stateful_agent(agent: Agent,
                     messages_to_persist = messages[new_message_idx:]
 
                 if messages_to_persist:
-                    total_tokens = await persist_messages(deps=deps, messages=messages_to_persist)
+                    total_tokens = await persist_messages(deps=deps, messages=messages_to_persist, tool_schemas=tool_schemas)
                     await deps.commit_changes_refresh_agent_record()
                     new_message_idx += len(messages_to_persist)
                     if total_tokens is not None:
@@ -72,7 +94,7 @@ async def run_stateful_agent(agent: Agent,
                     cancel_notice = ModelResponse(parts=[TextPart(
                         content="<system_message>Turn cancelled by user.</system_message>"
                     )])
-                    await persist_messages(deps=deps, messages=[cancel_notice])
+                    await persist_messages(deps=deps, messages=[cancel_notice], tool_schemas=tool_schemas)
                     await deps.commit_changes_refresh_agent_record()
                     return
 
