@@ -77,9 +77,6 @@ class TestReconstructContext:
         msg_id: str | None = None,
     ) -> MessageRecord:
         """Create MessageRecord using class snapshot hashes."""
-        # REVIEW: the make_alternating_messages or whatever is going to need to be updated to support the new
-        # If this particular helper is too specific and we would have to modify the behavior of make alternating messages just to make it work here, then skip this to-do and just delete the to-do.
-        # Lets talk about this one before execution
         msg_id = msg_id or str(uuid4())
         is_request = seq_id % 2 == 0
         return MessageRecord(
@@ -94,6 +91,23 @@ class TestReconstructContext:
             tool_schema_hash=self.tool_hash,
             context_window_start_msg_id=context_window_start_msg_id,
         )
+
+    def _create_and_add_context_window(
+        self, agent_id: str, count: int, seq_id_start: int = 0
+    ) -> list[MessageRecord]:
+        """Create a context window and add to session."""
+        ctx_start_id = str(uuid4())
+        msgs = [
+            self._make_message(
+                agent_id,
+                seq_id_start + i,
+                ctx_start_id,
+                msg_id=ctx_start_id if i == 0 else None,
+            )
+            for i in range(count)
+        ]
+        self.session.add_all(msgs)
+        return msgs
 
     async def _assert_reconstruction(
         self,
@@ -141,39 +155,17 @@ class TestReconstructContext:
         self.session.add(other_agent)
         await self.session.flush()
         
-        other_msg0_id = str(uuid4())
-        # REVIEW: not a fan of this for loop pattern, lets talk about what we can do to improve. Possibly involving the REVIEW item about using make_alternating
-        other_msgs = [
-            self._make_message(other_agent.id, i, other_msg0_id,
-                               msg_id=other_msg0_id if i == 0 else None)
-            for i in range(3)
-        ]
-        self.session.add_all(other_msgs)
+        # Add messages for the other agent
+        self._create_and_add_context_window(other_agent.id, 3, seq_id_start=0)
         
         # --- Noise: earlier conversation (before context_window_start) ---
-        old_ctx_start_id = str(uuid4())
-        old_msgs = [
-            self._make_message(self.agent_record.id, i, old_ctx_start_id,
-                               msg_id=old_ctx_start_id if i == 0 else None)
-            for i in range(3)
-        ]
-        self.session.add_all(old_msgs)
+        self._create_and_add_context_window(self.agent_record.id, 3, seq_id_start=0)
         
         # --- The actual context window we care about (seq_ids 3, 4, 5) ---
-        msg0_id = str(uuid4())
-        msg0 = self._make_message(self.agent_record.id, 3, msg0_id, msg_id=msg0_id)
-        msg1 = self._make_message(self.agent_record.id, 4, msg0_id)
-        msg2 = self._make_message(self.agent_record.id, 5, msg0_id)
-        self.session.add_all([msg0, msg1, msg2])
+        msg0, msg1, msg2 = self._create_and_add_context_window(self.agent_record.id, 3, seq_id_start=3)
         
         # --- Noise: later messages (after target, different context window) ---
-        later_ctx_start_id = str(uuid4())
-        later_msgs = [
-            self._make_message(self.agent_record.id, 6 + i, later_ctx_start_id,
-                               msg_id=later_ctx_start_id if i == 0 else None)
-            for i in range(2)
-        ]
-        self.session.add_all(later_msgs)
+        self._create_and_add_context_window(self.agent_record.id, 2, seq_id_start=6)
         
         await self.session.flush()
         
