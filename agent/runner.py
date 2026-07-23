@@ -11,7 +11,6 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-
 from pydantic_ai.toolsets.function import FunctionToolset
 
 from agent.compaction import compact, is_compaction_needed
@@ -20,13 +19,13 @@ from messages.messages import deserialize_messages, load_messages, persist_messa
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
     from pydantic_ai.tools import ToolDefinition
     from pydantic_ai.toolsets import AbstractToolset
-
 logger = logging.getLogger(__name__)
 
 
-def _extract_tool_definitions(toolsets: Sequence[AbstractToolset], agent_id: str) -> list[ToolDefinition]:
+def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent_id: str) -> "list[ToolDefinition]":
     tool_schemas = []
     for ts in toolsets:
         if isinstance(ts, FunctionToolset):
@@ -41,7 +40,7 @@ def _extract_tool_definitions(toolsets: Sequence[AbstractToolset], agent_id: str
 async def _check_and_handle_cancel(
     agent_app_state: AgentAppState,
     deps: AgentDeps,
-    tool_schemas: list[ToolDefinition],
+    tool_schemas: "list[ToolDefinition]",
 ) -> bool:
     if not agent_app_state.cancel_requested.is_set():
         return False
