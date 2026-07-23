@@ -42,62 +42,45 @@ UNIT_TEST_AGENT_CONFIG = AgentConfig(
     soft_compaction_limit=10000,
 )
 
-
-async def _create_snapshots(session: AsyncSession) -> tuple[str, str, str, str, AgentConfig]:
-    """Create and persist snapshots. Returns (sys_hash, tool_hash, config_hash, sys_content, agent_config)."""
-    system_prompt = "You are a helpful assistant."
-    system_prompt_hash = _compute_sha256(system_prompt)
-
-    tool_json = json.dumps([dataclasses.asdict(UNIT_TEST_TOOL_DEF)], separators=(",", ":"))
-    tool_definition_hash = _compute_sha256(tool_json)
-
-    config_json = UNIT_TEST_AGENT_CONFIG.model_dump_json()
-    agent_config_hash = _compute_sha256(config_json)
-
-    session.add_all([
-        SystemPromptSnapshot(id=system_prompt_hash, content=system_prompt, created_at=utcnow()),
-        ToolDefinitionSnapshot(id=tool_definition_hash, content=tool_json, created_at=utcnow()),
-        AgentConfigSnapshot(id=agent_config_hash, content=config_json, created_at=utcnow()),
-    ])
-    await session.flush()
-    # REVIEW: This return signature has grown too large. Lets rethink the design here. Perhaps this function can be promoted to
-    # a member fixture which sets member data directly. Have to figure out how to handle noise parametrization though.
-    # There's also no reason for it to return a modfule level constant as far as I see.
-    return system_prompt_hash, tool_definition_hash, agent_config_hash, system_prompt, UNIT_TEST_AGENT_CONFIG
-
-
-async def _create_snapshots_with_noise(session: AsyncSession) -> tuple[str, str, str, str, AgentConfig]:
-    """Create target snapshots plus noise snapshots to test correct hash selection."""
-    target_snapshots = await _create_snapshots(session)
-    
-    # Add noise: different system prompt, tool schema, and agent config that shouldn't be selected
-    noise_prompt = "You are a different assistant entirely."
-    noise_tools = [{"name": "noise_tool", "description": "Not the tool you want"}]
-    noise_tools_json = json.dumps(noise_tools, sort_keys=True)
-    noise_config = AgentConfig(model_name="claude-haiku-4-5", tool_names=["noise_tool"], soft_compaction_limit=999)
-    noise_config_json = noise_config.model_dump_json()
-    
-    session.add_all([
-        SystemPromptSnapshot(id=_compute_sha256(noise_prompt), content=noise_prompt, created_at=utcnow()),
-        ToolDefinitionSnapshot(id=_compute_sha256(noise_tools_json), content=noise_tools_json, created_at=utcnow()),
-        AgentConfigSnapshot(id=_compute_sha256(noise_config_json), content=noise_config_json, created_at=utcnow()),
-    ])
-    await session.flush()
-    
-    return target_snapshots
+# Pre-compute deterministic snapshot content and hashes
+UNIT_TEST_SYS_PROMPT = "You are a helpful assistant."
+UNIT_TEST_SYS_HASH = _compute_sha256(UNIT_TEST_SYS_PROMPT)
+UNIT_TEST_TOOL_JSON = json.dumps([dataclasses.asdict(UNIT_TEST_TOOL_DEF)], separators=(",", ":"))
+UNIT_TEST_TOOL_HASH = _compute_sha256(UNIT_TEST_TOOL_JSON)
+UNIT_TEST_CONFIG_JSON = UNIT_TEST_AGENT_CONFIG.model_dump_json()
+UNIT_TEST_CONFIG_HASH = _compute_sha256(UNIT_TEST_CONFIG_JSON)
 
 
 @pytest.mark.asyncio
 class TestReconstructContext:
     """Tests for reconstruct_context(session, message_id)."""
 
-    @pytest_asyncio.fixture(autouse=True, params=[_create_snapshots, _create_snapshots_with_noise])
+    @pytest_asyncio.fixture(autouse=True, params=[False, True], ids=["clean", "with_noise"])
     async def setup_snapshots(self, session: AsyncSession, agent_record: AgentRecord, request):
-        """Create snapshots once per test, store as member vars. Parametrized to test with/without noise."""
+        """Create snapshots once per test. Parametrized to test with/without noise."""
         self.session = session
         self.agent_record = agent_record
-        snapshot_factory = request.param
-        self.sys_hash, self.tool_hash, self.config_hash, self.sys_prompt, self.agent_config = await snapshot_factory(session)
+        
+        # Create target snapshots
+        session.add_all([
+            SystemPromptSnapshot(id=UNIT_TEST_SYS_HASH, content=UNIT_TEST_SYS_PROMPT, created_at=utcnow()),
+            ToolDefinitionSnapshot(id=UNIT_TEST_TOOL_HASH, content=UNIT_TEST_TOOL_JSON, created_at=utcnow()),
+            AgentConfigSnapshot(id=UNIT_TEST_CONFIG_HASH, content=UNIT_TEST_CONFIG_JSON, created_at=utcnow()),
+        ])
+        
+        # Optionally add noise snapshots
+        if request.param:
+            noise_prompt = "You are a different assistant entirely."
+            noise_tools_json = json.dumps([{"name": "noise_tool", "description": "Not the tool you want"}], sort_keys=True)
+            noise_config = AgentConfig(model_name="claude-haiku-4-5", tool_names=["noise_tool"], soft_compaction_limit=999)
+            noise_config_json = noise_config.model_dump_json()
+            session.add_all([
+                SystemPromptSnapshot(id=_compute_sha256(noise_prompt), content=noise_prompt, created_at=utcnow()),
+                ToolDefinitionSnapshot(id=_compute_sha256(noise_tools_json), content=noise_tools_json, created_at=utcnow()),
+                AgentConfigSnapshot(id=_compute_sha256(noise_config_json), content=noise_config_json, created_at=utcnow()),
+            ])
+        
+        await session.flush()
 
     def _make_message(
         self,
@@ -106,7 +89,7 @@ class TestReconstructContext:
         context_window_start_msg_id: str,
         msg_id: str | None = None,
     ) -> MessageRecord:
-        """Create MessageRecord using class snapshot hashes."""
+        """Create MessageRecord using module-level snapshot hashes."""
         msg_id = msg_id or str(uuid4())
         is_request = seq_id % 2 == 0
         return MessageRecord(
@@ -117,9 +100,9 @@ class TestReconstructContext:
             total_tokens=None if is_request else 100,
             seq_id=seq_id,
             timestamp=utcnow(),
-            system_prompt_hash=self.sys_hash,
-            tool_definition_hash=self.tool_hash,
-            agent_config_hash=self.config_hash,
+            system_prompt_hash=UNIT_TEST_SYS_HASH,
+            tool_definition_hash=UNIT_TEST_TOOL_HASH,
+            agent_config_hash=UNIT_TEST_CONFIG_HASH,
             context_window_start_msg_id=context_window_start_msg_id,
         )
 
@@ -146,12 +129,12 @@ class TestReconstructContext:
         expected_messages: list[MessageRecord],
         expected_agent_id: str,
     ):
-        """Common assertions for reconstruction tests. Uses self.session, self.sys_prompt, self.tool_list, self.agent_config."""
+        """Common assertions for reconstruction tests."""
         result = await reconstruct_context(self.session, target.id)
         
-        assert result.system_prompt == self.sys_prompt
+        assert result.system_prompt == UNIT_TEST_SYS_PROMPT
         assert result.tool_definitions == [UNIT_TEST_TOOL_DEF]
-        assert result.agent_config == self.agent_config
+        assert result.agent_config == UNIT_TEST_AGENT_CONFIG
         assert result.agent_id == expected_agent_id
         assert result.target_message.id == target.id
         assert [m.id for m in result.messages] == [m.id for m in expected_messages]
