@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,25 +29,31 @@ from messages.messages import _compute_sha256, deserialize_messages
 from utils.ctx_reconstructor import ReconstructedContext, reconstruct_context
 
 
-async def _create_snapshots(session: AsyncSession) -> tuple[str, str, str, list[dict]]:
-    """Create and persist snapshots. Returns (sys_hash, tool_hash, sys_content, tool_list)."""
+UNIT_TEST_TOOL_DEF = ToolDefinition(
+    name="test_tool",
+    description="A test tool",
+    parameters_json_schema={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+)
+
+
+async def _create_snapshots(session: AsyncSession) -> tuple[str, str, str]:
+    """Create and persist snapshots. Returns (sys_hash, tool_hash, sys_content)."""
     system_prompt = "You are a helpful assistant."
     system_prompt_hash = _compute_sha256(system_prompt)
-    
-    tool_list = [{"name": "test_tool", "description": "A test tool"}]
-    tool_schemas_json = json.dumps(tool_list, sort_keys=True)
-    tool_schema_hash = _compute_sha256(tool_schemas_json)
-    
+
+    tool_json = json.dumps([dataclasses.asdict(UNIT_TEST_TOOL_DEF)], separators=(",", ":"))
+    tool_schema_hash = _compute_sha256(tool_json)
+
     session.add_all([
         SystemPromptSnapshot(id=system_prompt_hash, content=system_prompt, created_at=utcnow()),
-        ToolSchemaSnapshot(id=tool_schema_hash, content=tool_schemas_json, created_at=utcnow()),
+        ToolSchemaSnapshot(id=tool_schema_hash, content=tool_json, created_at=utcnow()),
     ])
     await session.flush()
-    
-    return system_prompt_hash, tool_schema_hash, system_prompt, tool_list
+
+    return system_prompt_hash, tool_schema_hash, system_prompt
 
 
-async def _create_snapshots_with_noise(session: AsyncSession) -> tuple[str, str, str, list[dict]]:
+async def _create_snapshots_with_noise(session: AsyncSession) -> tuple[str, str, str]:
     """Create target snapshots plus noise snapshots to test correct hash selection."""
     target_snapshots = await _create_snapshots(session)
     
@@ -74,9 +81,7 @@ class TestReconstructContext:
         self.session = session
         self.agent_record = agent_record
         snapshot_factory = request.param
-        self.sys_hash, self.tool_hash, self.sys_prompt, self.tool_list = (
-            await snapshot_factory(session)
-        )
+        self.sys_hash, self.tool_hash, self.sys_prompt = await snapshot_factory(session)
 
     def _make_message(
         self,
@@ -128,7 +133,7 @@ class TestReconstructContext:
         result = await reconstruct_context(self.session, target.id)
         
         assert result.system_prompt == self.sys_prompt
-        assert result.tool_schemas == self.tool_list
+        assert result.tool_definitions == [UNIT_TEST_TOOL_DEF]
         assert result.agent_id == expected_agent_id
         assert result.target_message.id == target.id
         assert [m.id for m in result.messages] == [m.id for m in expected_messages]
@@ -224,19 +229,17 @@ class TestReconstructContextIntegration:
 
     async def _run_and_reconstruct(
         self, prompt: str, test_model: TestModel
-    ) -> tuple[ReconstructedContext, list[dict]]:
+    ) -> tuple[ReconstructedContext, list[ToolDefinition]]:
         """Run agent turn and reconstruct context from last message.
-        
-        Returns (reconstructed_context, expected_tool_schemas) for verification.
+
+        Returns (reconstructed_context, expected_tool_definitions) for verification.
         """
         agent_app_state_reg: dict[str, AgentAppState] = {}
         with patch("agent.factory.get_model", return_value=test_model):
             factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
             async with factory.build_agent_and_deps() as (pydantic_agent, deps):
-                # Capture expected tool schemas from the live agent (ground truth)
-                expected_tool_schemas = [
-                    dataclasses.asdict(td) for td in _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
-                ]
+                # Capture expected tool definitions from the live agent (ground truth)
+                expected_tool_definitions = _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
                 async for _ in run_stateful_agent(pydantic_agent, deps, agent_app_state_reg[self.agent_record.id], prompt):
                     pass
         last_msg_id = (await self.session.execute(
@@ -246,15 +249,15 @@ class TestReconstructContextIntegration:
             .limit(1)
         )).scalar_one()
         reconstructed = await reconstruct_context(self.session, last_msg_id)
-        return reconstructed, expected_tool_schemas
+        return reconstructed, expected_tool_definitions
 
-    def _assert_standard_result(self, result: ReconstructedContext, expected_tool_schemas: list[dict]):
+    def _assert_standard_result(self, result: ReconstructedContext, expected_tool_definitions: list[ToolDefinition]):
         """Common assertions for integration tests."""
         assert EXPECTED_COMPILED_SYS_PROMPT == result.system_prompt
         assert result.agent_id == self.agent_record.id
-        # Verify tool schemas match ground truth from the live agent
-        assert {s["name"] for s in expected_tool_schemas} == set(ALL_TOOL_NAMES), "Sanity: expected schemas cover all tools"
-        assert result.tool_schemas == expected_tool_schemas
+        # Verify tool definitions match ground truth from the live agent
+        assert {td.name for td in expected_tool_definitions} == set(ALL_TOOL_NAMES), "Sanity: expected definitions cover all tools"
+        assert result.tool_definitions == expected_tool_definitions
 
     @pytest.mark.parametrize("call_tools,min_messages", [([], 1), (["duckduckgo_search"], 3)], ids=["text_only", "with_tool"])
     async def test_round_trip(self, call_tools: list, min_messages: int):
@@ -272,8 +275,8 @@ class TestReconstructContextIntegration:
         assert len(second.messages) > len(first.messages)
         assert second.messages[0].id == first.messages[0].id  # Same context window start
         assert second.system_prompt == first.system_prompt
-        assert first.tool_schemas == first_tools
-        assert second.tool_schemas == second_tools
+        assert first.tool_definitions == first_tools
+        assert second.tool_definitions == second_tools
 
     async def test_mutated_config_snapshot_dedup(self):
         """After config mutation, old messages keep original snapshot, new get updated."""
@@ -301,5 +304,5 @@ class TestReconstructContextIntegration:
         # Second run has mutated snapshot
         assert new_instructions in second.system_prompt
         assert INTEGRATION_SYSTEM_INSTRUCTIONS not in second.system_prompt
-        assert second.tool_schemas == second_expected_tools
-        assert [schema["name"] for schema in second.tool_schemas] == ["memory_replace"]
+        assert second.tool_definitions == second_expected_tools
+        assert [td.name for td in second.tool_definitions] == ["memory_replace"]

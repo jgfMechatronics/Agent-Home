@@ -9,6 +9,7 @@ TODO CRITICAL: When setting this up to actually run standalone, MAKE SURE to use
 import json
 from dataclasses import dataclass
 
+from pydantic_ai.tools import ToolDefinition
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +23,7 @@ class ReconstructedContext:
     
     Attributes:
         system_prompt: The compiled system prompt that was active
-        tool_schemas: List of tool schema dicts that were available
+        tool_definitions: List of ToolDefinition objects that were available
         messages: MessageRecords from context_window_start up to (exclusive) target
         target_message: The message you asked about (the focal point)
         agent_id: The agent this context belongs to
@@ -41,7 +42,7 @@ class ReconstructedContext:
     of target_message was conditioned on
     """
     system_prompt: str
-    tool_schemas: list[dict]
+    tool_definitions: list[ToolDefinition]
     messages: list[MessageRecord]
     target_message: MessageRecord
     agent_id: str
@@ -98,7 +99,7 @@ async def reconstruct_context(session: AsyncSession, target_message_id: str) -> 
     
     return ReconstructedContext(
         system_prompt=sys_snapshot.content,
-        tool_schemas=json.loads(tool_snapshot.content),
+        tool_definitions=[ToolDefinition(**d) for d in json.loads(tool_snapshot.content)],
         messages=messages,
         target_message=target,
         agent_id=target.agent_id,
