@@ -18,6 +18,7 @@ from agent.runner import _extract_tool_definitions, run_stateful_agent
 from agent.tools import TOOL_REGISTRY
 from agent.types import AgentAppState, AgentConfig, AgentDeps
 from db.models import (
+    AgentConfigSnapshot,
     AgentRecord,
     MessageRecord,
     SystemPromptSnapshot,
@@ -35,36 +36,51 @@ UNIT_TEST_TOOL_DEF = ToolDefinition(
     parameters_json_schema={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
 )
 
+UNIT_TEST_AGENT_CONFIG = AgentConfig(
+    model_name="claude-sonnet-4-20250514",
+    tool_names=["test_tool"],
+    soft_compaction_limit=10000,
+)
 
-async def _create_snapshots(session: AsyncSession) -> tuple[str, str, str]:
-    """Create and persist snapshots. Returns (sys_hash, tool_hash, sys_content)."""
+
+async def _create_snapshots(session: AsyncSession) -> tuple[str, str, str, str, AgentConfig]:
+    """Create and persist snapshots. Returns (sys_hash, tool_hash, config_hash, sys_content, agent_config)."""
     system_prompt = "You are a helpful assistant."
     system_prompt_hash = _compute_sha256(system_prompt)
 
     tool_json = json.dumps([dataclasses.asdict(UNIT_TEST_TOOL_DEF)], separators=(",", ":"))
     tool_definition_hash = _compute_sha256(tool_json)
 
+    config_json = UNIT_TEST_AGENT_CONFIG.model_dump_json()
+    agent_config_hash = _compute_sha256(config_json)
+
     session.add_all([
         SystemPromptSnapshot(id=system_prompt_hash, content=system_prompt, created_at=utcnow()),
         ToolDefinitionSnapshot(id=tool_definition_hash, content=tool_json, created_at=utcnow()),
+        AgentConfigSnapshot(id=agent_config_hash, content=config_json, created_at=utcnow()),
     ])
     await session.flush()
+    # REVIEW: This return signature has grown too large. Lets rethink the design here. Perhaps this function can be promoted to
+    # a member fixture which sets member data directly. Have to figure out how to handle noise parametrization though.
+    # There's also no reason for it to return a modfule level constant as far as I see.
+    return system_prompt_hash, tool_definition_hash, agent_config_hash, system_prompt, UNIT_TEST_AGENT_CONFIG
 
-    return system_prompt_hash, tool_definition_hash, system_prompt
 
-
-async def _create_snapshots_with_noise(session: AsyncSession) -> tuple[str, str, str]:
+async def _create_snapshots_with_noise(session: AsyncSession) -> tuple[str, str, str, str, AgentConfig]:
     """Create target snapshots plus noise snapshots to test correct hash selection."""
     target_snapshots = await _create_snapshots(session)
     
-    # Add noise: different system prompt and tool schema that shouldn't be selected
+    # Add noise: different system prompt, tool schema, and agent config that shouldn't be selected
     noise_prompt = "You are a different assistant entirely."
     noise_tools = [{"name": "noise_tool", "description": "Not the tool you want"}]
     noise_tools_json = json.dumps(noise_tools, sort_keys=True)
+    noise_config = AgentConfig(model_name="claude-haiku-4-5", tool_names=["noise_tool"], soft_compaction_limit=999)
+    noise_config_json = noise_config.model_dump_json()
     
     session.add_all([
         SystemPromptSnapshot(id=_compute_sha256(noise_prompt), content=noise_prompt, created_at=utcnow()),
         ToolDefinitionSnapshot(id=_compute_sha256(noise_tools_json), content=noise_tools_json, created_at=utcnow()),
+        AgentConfigSnapshot(id=_compute_sha256(noise_config_json), content=noise_config_json, created_at=utcnow()),
     ])
     await session.flush()
     
@@ -81,7 +97,7 @@ class TestReconstructContext:
         self.session = session
         self.agent_record = agent_record
         snapshot_factory = request.param
-        self.sys_hash, self.tool_hash, self.sys_prompt = await snapshot_factory(session)
+        self.sys_hash, self.tool_hash, self.config_hash, self.sys_prompt, self.agent_config = await snapshot_factory(session)
 
     def _make_message(
         self,
@@ -103,6 +119,7 @@ class TestReconstructContext:
             timestamp=utcnow(),
             system_prompt_hash=self.sys_hash,
             tool_definition_hash=self.tool_hash,
+            agent_config_hash=self.config_hash,
             context_window_start_msg_id=context_window_start_msg_id,
         )
 
@@ -129,11 +146,12 @@ class TestReconstructContext:
         expected_messages: list[MessageRecord],
         expected_agent_id: str,
     ):
-        """Common assertions for reconstruction tests. Uses self.session, self.sys_prompt, self.tool_list."""
+        """Common assertions for reconstruction tests. Uses self.session, self.sys_prompt, self.tool_list, self.agent_config."""
         result = await reconstruct_context(self.session, target.id)
         
         assert result.system_prompt == self.sys_prompt
         assert result.tool_definitions == [UNIT_TEST_TOOL_DEF]
+        assert result.agent_config == self.agent_config
         assert result.agent_id == expected_agent_id
         assert result.target_message.id == target.id
         assert [m.id for m in result.messages] == [m.id for m in expected_messages]
@@ -207,6 +225,11 @@ class TestReconstructContext:
 ALL_TOOL_NAMES = list(TOOL_REGISTRY.keys())
 INTEGRATION_SYSTEM_INSTRUCTIONS = "You are an integration test agent."
 EXPECTED_COMPILED_SYS_PROMPT = "<system_instructions>\n" + INTEGRATION_SYSTEM_INSTRUCTIONS + "\n</system_instructions>"
+INTEGRATION_AGENT_CONFIG = AgentConfig(
+    model_name="claude-sonnet-4-20250514",
+    tool_names=ALL_TOOL_NAMES,
+    soft_compaction_limit=10000,
+)
 
 @pytest.mark.asyncio
 class TestReconstructContextIntegration:
@@ -219,11 +242,7 @@ class TestReconstructContextIntegration:
         self.agent_record = agent_record
         
         # Configure for integration tests: all tools, known system instructions
-        agent_record.agent_config = AgentConfig(
-            model_name="claude-sonnet-4-20250514",
-            tool_names=ALL_TOOL_NAMES,
-            soft_compaction_limit=10000,
-        )
+        agent_record.agent_config = INTEGRATION_AGENT_CONFIG
         agent_record.system_instructions = INTEGRATION_SYSTEM_INSTRUCTIONS
         await compile_system_prompt(AgentDeps(session, agent_record))
 
@@ -263,6 +282,8 @@ class TestReconstructContextIntegration:
         # Verify tool definitions match ground truth from the live agent
         assert {td.name for td in expected_tool_definitions} == set(ALL_TOOL_NAMES), "Sanity: expected definitions cover all tools"
         assert result.tool_definitions == expected_tool_definitions
+        # Verify agent config matches
+        assert result.agent_config == INTEGRATION_AGENT_CONFIG
         # Verify reconstructed messages match persisted messages
         assert result.messages + [result.target_message] == expected_messages
 
@@ -301,10 +322,11 @@ class TestReconstructContextIntegration:
 
         # Mutate config
         new_instructions = "MUTATED personality."
-        self.agent_record.system_instructions = new_instructions
-        self.agent_record.agent_config = AgentConfig(
+        mutated_config = AgentConfig(
             model_name="claude-sonnet-4-20250514", tool_names=["memory_replace"], soft_compaction_limit=10000
         )
+        self.agent_record.system_instructions = new_instructions
+        self.agent_record.agent_config = mutated_config
         await compile_system_prompt(AgentDeps(self.session, self.agent_record))
         await self.session.commit()
         await self.session.refresh(self.agent_record)
@@ -320,5 +342,8 @@ class TestReconstructContextIntegration:
         assert INTEGRATION_SYSTEM_INSTRUCTIONS not in second.system_prompt
         assert second.tool_definitions == second_expected_tools
         assert [td.name for td in second.tool_definitions] == ["memory_replace"]
+        # Verify agent config changed for second run
+        assert second.agent_config == mutated_config
+        assert second.agent_config != first.agent_config
         # Verify message identity for second run (second_msgs includes ALL messages, not just from this run)
         assert second.messages + [second.target_message] == second_msgs
