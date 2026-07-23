@@ -24,8 +24,8 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import AgentDeps
-from db.models import MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
+from agent.types import AgentConfig, AgentDeps
+from db.models import AgentConfigSnapshot, BaseSnapshot, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ def _compute_sha256(content: str) -> str:
 
 async def _ensure_content_snapshotted(
     session: AsyncSession,
-    model_type: type[SystemPromptSnapshot | ToolDefinitionSnapshot],
+    model_type: type[BaseSnapshot],
     content: str,
 ) -> str:
     """Hash content, insert a snapshot row of the given type if not already present, return the hash id."""
@@ -192,6 +192,11 @@ async def _ensure_tool_definition_snapshotted(session: AsyncSession, schemas: li
     """Insert a ToolDefinitionSnapshot for the given tool definitions (if not already present). Returns the hash id."""
     content = json.dumps([dataclasses.asdict(s) for s in schemas], separators=(",", ":"))
     return await _ensure_content_snapshotted(session, ToolDefinitionSnapshot, content)
+
+
+async def _ensure_agent_config_snapshotted(session: AsyncSession, config: AgentConfig) -> str:
+    """Insert an AgentConfigSnapshot for the given agent config (if not already present). Returns the hash id."""
+    return await _ensure_content_snapshotted(session, AgentConfigSnapshot, config.model_dump_json())
 
 
 async def _get_context_window_start_msg_id(
@@ -265,6 +270,7 @@ async def persist_messages(
     # Snapshot hashes — computed once per call; **assumed** stable across the batch
     system_prompt_hash = await _ensure_system_prompt_snapshotted(deps.session, deps.compiled_system_prompt)
     tool_definition_hash = await _ensure_tool_definition_snapshotted(deps.session, tool_schemas)
+    agent_config_hash = await _ensure_agent_config_snapshotted(deps.session, deps.config)
 
     # context_window_start_msg_id — look up existing start, or resolve self-referentially on first insert
     context_window_start_msg_id = await _get_context_window_start_msg_id(
@@ -306,6 +312,7 @@ async def persist_messages(
             timestamp=_message_timestamp(msg),
             system_prompt_hash=system_prompt_hash,
             tool_definition_hash=tool_definition_hash,
+            agent_config_hash=agent_config_hash,
             context_window_start_msg_id=context_window_start_msg_id,
         )
         deps.session.add(record)

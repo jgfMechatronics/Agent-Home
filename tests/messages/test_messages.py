@@ -21,7 +21,8 @@ from pydantic_ai.usage import RequestUsage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import AgentRecord, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
+from agent.types import AgentConfig
+from db.models import AgentConfigSnapshot, AgentRecord, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
@@ -56,6 +57,13 @@ SAMPLE_TOOL_SCHEMAS = [
         },
     )
 ]
+
+MUTATED_AGENT_CONFIG = AgentConfig(
+    model_name="claude-haiku-4-5-20251001",
+    tool_names=["memory_replace"],
+    soft_compaction_limit=20000,
+    thinking_enabled=True,
+)
 
 MUTATED_TOOL_SCHEMAS = [
     ToolDefinition(
@@ -381,6 +389,9 @@ class TestPersistMessagesSnapshots(DBTestBase):
     async def _tool_snapshots(self):
         return (await self.session.execute(select(ToolDefinitionSnapshot))).scalars().all()
 
+    async def _config_snapshots(self):
+        return (await self.session.execute(select(AgentConfigSnapshot))).scalars().all()
+
     @pytest.mark.parametrize("prompt", ["You are a helpful test assistant.", ""])
     async def test_snapshot_stores_correct_system_prompt_content(self, prompt):
         """Snapshot row stores the exact system prompt string (including empty); record hash points to it."""
@@ -430,6 +441,26 @@ class TestPersistMessagesSnapshots(DBTestBase):
         n=1 verifies the self-referential case; n=3 verifies the full-batch case."""
         records = await self._persist_and_fetch(make_alternating_messages(n_messages))
         assert all(r.context_window_start_msg_id == records[0].id for r in records)
+
+    async def test_snapshot_stores_correct_agent_config_content(self):
+        """Snapshot row stores the agent config as JSON that round-trips correctly; record hash points to it."""
+        records = await self._persist_and_fetch([make_request()])
+        snap = (await self._config_snapshots())[0]
+        assert AgentConfig.model_validate_json(snap.content) == self.agent.agent_config
+        assert records[0].agent_config_hash == snap.id
+
+    @pytest.mark.parametrize("second_config,expected_count", [
+        (SAMPLE_AGENT_CONFIG, 1), (MUTATED_AGENT_CONFIG, 2)
+    ])
+    async def test_agent_config_snapshot_dedup(self, second_config, expected_count):
+        """Same config reuses the existing snapshot row; a changed config creates a new one.
+        Record hashes exactly match the set of snapshot IDs."""
+        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        self.agent.agent_config = second_config
+        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        snaps, records = await self._config_snapshots(), await fetch_all_records(self.session, self.agent.id)
+        assert len(snaps) == expected_count
+        assert {r.agent_config_hash for r in records} == {s.id for s in snaps}
 
     async def test_context_window_start_stable_across_calls(self):
         """Subsequent persist calls all reference the UUID of the very first message ever persisted."""
