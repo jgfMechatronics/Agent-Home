@@ -4,13 +4,30 @@ from typing import Any
 
 from datetime import datetime, timedelta, timezone
 
+import hashlib
+
 import pytest
+import pytest_asyncio
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig
 from conftest import SAMPLE_AGENT_CONFIG
-from db.models import AgentRecord, MemoryBlockRecord, MessageRecord, utcnow
+from db.models import AgentConfigSnapshot, AgentRecord, MemoryBlockRecord, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
+
+
+def _sha256(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+# Minimal stub snapshot content — gives MessageRecord FK fields valid values without real data
+STUB_SYS_PROMPT = ""
+STUB_SYS_HASH = _sha256(STUB_SYS_PROMPT)
+STUB_TOOL_JSON = "[]"
+STUB_TOOL_HASH = _sha256(STUB_TOOL_JSON)
+STUB_CONFIG_JSON = SAMPLE_AGENT_CONFIG.model_dump_json()
+STUB_CONFIG_HASH = _sha256(STUB_CONFIG_JSON)
+STUB_CTX_MSG_ID = "00000000-0000-0000-0000-000000000001"
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -25,6 +42,10 @@ PARTIAL_MESSAGE_FIELDS = {
     "type": "ModelRequest",
     "content": "{}",
     "total_tokens": None,
+    "system_prompt_hash": STUB_SYS_HASH,
+    "tool_definition_hash": STUB_TOOL_HASH,
+    "agent_config_hash": STUB_CONFIG_HASH,
+    "context_window_start_msg_id": STUB_CTX_MSG_ID,
 }
 
 
@@ -38,6 +59,17 @@ def memory_block_record(agent_record: AgentRecord) -> MemoryBlockRecord:
 def message_record(agent_record: AgentRecord) -> MessageRecord:
     """An unpersisted MessageRecord for use in tests that need an existing message."""
     return MessageRecord(agent_id=agent_record.id, seq_id=0, timestamp=datetime(2026, 1, 1, 12, 0, 0), **PARTIAL_MESSAGE_FIELDS)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _seed_stub_snapshots(session: AsyncSession):
+    """Pre-seed stub snapshot rows so MessageRecord FK constraints are satisfied for all tests."""
+    session.add_all([
+        SystemPromptSnapshot(id=STUB_SYS_HASH, content=STUB_SYS_PROMPT, created_at=utcnow()),
+        ToolDefinitionSnapshot(id=STUB_TOOL_HASH, content=STUB_TOOL_JSON, created_at=utcnow()),
+        AgentConfigSnapshot(id=STUB_CONFIG_HASH, content=STUB_CONFIG_JSON, created_at=utcnow()),
+    ])
+    await session.flush()
 
 
 async def assert_round_trips(session: AsyncSession, record: Any, expected_fields: dict):
@@ -205,6 +237,10 @@ async def test_message_record_stores_all_fields(session: AsyncSession, message_r
         "content": message_record.content,
         "total_tokens": message_record.total_tokens,
         "timestamp": message_record.timestamp,
+        "system_prompt_hash": STUB_SYS_HASH,
+        "tool_definition_hash": STUB_TOOL_HASH,
+        "agent_config_hash": STUB_CONFIG_HASH,
+        "context_window_start_msg_id": STUB_CTX_MSG_ID,
     }
     await assert_round_trips(session, message_record, fields)
 

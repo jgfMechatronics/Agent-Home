@@ -110,9 +110,16 @@ class DBTestBase:
         self.agent = agent_record
         self.deps = make_deps(session, agent_record)
 
+    async def _persist(self, messages, tool_schemas=None, *, deps=None) -> int | None:
+        """Persist messages with default tool schemas; use self.deps unless deps is provided."""
+        return await persist_messages(
+            deps if deps is not None else self.deps,
+            messages,
+            tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS,
+        )
+
     async def _persist_and_fetch(self, messages, tool_schemas=None) -> list[MessageRecord]:
-        schemas = tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS
-        await persist_messages(self.deps, messages, schemas)
+        await self._persist(messages, tool_schemas)
         return await fetch_all_records(self.session, self.agent.id)
 
 
@@ -167,10 +174,7 @@ class TestPersistMessages(DBTestBase):
 
     async def test_returns_last_seen_total_tokens_when_sequence_ends_with_nones(self, resp_with_usage):
         """When the sequence ends with messages that have no usage, the last seen non-None value is returned."""
-        result = await persist_messages(
-            self.deps,
-            [resp_with_usage, make_request(), make_response()],
-        )
+        result = await self._persist([resp_with_usage, make_request(), make_response()])
         assert result == resp_with_usage.usage.total_tokens
 
     async def test_returns_last_total_tokens_when_multiple_responses_have_usage(self, resp_with_usage):
@@ -179,7 +183,7 @@ class TestPersistMessages(DBTestBase):
             parts=[TextPart(content="later")],
             usage=RequestUsage(input_tokens=50, output_tokens=25),
         )
-        result = await persist_messages(self.deps, [resp_with_usage, make_request(), resp_with_other_usage])
+        result = await self._persist([resp_with_usage, make_request(), resp_with_other_usage])
         assert result == resp_with_other_usage.usage.total_tokens
 
     async def test_timestamp_set_on_all_records(self):
@@ -209,8 +213,8 @@ class TestPersistMessages(DBTestBase):
     async def test_assigns_sequential_seq_ids(self, existing_count: int, new_count: int):
         """persist_messages assigns sequential seq_ids starting from MAX(existing) + 1."""
         # will be no op for the 0 case, helper returns empty list
-        await persist_messages(self.deps, make_alternating_messages(existing_count, "existing"))
-        await persist_messages(self.deps, make_alternating_messages(new_count, "new"))
+        await self._persist(make_alternating_messages(existing_count, "existing"))
+        await self._persist(make_alternating_messages(new_count, "new"))
 
         # Load all and verify seq_ids
         all_records = await load_messages(self.session, self.agent.id)
@@ -253,9 +257,9 @@ class TestPersistMessages(DBTestBase):
         my_first_expected_msg = make_request("my msg")
         my_second_expected_msg = make_request("my second msg")
         
-        await persist_messages(other_deps, [expected_other_msg])
-        await persist_messages(self.deps, [my_first_expected_msg])
-        await persist_messages(self.deps, [my_second_expected_msg])
+        await self._persist([expected_other_msg], deps=other_deps)
+        await self._persist([my_first_expected_msg])
+        await self._persist([my_second_expected_msg])
 
         my_records = await fetch_all_records(self.session, self.agent.id)
         other_records = await fetch_all_records(self.session, other_agent.id)
@@ -351,7 +355,7 @@ class TestPersistMessages(DBTestBase):
             return original_dump(messages_arg)
 
         with patch.object(ModelMessagesTypeAdapter, "dump_json", side_effect=controlled_dump):
-            await persist_messages(self.deps, [good, bad, good2])
+            await self._persist([good, bad, good2])
 
         records = await fetch_all_records(self.session, self.agent.id)
         assert len(records) == 4  # good, positional error, good2, summary warning
@@ -479,12 +483,11 @@ class TestLoadMessages(DBTestBase):
     """Tests for load_messages(session, agent_id, start_seq_id=0).
 
     Pre-seeds DB via persist_messages to ensure realistic records.
-    TODO: Update with make_alternating fixture or whatever it was called
     """
 
     async def test_returns_all_messages_by_default(self):
         messages = [make_request(), make_response(), make_request(), make_response()]
-        await persist_messages(self.deps, messages)
+        await self._persist(messages)
 
         records = await load_messages(self.session, self.agent.id)
         assert deserialize_messages(records) == messages
@@ -496,8 +499,8 @@ class TestLoadMessages(DBTestBase):
     async def test_start_seq_id_filters_inclusive(self):
         first = [make_request("first"), make_response("first reply")]
         second = [make_request("second"), make_response("second reply")]
-        await persist_messages(self.deps, first)
-        await persist_messages(self.deps, second)
+        await self._persist(first)
+        await self._persist(second)
 
         all_records = await load_messages(self.session, self.agent.id)
         cutoff_seq_id = all_records[1].seq_id  # trim to second record (first reply) and on
@@ -509,7 +512,7 @@ class TestLoadMessages(DBTestBase):
     async def test_end_seq_id_filters_exclusive(self):
         """end_seq_id excludes messages at or after that seq_id."""
         messages = [make_request("0"), make_response("1"), make_request("2"), make_response("3")]
-        await persist_messages(self.deps, messages)
+        await self._persist(messages)
 
         all_records = await load_messages(self.session, self.agent.id)
         # Get messages 1 and 2 (exclusive of 0 and 3)
@@ -522,7 +525,7 @@ class TestLoadMessages(DBTestBase):
 
     async def test_results_in_seq_id_order(self):
         messages = [make_request("first"), make_response("second"), make_request("third")]
-        await persist_messages(self.deps, messages)
+        await self._persist(messages)
 
         records = await load_messages(self.session, self.agent.id)
         seq_ids = [r.seq_id for r in records]
@@ -539,22 +542,22 @@ class TestLoadMessages(DBTestBase):
         await self.session.flush()
         other_deps = make_deps(self.session, other_agent)
 
-        await persist_messages(self.deps, [make_request(), make_response()])
-        await persist_messages(other_deps, [make_request(), make_response()])
+        await self._persist([make_request(), make_response()])
+        await self._persist([make_request(), make_response()], deps=other_deps)
 
         records = await load_messages(self.session, self.agent.id)
         assert len(records) == 2
         assert all(r.agent_id == self.agent.id for r in records)
 
     async def test_returns_list_of_message_records(self):
-        await persist_messages(self.deps, [make_request()])
+        await self._persist([make_request()])
         records = await load_messages(self.session, self.agent.id)
         assert len(records) == 1
         assert isinstance(records[0], MessageRecord)
 
     async def test_start_seq_id_ahead_of_all_returns_empty(self):
         """When start_seq_id is larger than every message's seq_id, the result is empty."""
-        await persist_messages(self.deps, [make_request(), make_response()])
+        await self._persist([make_request(), make_response()])
 
         records = await load_messages(self.session, self.agent.id, start_seq_id=999999)
         assert records == []
@@ -635,7 +638,7 @@ class TestRoundTrip(DBTestBase):
 
     async def test_request_response_round_trip(self):
         original = [make_request("round-trip me"), make_response("got it")]
-        await persist_messages(self.deps, original)
+        await self._persist(original)
 
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)
@@ -644,7 +647,7 @@ class TestRoundTrip(DBTestBase):
 
     async def test_tool_pair_round_trip(self):
         response_with_call, request_with_return = make_tool_pair()
-        await persist_messages(self.deps, [response_with_call, request_with_return])
+        await self._persist([response_with_call, request_with_return])
 
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)

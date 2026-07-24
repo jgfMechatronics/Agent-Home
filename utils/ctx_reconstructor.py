@@ -4,7 +4,8 @@ Context reconstructor — reconstruct the exact context an LLM saw at any histor
 This is a standalone module with direct read-only DB access. It does not require
 the server to be running.
 
-TODO CRITICAL: When setting this up to actually run standalone, MAKE SURE to use a READ ONLY ENGINE
+NOTE: When using this module standalone (outside the server), use a read-only engine to avoid
+accidentally writing to the DB. See SQLAlchemy docs for read-only engine configuration.
 """
 import json
 from dataclasses import dataclass
@@ -30,7 +31,7 @@ class ReconstructedContext:
         target_message: The message you asked about (the focal point)
         agent_id: The agent this context belongs to
     
-    target_message is the ONLY message in the ReconstructedContext where the context is guarenteed
+    target_message is the ONLY message in the ReconstructedContext where the context is guaranteed
     to be as described. IE if you pick a different message from message list, that message may have been sent/generated
     with a different system prompt, different tool schema, or different messages in context.
     If you want the context associated with a different message from messages, then rerun reconstruct_context with said message ID
@@ -40,7 +41,7 @@ class ReconstructedContext:
     When target_message is a ModelRequest, then the rest of the ReconstructedContext can be interpreted as the context which was sent
     along with the target when the target was sent
 
-    When target_message is a ModelResponse, the rest of ReconstructedContext can be interpreted as the the context which the generation
+    When target_message is a ModelResponse, the rest of ReconstructedContext can be interpreted as the context which the generation
     of target_message was conditioned on
     """
     system_prompt: str

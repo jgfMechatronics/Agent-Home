@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.tools import ToolDefinition
     from pydantic_ai.toolsets import AbstractToolset
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,8 +33,11 @@ def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent_id: s
             for tool in ts.tools.values():
                 tool_schemas.append(tool.tool_def)
         else:
-            logger.error(f"Error, agent {agent_id} has toolset {ts.label} which is not a FunctionToolset.\n"
-                         "Tool definition logging for context reconstruction will be missing this toolset!!!")
+            logger.error(
+                "Agent %s has a non-FunctionToolset toolset (%s); "
+                "tool definitions for context reconstruction will be incomplete.",
+                agent_id, ts.label,
+            )
     return tool_schemas
 
 

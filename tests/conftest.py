@@ -232,6 +232,7 @@ def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | N
     If raises_mid_stream is set, the exception is raised after all events are yielded.
     """
     agent = Mock()
+    agent.toolsets = []  # _extract_tool_definitions iterates toolsets; mock agents have none
 
     async def _gen():
         for event in (events or []):
