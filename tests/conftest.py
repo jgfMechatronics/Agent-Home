@@ -161,7 +161,7 @@ async def agent_record(session: AsyncSession) -> AgentRecord:
     """
     agent = AgentRecord(
         name="test-agent",
-        agent_config=SAMPLE_AGENT_CONFIG,
+        agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
         system_instructions="You are a test agent.",
     )
     session.add(agent)
@@ -181,7 +181,7 @@ async def agent_with_blocks(session: AsyncSession):
     """
     agent = AgentRecord(
         name="agent-with-blocks",
-        agent_config=SAMPLE_AGENT_CONFIG,
+        agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
         system_instructions="You are a helpful assistant.",
     )
     session.add(agent)

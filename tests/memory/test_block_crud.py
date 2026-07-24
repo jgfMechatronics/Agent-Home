@@ -39,8 +39,8 @@ async def multi_tenant_agents_with_core_memory(session: AsyncSession):
     Returns dict with agents and their blocks for easy test access.
     """
     # Create two agents
-    agent_a = AgentRecord(name="agent-a", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Agent A instructions")
-    agent_b = AgentRecord(name="agent-b", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Agent B instructions")
+    agent_a = AgentRecord(name="agent-a", agent_config=SAMPLE_AGENT_CONFIG.model_copy(), system_instructions="Agent A instructions")
+    agent_b = AgentRecord(name="agent-b", agent_config=SAMPLE_AGENT_CONFIG.model_copy(), system_instructions="Agent B instructions")
     session.add_all([agent_a, agent_b])
     await session.flush()
     
@@ -110,7 +110,7 @@ async def test_get_blocks_returns_empty_list_for_agent_with_no_blocks(
     _ = multi_tenant_agents_with_core_memory  # this fixture being included populates DB with agents that HAVE blocks
     
     # Create a third agent with no blocks to test isolation
-    agent = AgentRecord(name="empty-agent", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Empty")
+    agent = AgentRecord(name="empty-agent", agent_config=SAMPLE_AGENT_CONFIG.model_copy(), system_instructions="Empty")
     session.add(agent)
     await session.flush()
     

@@ -246,7 +246,7 @@ class TestPersistMessages(DBTestBase):
         """
         other_agent = AgentRecord(
             name="other-agent",
-            agent_config=SAMPLE_AGENT_CONFIG,
+            agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
             system_instructions="Other agent.",
         )
         self.session.add(other_agent)

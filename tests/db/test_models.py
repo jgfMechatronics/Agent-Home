@@ -117,7 +117,7 @@ async def assert_updated_at_bumps_on_modify(session: AsyncSession, record: Any, 
 # --- UUID auto-generation ---
 
 @pytest.mark.parametrize("make_record", [
-    lambda agent_id: AgentRecord(name="uuid-test", agent_config=SAMPLE_AGENT_CONFIG, system_instructions=""),
+    lambda agent_id: AgentRecord(name="uuid-test", agent_config=SAMPLE_AGENT_CONFIG.model_copy(), system_instructions=""),
     lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="uuid-test", content="", **PARTIAL_MEMORY_BLOCK_FIELDS),
     lambda agent_id: MessageRecord(agent_id=agent_id, seq_id=0, timestamp=datetime.now(timezone.utc), **PARTIAL_MESSAGE_FIELDS),
 ])
@@ -169,7 +169,7 @@ async def test_agent_config_type_decorator_rejects_wrong_type(session: AsyncSess
 
 async def test_agent_record_defaults(session: AsyncSession):
     """Verify default values on a freshly created agent (no optional fields provided)."""
-    agent = AgentRecord(name="defaults-test", agent_config=SAMPLE_AGENT_CONFIG)
+    agent = AgentRecord(name="defaults-test", agent_config=SAMPLE_AGENT_CONFIG.model_copy())
     session.add(agent)
     await session.flush()
     await session.refresh(agent)
