@@ -301,7 +301,7 @@ async def persist_messages(
         if context_window_start_msg_id is None:
             # Self-referential for the very first message: no prior history exists in the DB
             context_window_start_msg_id = record_id
-        
+
         record = MessageRecord(
             id=record_id,
             agent_id=deps.agent_id,

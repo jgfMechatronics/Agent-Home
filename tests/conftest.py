@@ -63,10 +63,6 @@ class _FrozenAgentConfig(AgentConfig):
             return self.model_dump() == other.model_dump()
         return NotImplemented
 
-    # Preserve the hash that frozen=True gives us; Python would otherwise
-    # set __hash__ = None when __eq__ is overridden.
-    __hash__ = AgentConfig.__hash__  # type: ignore[assignment]
-
 
 SAMPLE_AGENT_CONFIG = _FrozenAgentConfig(**SAMPLE_AGENT_CONFIG_DATA)
 
