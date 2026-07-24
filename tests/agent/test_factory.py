@@ -422,7 +422,7 @@ class TestBuildAgentAndDeps:
         pydantic-ai uses tool_choice='auto' (not 'required'), which Anthropic accepts with thinking.
         Also requires max_tokens > budget_tokens.
         """
-        self.agent_record.agent_config.thinking_enabled = True
+        self.agent_record.agent_config = self.agent_record.agent_config.model_copy(update={"thinking_enabled": True})
         async with self.factory.build_agent_and_deps() as (agent, deps):
             assert agent.model_settings.get("anthropic_thinking") == {
                 "type": "enabled",

@@ -279,6 +279,27 @@ async def client(app: FastAPI) -> AsyncClient:
 
 
 @pytest.fixture(autouse=True)
+def assert_sample_constants_unchanged():
+    """Catch any test that mutates the shared SAMPLE_AGENT_CONFIG / SAMPLE_AGENT_CONFIG_DATA constants.
+
+    Runs around every test. If a test body mutates either constant, teardown fails with a
+    clear message identifying the culprit test.
+    """
+    import json
+    config_before = SAMPLE_AGENT_CONFIG.model_dump_json()
+    data_before = json.dumps(SAMPLE_AGENT_CONFIG_DATA, sort_keys=True)
+    yield
+    config_after = SAMPLE_AGENT_CONFIG.model_dump_json()
+    data_after = json.dumps(SAMPLE_AGENT_CONFIG_DATA, sort_keys=True)
+    assert config_after == config_before, (
+        f"SAMPLE_AGENT_CONFIG was mutated!\nBefore: {config_before}\nAfter:  {config_after}"
+    )
+    assert data_after == data_before, (
+        f"SAMPLE_AGENT_CONFIG_DATA was mutated!\nBefore: {data_before}\nAfter:  {data_after}"
+    )
+
+
+@pytest.fixture(autouse=True)
 def override_db_session(app: FastAPI, session: AsyncSession):
     """Ensure routes use the test session, not a separate DB connection.
 
