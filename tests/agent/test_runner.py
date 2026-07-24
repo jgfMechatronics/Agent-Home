@@ -300,6 +300,8 @@ class FunctionModelTestAgent:
             ...
     TODO(Low priority): The blocking/resuming exectuion in stream/tool is a little duplicatey and could be
     cleaned up a bit with some common infrastructure and helpers to make it easier on callers
+
+    TODO: Is it possible to use pydantic_ai.models.test.TestModel for some of this?
     """
 
     

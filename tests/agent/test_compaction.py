@@ -38,7 +38,6 @@ from db.models import AgentRecord, MessageRecord
 
 # --- Fixtures ---
 
-
 def _make_config(
     soft_compaction_limit: int = 10000,
     compaction_target_fraction: float = 0.5,
@@ -57,7 +56,7 @@ async def _persist_messages_load_records(
     messages: list[ModelMessage],
 ) -> list[MessageRecord]:
     """Persist messages via the official persist_messages, then load and return the MessageRecords."""
-    await persist_messages(deps, messages)
+    await persist_messages(deps, messages, [])
     return await load_messages(deps.session, deps.agent_id)
 
 

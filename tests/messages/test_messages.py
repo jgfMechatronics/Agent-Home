@@ -1,9 +1,8 @@
 """
 Tests for messages/messages.py — persist_messages, load_messages, deserialize_messages.
 """
-import logging
+import json
 import time
-from datetime import datetime
 
 import pytest
 import pytest_asyncio
@@ -11,19 +10,19 @@ from unittest.mock import patch
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
-    ModelRequest,
     ModelResponse,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import AgentDeps
-from db.models import AgentRecord, MessageRecord, utcnow
+from agent.types import AgentConfig
+from db.models import AgentConfigSnapshot, AgentRecord, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
@@ -38,14 +37,50 @@ from conftest import (
 )
 
 
-def make_messages_batch(n: int) -> list[ModelMessage]:
-    """Generate n alternating request/response pairs for performance tests."""
-    return make_alternating_messages(n * 2)
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+SAMPLE_TOOL_SCHEMAS = [
+    ToolDefinition(
+        name="memory_replace",
+        description="Replace text in a memory block.",
+        parameters_json_schema={
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "old_string": {"type": "string"},
+                "new_string": {"type": "string"},
+            },
+            "required": ["label", "old_string", "new_string"],
+            "additionalProperties": False,
+        },
+    )
+]
+
+MUTATED_AGENT_CONFIG = AgentConfig(
+    model_name="claude-haiku-4-5-20251001",
+    tool_names=["memory_replace"],
+    soft_compaction_limit=20000,
+    thinking_enabled=True,
+)
+
+MUTATED_TOOL_SCHEMAS = [
+    ToolDefinition(
+        name="memory_insert",
+        description="Insert text into a memory block.",
+        parameters_json_schema={
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "new_string": {"type": "string"},
+            },
+            "required": ["label", "new_string"],
+            "additionalProperties": False,
+        },
+    )
+]
+
 
 async def fetch_all_records(session: AsyncSession, agent_id: str) -> list[MessageRecord]:
     """Load all MessageRecords for an agent, in seq_id order."""
@@ -55,6 +90,11 @@ async def fetch_all_records(session: AsyncSession, agent_id: str) -> list[Messag
         .order_by(MessageRecord.seq_id)
     )
     return list(result.scalars().all())
+
+
+def make_messages_batch(n: int) -> list[ModelMessage]:
+    """Generate n alternating request/response pairs for performance tests."""
+    return make_alternating_messages(n * 2)
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +109,18 @@ class DBTestBase:
         self.session = session
         self.agent = agent_record
         self.deps = make_deps(session, agent_record)
+
+    async def _persist(self, messages, tool_schemas=None, *, deps=None) -> int | None:
+        """Persist messages with default tool schemas; use self.deps unless deps is provided."""
+        return await persist_messages(
+            deps if deps is not None else self.deps,
+            messages,
+            tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS,
+        )
+
+    async def _persist_and_fetch(self, messages, tool_schemas=None) -> list[MessageRecord]:
+        await self._persist(messages, tool_schemas)
+        return await fetch_all_records(self.session, self.agent.id)
 
 
 @pytest.mark.asyncio
@@ -85,10 +137,6 @@ class TestPersistMessages(DBTestBase):
             parts=[TextPart(content="with usage")],
             usage=RequestUsage(input_tokens=30, output_tokens=12),
         )
-
-    async def _persist_and_fetch(self, messages) -> list[MessageRecord]:
-        await persist_messages(self.deps, messages)
-        return await fetch_all_records(self.session, self.agent.id)
 
     async def test_creates_one_record_per_message(self):
         records = await self._persist_and_fetch([make_request(), make_response()])
@@ -126,10 +174,7 @@ class TestPersistMessages(DBTestBase):
 
     async def test_returns_last_seen_total_tokens_when_sequence_ends_with_nones(self, resp_with_usage):
         """When the sequence ends with messages that have no usage, the last seen non-None value is returned."""
-        result = await persist_messages(
-            self.deps,
-            [resp_with_usage, make_request(), make_response()],
-        )
+        result = await self._persist([resp_with_usage, make_request(), make_response()])
         assert result == resp_with_usage.usage.total_tokens
 
     async def test_returns_last_total_tokens_when_multiple_responses_have_usage(self, resp_with_usage):
@@ -138,7 +183,7 @@ class TestPersistMessages(DBTestBase):
             parts=[TextPart(content="later")],
             usage=RequestUsage(input_tokens=50, output_tokens=25),
         )
-        result = await persist_messages(self.deps, [resp_with_usage, make_request(), resp_with_other_usage])
+        result = await self._persist([resp_with_usage, make_request(), resp_with_other_usage])
         assert result == resp_with_other_usage.usage.total_tokens
 
     async def test_timestamp_set_on_all_records(self):
@@ -168,8 +213,8 @@ class TestPersistMessages(DBTestBase):
     async def test_assigns_sequential_seq_ids(self, existing_count: int, new_count: int):
         """persist_messages assigns sequential seq_ids starting from MAX(existing) + 1."""
         # will be no op for the 0 case, helper returns empty list
-        await persist_messages(self.deps, make_alternating_messages(existing_count, "existing"))
-        await persist_messages(self.deps, make_alternating_messages(new_count, "new"))
+        await self._persist(make_alternating_messages(existing_count, "existing"))
+        await self._persist(make_alternating_messages(new_count, "new"))
 
         # Load all and verify seq_ids
         all_records = await load_messages(self.session, self.agent.id)
@@ -212,9 +257,9 @@ class TestPersistMessages(DBTestBase):
         my_first_expected_msg = make_request("my msg")
         my_second_expected_msg = make_request("my second msg")
         
-        await persist_messages(other_deps, [expected_other_msg])
-        await persist_messages(self.deps, [my_first_expected_msg])
-        await persist_messages(self.deps, [my_second_expected_msg])
+        await self._persist([expected_other_msg], deps=other_deps)
+        await self._persist([my_first_expected_msg])
+        await self._persist([my_second_expected_msg])
 
         my_records = await fetch_all_records(self.session, self.agent.id)
         other_records = await fetch_all_records(self.session, other_agent.id)
@@ -310,7 +355,7 @@ class TestPersistMessages(DBTestBase):
             return original_dump(messages_arg)
 
         with patch.object(ModelMessagesTypeAdapter, "dump_json", side_effect=controlled_dump):
-            await persist_messages(self.deps, [good, bad, good2])
+            await self._persist([good, bad, good2])
 
         records = await fetch_all_records(self.session, self.agent.id)
         assert len(records) == 4  # good, positional error, good2, summary warning
@@ -335,6 +380,101 @@ class TestPersistMessages(DBTestBase):
         assert any("sim failure" in r.message for r in caplog.records)
 
 # ---------------------------------------------------------------------------
+# TestPersistMessagesSnapshots
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestPersistMessagesSnapshots(DBTestBase):
+    """Tests for the snapshot and context-capture fields added to persist_messages."""
+
+    async def _sys_snapshots(self):
+        return (await self.session.execute(select(SystemPromptSnapshot))).scalars().all()
+
+    async def _tool_snapshots(self):
+        return (await self.session.execute(select(ToolDefinitionSnapshot))).scalars().all()
+
+    async def _config_snapshots(self):
+        return (await self.session.execute(select(AgentConfigSnapshot))).scalars().all()
+
+    @pytest.mark.parametrize("prompt", ["You are a helpful test assistant.", ""])
+    async def test_snapshot_stores_correct_system_prompt_content(self, prompt):
+        """Snapshot row stores the exact system prompt string (including empty); record hash points to it."""
+        self.agent.compiled_system_prompt = prompt
+        records = await self._persist_and_fetch([make_request()])
+        snap = (await self._sys_snapshots())[0]
+        assert snap.content == prompt
+        assert records[0].system_prompt_hash == snap.id
+
+    @pytest.mark.parametrize("tool_schemas", [SAMPLE_TOOL_SCHEMAS, []])
+    async def test_snapshot_stores_correct_tool_schema_content(self, tool_schemas):
+        """Snapshot row stores the correct tool schemas (including empty list); record hash points to it."""
+        records = await self._persist_and_fetch([make_request()], tool_schemas=tool_schemas)
+        snap = (await self._tool_snapshots())[0]
+        assert [ToolDefinition(**d) for d in json.loads(snap.content)] == tool_schemas
+        assert records[0].tool_definition_hash == snap.id
+
+    @pytest.mark.parametrize("second_prompt,expected_count", [
+        ("prompt A", 1), ("prompt B", 2)
+    ])
+    async def test_system_prompt_snapshot_dedup(self, second_prompt, expected_count):
+        """Same prompt reuses the existing snapshot row; a changed prompt creates a new one.
+        Record hashes exactly match the set of snapshot IDs."""
+        self.agent.compiled_system_prompt = "prompt A"
+        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        self.agent.compiled_system_prompt = second_prompt
+        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        snaps, records = await self._sys_snapshots(), await fetch_all_records(self.session, self.agent.id)
+        assert len(snaps) == expected_count
+        assert {r.system_prompt_hash for r in records} == {s.id for s in snaps}
+
+    @pytest.mark.parametrize("second_schemas,expected_count", [
+        (SAMPLE_TOOL_SCHEMAS, 1), (MUTATED_TOOL_SCHEMAS, 2)
+    ])
+    async def test_tool_schema_snapshot_dedup(self, second_schemas, expected_count):
+        """Same schemas reuse the existing snapshot row; changed schemas create a new one.
+        Record hashes exactly match the set of snapshot IDs."""
+        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        await persist_messages(self.deps, [make_request()], second_schemas)
+        snaps, records = await self._tool_snapshots(), await fetch_all_records(self.session, self.agent.id)
+        assert len(snaps) == expected_count
+        assert {r.tool_definition_hash for r in records} == {s.id for s in snaps}
+
+    @pytest.mark.parametrize("n_messages", [1, 3])
+    async def test_context_window_start_all_records_share_first_record_id(self, n_messages):
+        """All records in one persist call share context_window_start_msg_id == first record's id.
+        n=1 verifies the self-referential case; n=3 verifies the full-batch case."""
+        records = await self._persist_and_fetch(make_alternating_messages(n_messages))
+        assert all(r.context_window_start_msg_id == records[0].id for r in records)
+
+    async def test_snapshot_stores_correct_agent_config_content(self):
+        """Snapshot row stores the agent config as JSON that round-trips correctly; record hash points to it."""
+        records = await self._persist_and_fetch([make_request()])
+        snap = (await self._config_snapshots())[0]
+        assert AgentConfig.model_validate_json(snap.content) == self.agent.agent_config
+        assert records[0].agent_config_hash == snap.id
+
+    @pytest.mark.parametrize("second_config,expected_count", [
+        (SAMPLE_AGENT_CONFIG, 1), (MUTATED_AGENT_CONFIG, 2)
+    ])
+    async def test_agent_config_snapshot_dedup(self, second_config, expected_count):
+        """Same config reuses the existing snapshot row; a changed config creates a new one.
+        Record hashes exactly match the set of snapshot IDs."""
+        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        self.agent.agent_config = second_config
+        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        snaps, records = await self._config_snapshots(), await fetch_all_records(self.session, self.agent.id)
+        assert len(snaps) == expected_count
+        assert {r.agent_config_hash for r in records} == {s.id for s in snaps}
+
+    async def test_context_window_start_stable_across_calls(self):
+        """Subsequent persist calls all reference the UUID of the very first message ever persisted."""
+        first_records = await self._persist_and_fetch([make_request(), make_response()])
+        await persist_messages(self.deps, [make_request(), make_response()], SAMPLE_TOOL_SCHEMAS)
+        all_records = await fetch_all_records(self.session, self.agent.id)
+        assert all(r.context_window_start_msg_id == first_records[0].id for r in all_records)
+
+
+# ---------------------------------------------------------------------------
 # TestLoadMessages
 # ---------------------------------------------------------------------------
 
@@ -347,7 +487,7 @@ class TestLoadMessages(DBTestBase):
 
     async def test_returns_all_messages_by_default(self):
         messages = [make_request(), make_response(), make_request(), make_response()]
-        await persist_messages(self.deps, messages)
+        await self._persist(messages)
 
         records = await load_messages(self.session, self.agent.id)
         assert deserialize_messages(records) == messages
@@ -359,8 +499,8 @@ class TestLoadMessages(DBTestBase):
     async def test_start_seq_id_filters_inclusive(self):
         first = [make_request("first"), make_response("first reply")]
         second = [make_request("second"), make_response("second reply")]
-        await persist_messages(self.deps, first)
-        await persist_messages(self.deps, second)
+        await self._persist(first)
+        await self._persist(second)
 
         all_records = await load_messages(self.session, self.agent.id)
         cutoff_seq_id = all_records[1].seq_id  # trim to second record (first reply) and on
@@ -369,9 +509,23 @@ class TestLoadMessages(DBTestBase):
         # Should include the cutoff record and everything after (inclusive)
         assert deserialize_messages(records) == [first[1]] + second
 
+    async def test_end_seq_id_filters_exclusive(self):
+        """end_seq_id excludes messages at or after that seq_id."""
+        messages = [make_request("0"), make_response("1"), make_request("2"), make_response("3")]
+        await self._persist(messages)
+
+        all_records = await load_messages(self.session, self.agent.id)
+        # Get messages 1 and 2 (exclusive of 0 and 3)
+        records = await load_messages(
+            self.session, self.agent.id,
+            start_seq_id=all_records[1].seq_id,
+            end_seq_id=all_records[3].seq_id,
+        )
+        assert deserialize_messages(records) == messages[1:3]
+
     async def test_results_in_seq_id_order(self):
         messages = [make_request("first"), make_response("second"), make_request("third")]
-        await persist_messages(self.deps, messages)
+        await self._persist(messages)
 
         records = await load_messages(self.session, self.agent.id)
         seq_ids = [r.seq_id for r in records]
@@ -388,22 +542,22 @@ class TestLoadMessages(DBTestBase):
         await self.session.flush()
         other_deps = make_deps(self.session, other_agent)
 
-        await persist_messages(self.deps, [make_request(), make_response()])
-        await persist_messages(other_deps, [make_request(), make_response()])
+        await self._persist([make_request(), make_response()])
+        await self._persist([make_request(), make_response()], deps=other_deps)
 
         records = await load_messages(self.session, self.agent.id)
         assert len(records) == 2
         assert all(r.agent_id == self.agent.id for r in records)
 
     async def test_returns_list_of_message_records(self):
-        await persist_messages(self.deps, [make_request()])
+        await self._persist([make_request()])
         records = await load_messages(self.session, self.agent.id)
         assert len(records) == 1
         assert isinstance(records[0], MessageRecord)
 
     async def test_start_seq_id_ahead_of_all_returns_empty(self):
         """When start_seq_id is larger than every message's seq_id, the result is empty."""
-        await persist_messages(self.deps, [make_request(), make_response()])
+        await self._persist([make_request(), make_response()])
 
         records = await load_messages(self.session, self.agent.id, start_seq_id=999999)
         assert records == []
@@ -484,7 +638,7 @@ class TestRoundTrip(DBTestBase):
 
     async def test_request_response_round_trip(self):
         original = [make_request("round-trip me"), make_response("got it")]
-        await persist_messages(self.deps, original)
+        await self._persist(original)
 
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)
@@ -493,7 +647,7 @@ class TestRoundTrip(DBTestBase):
 
     async def test_tool_pair_round_trip(self):
         response_with_call, request_with_return = make_tool_pair()
-        await persist_messages(self.deps, [response_with_call, request_with_return])
+        await self._persist([response_with_call, request_with_return])
 
         records = await load_messages(self.session, self.agent.id)
         restored = deserialize_messages(records)

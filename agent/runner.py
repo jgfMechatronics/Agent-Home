@@ -1,4 +1,5 @@
-from typing import AsyncGenerator
+import logging
+from typing import AsyncGenerator, TYPE_CHECKING
 
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.messages import (
@@ -10,10 +11,52 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.toolsets.function import FunctionToolset
 
 from agent.compaction import compact, is_compaction_needed
 from agent.types import AgentAppState, AgentDeps
 from messages.messages import deserialize_messages, load_messages, persist_messages
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pydantic_ai.tools import ToolDefinition
+    from pydantic_ai.toolsets import AbstractToolset
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent_id: str) -> "list[ToolDefinition]":
+    tool_schemas = []
+    for ts in toolsets:
+        if isinstance(ts, FunctionToolset):
+            for tool in ts.tools.values():
+                tool_schemas.append(tool.tool_def)
+        else:
+            logger.error(
+                "Agent %s has a non-FunctionToolset toolset (%s); "
+                "tool definitions for context reconstruction will be incomplete.",
+                agent_id, ts.label,
+            )
+    return tool_schemas
+
+
+async def _check_and_handle_cancel(
+    agent_app_state: AgentAppState,
+    deps: AgentDeps,
+    tool_schemas: "list[ToolDefinition]",
+) -> bool:
+    if not agent_app_state.cancel_requested.is_set():
+        return False
+    # NOTE: Ideally this would be a ModelRequest (user message), but pydantic-ai merges
+    # consecutive ModelRequests, breaking cursor-based persistence. Using ModelResponse
+    # avoids the merge. Consider switching back after migrating to agent.iter().
+    cancel_notice = ModelResponse(parts=[TextPart(
+        content="<system_message>Turn cancelled by user.</system_message>"
+    )])
+    await persist_messages(deps=deps, messages=[cancel_notice], tool_schemas=tool_schemas)
+    await deps.commit_changes_refresh_agent_record()
+    return True
 
 
 async def run_stateful_agent(agent: Agent,
@@ -31,6 +74,8 @@ async def run_stateful_agent(agent: Agent,
     """
     records = await load_messages(deps.session, deps.agent_id, start_seq_id=deps.context_window_start)
     message_history = deserialize_messages(records)
+
+    tool_schemas = _extract_tool_definitions(agent.toolsets, deps.agent_id)
 
     with capture_run_messages() as messages:
         async with agent.run_stream_events(user_prompt=user_prompt,
@@ -59,21 +104,13 @@ async def run_stateful_agent(agent: Agent,
                     messages_to_persist = messages[new_message_idx:]
 
                 if messages_to_persist:
-                    total_tokens = await persist_messages(deps=deps, messages=messages_to_persist)
+                    total_tokens = await persist_messages(deps=deps, messages=messages_to_persist, tool_schemas=tool_schemas)
                     await deps.commit_changes_refresh_agent_record()
                     new_message_idx += len(messages_to_persist)
                     if total_tokens is not None:
                         last_total_tokens_value = total_tokens
 
-                if agent_app_state.cancel_requested.is_set():
-                    # NOTE: Ideally this would be a ModelRequest (user message), but pydantic-ai merges
-                    # consecutive ModelRequests, breaking cursor-based persistence. Using ModelResponse
-                    # avoids the merge. Consider switching back after migrating to agent.iter().
-                    cancel_notice = ModelResponse(parts=[TextPart(
-                        content="<system_message>Turn cancelled by user.</system_message>"
-                    )])
-                    await persist_messages(deps=deps, messages=[cancel_notice])
-                    await deps.commit_changes_refresh_agent_record()
+                if await _check_and_handle_cancel(agent_app_state, deps, tool_schemas):
                     return
 
                 if isinstance(event, AgentRunResultEvent):

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from agent.types import AgentConfig, AgentDeps
+from pydantic import ConfigDict
 from api.fastapi_deps import get_session_dep
 from db.models import AgentRecord, Base, MemoryBlockRecord
 from pydantic_ai import RunContext
@@ -43,7 +44,27 @@ SAMPLE_AGENT_CONFIG_DATA = { "model_name": "claude-sonnet-4-20250514",
     "soft_compaction_limit": 10000,
 }
 
-SAMPLE_AGENT_CONFIG = AgentConfig(**SAMPLE_AGENT_CONFIG_DATA)
+
+class _FrozenAgentConfig(AgentConfig):
+    """Immutable subclass of AgentConfig for use as a shared test constant.
+
+    Raises FrozenInstanceError on any in-place mutation, catching mistakes at
+    the point of the error rather than silently corrupting shared test state.
+    model_copy() returns a regular (mutable) AgentConfig as expected.
+
+    __eq__ compares field values against any AgentConfig instance so that DB
+    round-trips (which deserialize to plain AgentConfig) compare equal when the
+    field values match.
+    """
+    model_config = ConfigDict(frozen=True)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, AgentConfig):
+            return self.model_dump() == other.model_dump()
+        return NotImplemented
+
+
+SAMPLE_AGENT_CONFIG = _FrozenAgentConfig(**SAMPLE_AGENT_CONFIG_DATA)
 
 def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
     """Construct AgentDeps from a session and agent record.
@@ -232,6 +253,7 @@ def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | N
     If raises_mid_stream is set, the exception is raised after all events are yielded.
     """
     agent = Mock()
+    agent.toolsets = []  # _extract_tool_definitions iterates toolsets; mock agents have none
 
     async def _gen():
         for event in (events or []):
