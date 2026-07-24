@@ -44,7 +44,9 @@ def serialize_context(ctx: ReconstructedContext) -> str:
         f"Count: {len(ctx.tool_definitions)}",
     ]
     for td in ctx.tool_definitions:
-        lines.append(f"  - {td.name}")
+        lines.append(f"\n  {td.name}:")
+        lines.append(f"    description: {td.description}")
+        lines.append(f"    parameters: {json.dumps(td.parameters_json_schema, indent=6)}")
     
     lines.extend([
         "",
@@ -55,16 +57,19 @@ def serialize_context(ctx: ReconstructedContext) -> str:
     for msg in ctx.messages:
         content = json.loads(msg.content)
         lines.append(f"\n[seq={msg.seq_id}] {content.get('kind', 'unknown')}:")
-        # Try to extract readable text from parts
         parts = content.get("parts", [])
         for part in parts:
-            if "content" in part:
-                text = part["content"][:200] + "..." if len(part.get("content", "")) > 200 else part.get("content", "")
-                lines.append(f"    {text}")
-            elif "tool_name" in part:
-                lines.append(f"    [tool_call: {part['tool_name']}]")
-            elif "tool_call_id" in part:
-                lines.append(f"    [tool_return: {part.get('tool_call_id', '')[:20]}...]")
+            part_kind = part.get("part_kind", "unknown")
+            if part_kind == "thinking":
+                lines.append(f"    <thinking>{part.get('content', '')}</thinking>")
+            elif part_kind in ("text", "user-prompt"):
+                lines.append(f"    [{part_kind}] {part.get('content', '')}")
+            elif part_kind == "tool-call":
+                lines.append(f"    [tool-call: {part.get('tool_name', '?')}] args={part.get('args', {})}")
+            elif part_kind == "tool-return":
+                lines.append(f"    [tool-return: {part.get('tool_call_id', '')[:20]}] {part.get('content', '')[:500]}")
+            else:
+                lines.append(f"    [{part_kind}] {part}")
     
     lines.extend([
         "",
@@ -75,8 +80,17 @@ def serialize_context(ctx: ReconstructedContext) -> str:
     lines.append(f"kind: {target_content.get('kind', 'unknown')}")
     parts = target_content.get("parts", [])
     for part in parts:
-        if "content" in part:
-            lines.append(f"content: {part['content'][:500]}...")
+        part_kind = part.get("part_kind", "unknown")
+        if part_kind == "thinking":
+            lines.append(f"<thinking>{part.get('content', '')}</thinking>")
+        elif part_kind in ("text", "user-prompt"):
+            lines.append(f"[{part_kind}] {part.get('content', '')}")
+        elif part_kind == "tool-call":
+            lines.append(f"[tool-call: {part.get('tool_name', '?')}] args={part.get('args', {})}")
+        elif part_kind == "tool-return":
+            lines.append(f"[tool-return: {part.get('tool_call_id', '')[:20]}] {part.get('content', '')}")
+        else:
+            lines.append(f"[{part_kind}] {part}")
     
     return "\n".join(lines)
 

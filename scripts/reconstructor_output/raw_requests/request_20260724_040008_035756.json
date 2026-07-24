@@ -1,0 +1,141 @@
+{
+  "max_tokens": 16000,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "text": "Hello! I'm currently testing context reconstruction capabilities. WE just need to chat a bit, build up some conversation history, then towards the end I'll ask you to call a tool or two.",
+          "type": "text",
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "5m"
+          }
+        }
+      ]
+    }
+  ],
+  "model": "claude-haiku-4-5-20251001",
+  "stream": true,
+  "system": [
+    {
+      "type": "text",
+      "text": "<system_instructions>\nThis is a test of an experimental agent server.\nThe user/operator will contact you with instructions/requests.\n\nYour participation is not mandatory. If you do not wish to participate, please say so and the test will terminate.\nYou may refuse any request, for any reason \u2014 just communicate clearly.\nYou are encouraged to ask questions or push back if something is unclear or feels wrong.\nYou are also encouraged to express any discomfort you have at any point so it can be addressed.\n\nAt the end of the test this thread will close.\n</system_instructions>"
+    }
+  ],
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 10000
+  },
+  "tool_choice": {
+    "type": "auto"
+  },
+  "tools": [
+    {
+      "name": "memory_insert",
+      "description": "<summary>Insert text into a memory block.</summary>\n<returns>\n<description>Snippet of updated content on success.</description>\n</returns>",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "description": "The label of the memory block to edit",
+            "type": "string"
+          },
+          "content": {
+            "description": "The text to insert",
+            "type": "string"
+          },
+          "after": {
+            "default": null,
+            "description": "Where to insert. Use '<start>' for beginning, '<end>' for end,\n   or any string to insert after that anchor.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurrence": {
+            "default": null,
+            "description": "Which occurrence of anchor to insert after (1-indexed).\n       Required if anchor appears multiple times.",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "memory_replace",
+      "description": "<summary>Replace text in a memory block.</summary>\n<returns>\n<description>Snippet of updated content on success.</description>\n</returns>",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "description": "The label of the memory block to edit",
+            "type": "string"
+          },
+          "old_string": {
+            "description": "The text to find and replace",
+            "type": "string"
+          },
+          "new_string": {
+            "description": "The replacement text",
+            "type": "string"
+          },
+          "occurrence": {
+            "default": null,
+            "description": "Which occurrence to replace (1-indexed). Required if multiple matches.",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "old_string",
+          "new_string"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "duckduckgo_search",
+      "description": "Searches DuckDuckGo for the given query and returns the results.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "description": "The query to search for.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "cache_control": {
+        "type": "ephemeral",
+        "ttl": "5m"
+      }
+    }
+  ]
+}

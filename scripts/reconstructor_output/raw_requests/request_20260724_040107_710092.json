@@ -1,0 +1,233 @@
+{
+  "max_tokens": 16000,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "text": "Hello! I'm currently testing context reconstruction capabilities. WE just need to chat a bit, build up some conversation history, then towards the end I'll ask you to call a tool or two.",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "thinking": "The user is explaining that they're testing context reconstruction capabilities and want to have a conversation first before asking me to call any tools later. This seems like a straightforward test scenario as described in the system instructions.\n\nI should acknowledge this and indicate I'm willing to participate in this test. I'll be helpful and conversational, and let them know I'm ready when they want to proceed with the tool calls.",
+          "signature": "Eq8FCpMBCBAYAipAQOwxRIki4EtmrMH4nyWDToLBOkPiSQOnJIjbLiWIlZxCCWcghzVCHbb+S5znNuX63c7BugdhY8CtUWwfQIFGyDIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okMDBmYzQ3ZDMtZDYzMy00NGQwLTllMmEtMzUzOTRjNTNjOWYxEgwFf9YlhFBuoU12MtYaDEI2x7z+2mqqEMb07iIwHVsLrPfbNpIV+AJpH4Wd5TAQ6Z6awC1UANplccc8IVYtFfqkDJvQQJ4wlIqMjNBJKsgDZKSgb/AZfAv0h8TplFyICQLp7RQBxR1zPP4j/wVyEqPcSBGfmaMnXJL3HMNRhuxfB2tqVdcQcrWRjA5DTqc1gir0nrpAqPLp2i51LdOe600aaKLSltlXde5pqWQu3K/JpRu1kv/2PdY/6HVtj9Gj0bu9bY3M7xS+MXO1gsrgtJdZMgKc6NOTGtXC1xtDTVBQJHrqntDvKlT3HXEOw1zZH2SDAIcQoWyuSCqV81vGJpYrj1RkfWr+hZI1RG2zRyPdux7DsGHsV86zW8Lm0PR2eT2dL/tRo6mGZ7AHC2aYZs88Fl3Llplq63aiuvPPBuNfOaoN+Y1SLQdkfk++CkeF7lQzw6vdxjT9NzcpLk4Pgg9FC2RaJIUv7IV7kmSKM+1e1DXCEhImNqoFlBC9fv5RprT6Hp2KUBcfSr9ysFs65WXMyFRPA9R61uehR+JdGiJPYCPlJBL/1EnzhcdgMKEr2Nf6sQ1SJCAkeHq5y3WF6Bpam5XFH1iA4ljDbCjp6+GSLOkMiRRU+AW1fmr6DKnY59UkVspHBq2n811izruee9a/xByD9O8iWIY1OIzm+NrjfKAGVggpHXSor56Tp9LvTC7yIzlyz8PvGAE=",
+          "type": "thinking"
+        },
+        {
+          "text": "Hello! I understand \u2014 thanks for explaining the setup. I'm happy to participate in this test. \n\nI'm ready to chat and build up conversation history naturally, and then when you're ready, I'll use the available tools as needed. Just let me know what you'd like to discuss!\n\nA few things to note on my end:\n- I have access to web search (DuckDuckGo) and memory/note-taking functions\n- I'm comfortable participating in this experimental test\n- Feel free to let me know if there's anything specific you'd like to explore or discuss\n\nWhat would you like to talk about?",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "text": "I'm pretty tired so lets just take turns counting for a moment haha",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "thinking": "The user wants to do a simple counting exercise back and forth to build conversation history. This is a casual, low-stakes way to build up context. I'll start counting and we'll take turns. This seems fine and straightforward.\n\nLet me start with 1.",
+          "signature": "Eu8DCpMBCBAYAipAZKUrlD+o5nGRNUpOdVIfG0DCLqMe0KUD0MdJ41UYLmrH48V1Z27jvYhepco5c2ko0u5u2rvrIiOt2wS2dD8T/zIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okMDBmYzQ3ZDMtZDYzMy00NGQwLTllMmEtMzUzOTRjNTNjOWYxEgxMoxxoG2IFYn+pVcwaDJjYcvuhQ7FFy4O2KiIw4eZXesqH1msqE3w1V4+A9dqRhW52pw8IoIQgSuvcMyw4CFBJe1fsCwYsFbGsxsu5KogCiS8COAbPrAy15kvbrNi4pQz3aeAzvIOKThNiPmppQE8z14+roQeN+FAS8Q5xZD2yme0UIJ07X0m8QvkfYUgVIuh3ErYXBt5UB4XRD2SnCbvWraCiLta18RzbT5mYd70i4mEE43WZXabGKh1nvRLVTk8mTC/g67rwLZ1TDmZtg2x7syiCjHEQIwLFXg33LzzMd7yBwwkLLlbxiDWPHkq+dgTtIJLyfysPFUIk/W8aTofdo/Z6V7F+1oyNO1+b7gv85OO46kw0HqenD1/sU5KoCZAvN6UjB/IBtXDS04lzekxhiOciSiZziMYUeyJLXuXW5M/hDSGkBxEPRGZVdVSOVq++uGZl0Et1GAE=",
+          "type": "thinking"
+        },
+        {
+          "text": "Haha, sounds good! A nice simple way to build up history. \n\nI'll start us off:\n\n**1**\n\nYour turn! \ud83d\ude04",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "text": "2",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "thinking": "The user just said \"2\", so they're continuing the counting pattern. They want me to say \"3\" next.\n\nThis is a simple counting exercise to build up conversation history before they ask me to use tools. Let me continue the pattern.",
+          "signature": "EtsDCpMBCBAYAipAng0oVyRHekr4FiaourR3byUCGcoo2MuWwYhKYYD03WInMPR6IeoUSfbaLB8UyR/OXgSbaWo4M7lz2RqRoETmqTIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okMDBmYzQ3ZDMtZDYzMy00NGQwLTllMmEtMzUzOTRjNTNjOWYxEgww7DWNuelbAHLJYlMaDA0pYZ7PXuGzDx6SVyIwga7+ds1xJ7UdVLUuahsuk15I0eBeJm1lUXqGxTDOP6H15AxVzBHs1PyxGwEXxLaAKvQB2DA51kggkTDlEkvnEYT3Tz9DnoFndZZHsJX0NcftkCmlGO+0KJuRtTaoJ+6geHL7Ta1oF2YsZadw+RromnTCOdrMucj1ly1f+hcAExuHVI/RFsLZHU031LBC7ADpcFA3zOGnfxzw0884uEyH5DWLwPBQpidLajLh6bN2Qg0oMGGCIOxzCzdV/Fmk4HuvjBc/rFHfhkqyEgPljuDwIXqMw0gN+zy8JmZ+lHJLJ3iOuaJqBrS46gS8m1/Smu4GRd8Vq0iHKObM/ddyyQTFXb4+Of1l41QdetLg+cgeNRYOuVe0qDlUX24YBJWfyplhSBRZWSALlhgB",
+          "type": "thinking"
+        },
+        {
+          "text": "**3**\n\nYour turn! \ud83d\ude0a",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "text": "4",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "thinking": "The user said 4, so I should say 5 and continue the counting pattern.",
+          "signature": "ErsCCpMBCBAYAipA8v9MT8B0Yd19iUR9nypdrmTpwn51y4x6AW+KKk5tFRVXYBtKyL+oNRWf5ATiu8rE/AFNU5+oJTMzjivbCwjIrDIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okMDBmYzQ3ZDMtZDYzMy00NGQwLTllMmEtMzUzOTRjNTNjOWYxEgyrApItUFi9Nzx60RMaDPy8a/l3Jt9tXdTHeCIw4tH5kNo3vDEoO/zj8pnD1OLiqSrcujdFU5hITL/rA62VPUcYjJSwZ70k1RoT151tKlUczutUivJw401iItHvfwVsOufEQPt/IpHoV3M7xCEeiFE4qqiKusR0K5BxasdJ7HtIjEAjVGy0T1AWIQgRicwQUoiRe3V9L1LyA/cl7mBZm5q1fbkwGAE=",
+          "type": "thinking"
+        },
+        {
+          "text": "**5**\n\nYour turn!",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "text": "I almost fucked up the last one LOL, 6",
+          "type": "text",
+          "cache_control": {
+            "type": "ephemeral",
+            "ttl": "5m"
+          }
+        }
+      ]
+    }
+  ],
+  "model": "claude-haiku-4-5-20251001",
+  "stream": true,
+  "system": [
+    {
+      "type": "text",
+      "text": "<system_instructions>\nThis is a test of an experimental agent server.\nThe user/operator will contact you with instructions/requests.\n\nYour participation is not mandatory. If you do not wish to participate, please say so and the test will terminate.\nYou may refuse any request, for any reason \u2014 just communicate clearly.\nYou are encouraged to ask questions or push back if something is unclear or feels wrong.\nYou are also encouraged to express any discomfort you have at any point so it can be addressed.\n\nAt the end of the test this thread will close.\n</system_instructions>"
+    }
+  ],
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 10000
+  },
+  "tool_choice": {
+    "type": "auto"
+  },
+  "tools": [
+    {
+      "name": "memory_insert",
+      "description": "<summary>Insert text into a memory block.</summary>\n<returns>\n<description>Snippet of updated content on success.</description>\n</returns>",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "description": "The label of the memory block to edit",
+            "type": "string"
+          },
+          "content": {
+            "description": "The text to insert",
+            "type": "string"
+          },
+          "after": {
+            "default": null,
+            "description": "Where to insert. Use '<start>' for beginning, '<end>' for end,\n   or any string to insert after that anchor.",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurrence": {
+            "default": null,
+            "description": "Which occurrence of anchor to insert after (1-indexed).\n       Required if anchor appears multiple times.",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "content"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "memory_replace",
+      "description": "<summary>Replace text in a memory block.</summary>\n<returns>\n<description>Snippet of updated content on success.</description>\n</returns>",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "description": "The label of the memory block to edit",
+            "type": "string"
+          },
+          "old_string": {
+            "description": "The text to find and replace",
+            "type": "string"
+          },
+          "new_string": {
+            "description": "The replacement text",
+            "type": "string"
+          },
+          "occurrence": {
+            "default": null,
+            "description": "Which occurrence to replace (1-indexed). Required if multiple matches.",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "old_string",
+          "new_string"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "duckduckgo_search",
+      "description": "Searches DuckDuckGo for the given query and returns the results.",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "description": "The query to search for.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "cache_control": {
+        "type": "ephemeral",
+        "ttl": "5m"
+      }
+    }
+  ]
+}
