@@ -81,7 +81,7 @@ async def test_get_session_bound_to_provided_engine(tmp_path):
         await init_db(engine_b)
 
         async with get_session(engine_a) as session:
-            session.add(AgentRecord(name="agent-a", agent_config=SAMPLE_AGENT_CONFIG.model_copy()))
+            session.add(AgentRecord(name="agent-a", agent_config=SAMPLE_AGENT_CONFIG))
             await session.commit()
 
         async with get_session(engine_b) as session:
@@ -108,7 +108,7 @@ class TestGetSessionTransactionBehavior:
     async def test_commits_on_clean_exit(self):
         """Data written in the block persists after a clean exit (implicit commit)."""
         async with get_session(self.engine) as session:
-            session.add(AgentRecord(name="test", agent_config=SAMPLE_AGENT_CONFIG.model_copy()))
+            session.add(AgentRecord(name="test", agent_config=SAMPLE_AGENT_CONFIG))
 
         assert await self._count_agents() == 1
 
@@ -116,7 +116,7 @@ class TestGetSessionTransactionBehavior:
         """Unhandled exception rolls back writes and propagates."""
         with pytest.raises(RuntimeError, match="boom"):
             async with get_session(self.engine) as session:
-                session.add(AgentRecord(name="test", agent_config=SAMPLE_AGENT_CONFIG.model_copy()))
+                session.add(AgentRecord(name="test", agent_config=SAMPLE_AGENT_CONFIG))
                 raise RuntimeError("boom")
 
         assert await self._count_agents() == 0
@@ -144,7 +144,7 @@ async def test_concurrent_sessions_function_independently(initialized_engine):
     Catches misconfigured pool settings (e.g. StaticPool)."""
     async def write_agent(name: str):
         async with get_session(initialized_engine) as session:
-            session.add(AgentRecord(name=name, agent_config=SAMPLE_AGENT_CONFIG.model_copy()))
+            session.add(AgentRecord(name=name, agent_config=SAMPLE_AGENT_CONFIG))
             await session.commit()
 
     await asyncio.gather(write_agent("agent-1"), write_agent("agent-2"))

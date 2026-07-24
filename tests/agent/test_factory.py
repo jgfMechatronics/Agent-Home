@@ -272,12 +272,12 @@ async def test_build_deps_concurrent_different_agents_no_block(
     # Create two agents for this test
     agent_a = AgentRecord(
         name="agent-a",
-        agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
+        agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Agent A",
     )
     agent_b = AgentRecord(
         name="agent-b",
-        agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
+        agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Agent B",
     )
     session.add_all([agent_a, agent_b])
@@ -372,7 +372,6 @@ class TestBuildAgentAndDeps:
 
     async def test_uses_correct_model(self):
         """Constructed agent should use the model from agent_config.model_name."""
-        self.agent_record.agent_config.model_name = "claude-sonnet-4-20250514"
         async with self.factory.build_agent_and_deps() as (agent, deps):
             assert isinstance(agent.model, AnthropicModel)
             assert agent.model.model_name == self.agent_record.agent_config.model_name

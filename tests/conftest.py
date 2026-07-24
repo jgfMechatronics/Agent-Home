@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from agent.types import AgentConfig, AgentDeps
+from pydantic import ConfigDict
 from api.fastapi_deps import get_session_dep
 from db.models import AgentRecord, Base, MemoryBlockRecord
 from pydantic_ai import RunContext
@@ -43,7 +44,31 @@ SAMPLE_AGENT_CONFIG_DATA = { "model_name": "claude-sonnet-4-20250514",
     "soft_compaction_limit": 10000,
 }
 
-SAMPLE_AGENT_CONFIG = AgentConfig(**SAMPLE_AGENT_CONFIG_DATA)
+
+class _FrozenAgentConfig(AgentConfig):
+    """Immutable subclass of AgentConfig for use as a shared test constant.
+
+    Raises FrozenInstanceError on any in-place mutation, catching mistakes at
+    the point of the error rather than silently corrupting shared test state.
+    model_copy() returns a regular (mutable) AgentConfig as expected.
+
+    __eq__ compares field values against any AgentConfig instance so that DB
+    round-trips (which deserialize to plain AgentConfig) compare equal when the
+    field values match.
+    """
+    model_config = ConfigDict(frozen=True)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, AgentConfig):
+            return self.model_dump() == other.model_dump()
+        return NotImplemented
+
+    # Preserve the hash that frozen=True gives us; Python would otherwise
+    # set __hash__ = None when __eq__ is overridden.
+    __hash__ = AgentConfig.__hash__  # type: ignore[assignment]
+
+
+SAMPLE_AGENT_CONFIG = _FrozenAgentConfig(**SAMPLE_AGENT_CONFIG_DATA)
 
 def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
     """Construct AgentDeps from a session and agent record.
@@ -161,7 +186,7 @@ async def agent_record(session: AsyncSession) -> AgentRecord:
     """
     agent = AgentRecord(
         name="test-agent",
-        agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
+        agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="You are a test agent.",
     )
     session.add(agent)
@@ -181,7 +206,7 @@ async def agent_with_blocks(session: AsyncSession):
     """
     agent = AgentRecord(
         name="agent-with-blocks",
-        agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
+        agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="You are a helpful assistant.",
     )
     session.add(agent)
@@ -276,27 +301,6 @@ async def client(app: FastAPI) -> AsyncClient:
         base_url="http://test"
     ) as c:
         yield c
-
-
-@pytest.fixture(autouse=True)
-def assert_sample_constants_unchanged():
-    """Catch any test that mutates the shared SAMPLE_AGENT_CONFIG / SAMPLE_AGENT_CONFIG_DATA constants.
-
-    Runs around every test. If a test body mutates either constant, teardown fails with a
-    clear message identifying the culprit test.
-    """
-    import json
-    config_before = SAMPLE_AGENT_CONFIG.model_dump_json()
-    data_before = json.dumps(SAMPLE_AGENT_CONFIG_DATA, sort_keys=True)
-    yield
-    config_after = SAMPLE_AGENT_CONFIG.model_dump_json()
-    data_after = json.dumps(SAMPLE_AGENT_CONFIG_DATA, sort_keys=True)
-    assert config_after == config_before, (
-        f"SAMPLE_AGENT_CONFIG was mutated!\nBefore: {config_before}\nAfter:  {config_after}"
-    )
-    assert data_after == data_before, (
-        f"SAMPLE_AGENT_CONFIG_DATA was mutated!\nBefore: {data_before}\nAfter:  {data_after}"
-    )
 
 
 @pytest.fixture(autouse=True)

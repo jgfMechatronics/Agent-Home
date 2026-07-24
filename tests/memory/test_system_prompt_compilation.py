@@ -37,7 +37,7 @@ async def agent_with_precompiled_prompt(session: AsyncSession):
     """Agent with a pre-populated compiled_system_prompt for get_system_prompt tests."""
     agent = AgentRecord(
         name="precompiled-agent",
-        agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
+        agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Base instructions.",
         compiled_system_prompt="<cached>This is the cached prompt.</cached>",
         sys_prompt_compiled_at=datetime(2026, 1, 1, 12, 0, 0),
@@ -243,12 +243,12 @@ async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession
     """Compilation should only include blocks belonging to the target agent."""
     agent_a = AgentRecord(
         name="agent-a",
-        agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
+        agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Agent A instructions",
     )
     agent_b = AgentRecord(
         name="agent-b",
-        agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
+        agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Agent B instructions",
     )
     session.add_all([agent_a, agent_b])
@@ -312,7 +312,7 @@ async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession
     """get_system_prompt should return empty string when compiled_system_prompt is empty/unset."""
     agent = AgentRecord(
         name="null-prompt-agent",
-        agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
+        agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Base instructions.",
     )
     session.add(agent)

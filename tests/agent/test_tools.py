@@ -37,7 +37,7 @@ async def _make_agent_with_block(
     """
     agent = AgentRecord(
         name=agent_name,
-        agent_config=SAMPLE_AGENT_CONFIG.model_copy(),
+        agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Test agent",
     )
     session.add(agent)
