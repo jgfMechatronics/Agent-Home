@@ -38,7 +38,6 @@ from db.models import AgentRecord, MessageRecord
 
 # --- Fixtures ---
 
-
 def _make_config(
     soft_compaction_limit: int = 10000,
     compaction_target_fraction: float = 0.5,
