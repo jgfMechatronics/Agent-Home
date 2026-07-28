@@ -20,6 +20,7 @@ from httpx import AsyncClient, Response
 from pydantic_ai import Agent, AgentRunResultEvent
 from pydantic_ai.messages import (
     ToolCallEvent,
+    ToolResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
@@ -985,7 +986,7 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         # assert any(isinstance(e, AgentRunResultEvent) for e in events)
         assert isinstance(events[-1], AgentRunResultEvent)
 
-    async def test_no_interrupt_between_tool_call_and_return(self):
+    async def test_only_interrupts_directly_after_tool_return(self):
         """Compact does not fire while a tool call is in flight.
 
         Step sequence starts directly with TOOL_CALL (no pre-tool events) so
@@ -993,26 +994,18 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         With the tool blocked, compact must not be called; after the tool
         returns it may fire.
         """
-        self.test_agent.set_steps([[FunctionModelTestAgent.TOOL_CALL], FunctionModelTestAgent.COMPLETION_TEXT])
-        self.test_agent.block_in_tool = True
-        # PartStartEvent for the ToolCallPart fires before ToolCallEvent, so compact could
-        # trigger and interrupt the turn before the tool starts. Arm compaction only after
-        # tool_entered confirms the tool is in-flight. Gate with not-yet-compacted so the
-        # resumed turn also runs cleanly.
-        # TODO: This might ust mean that the impl is busted
-        compaction_armed = [False]
-        self.mock_needs_compact.side_effect = lambda *_: compaction_armed[0] and not self.mock_compact.called
+        self.mock_needs_compact.return_value = True  # stress test the event type guard
 
-        agent_run_task = asyncio.create_task(self._run_agent_to_completion())
+        expect_compact_on_next_event = False
+        async for event in run_stateful_agent(self.test_agent.agent, self._deps, self.agent_app_state, "test"):
+            # When the ToolResultEvent is yielded, run_stateful_agent will be suspended at the yield point which is *before* the compaction check
+            # inspects the last yielded event. Thus we expect compact to have been called once run_stateful_agent has been resumed after yielding that event.
+            if isinstance(event, ToolResultEvent):
+                expect_compact_on_next_event = True
+            if expect_compact_on_next_event:
+                self.mock_compact.assert_called_once()
 
-        await asyncio.wait_for(self.test_agent.tool_entered.wait(), timeout=5.0)
-        compaction_armed[0] = True
-        assert not self.mock_compact.called, "compact must not fire while tool is in flight"
-
-        self.test_agent.resume_tool_exec.set()
-        await asyncio.wait_for(agent_run_task, timeout=5.0)
-
-        self.mock_compact.assert_called()
+        self.mock_compact.assert_called_once() # Sanity check
 
     async def test_no_resume_if_turn_ends_naturally(self):
         """Compact runs after a naturally-completed turn but the agent is not resumed.
