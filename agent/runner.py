@@ -5,7 +5,6 @@ from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ToolResultEvent,
-    ToolCallEvent,
     ModelRequest,
     ModelResponse,
     TextPart,
@@ -124,8 +123,9 @@ async def run_stateful_agent(agent: Agent,
                     if await _check_and_handle_cancel(agent_app_state, deps, tool_schemas):
                         return
 
-                    # Mid-turn compaction check (after cancel - cancel supersedes compaction). Don't interrupt a tool call.
-                    if is_compaction_needed(last_total_tokens_value, deps.config) and not isinstance(event, ToolCallEvent):
+                    # Mid-turn compaction check (after cancel — cancel supersedes compaction).
+                    # Only fire at clean message boundaries: after a tool returns or at natural turn end.
+                    if isinstance(event, (ToolResultEvent, AgentRunResultEvent)) and is_compaction_needed(last_total_tokens_value, deps.config):
                         await compact(deps, last_total_tokens_value)
 
                         if not isinstance(event, AgentRunResultEvent):

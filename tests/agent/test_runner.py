@@ -996,16 +996,17 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         """
         self.mock_needs_compact.return_value = True  # stress test the event type guard
 
-        expect_compact_on_next_event = False
+        expected_compact_call_ct = 0
         async for event in run_stateful_agent(self.test_agent.agent, self._deps, self.agent_app_state, "test"):
             # When the ToolResultEvent is yielded, run_stateful_agent will be suspended at the yield point which is *before* the compaction check
             # inspects the last yielded event. Thus we expect compact to have been called once run_stateful_agent has been resumed after yielding that event.
+            assert self.mock_compact.call_count == expected_compact_call_ct
             if isinstance(event, ToolResultEvent):
-                expect_compact_on_next_event = True
-            if expect_compact_on_next_event:
-                self.mock_compact.assert_called_once()
+                expected_compact_call_ct += 1
+            elif isinstance(event, AgentRunResultEvent):
+                expected_compact_call_ct += 1
 
-        self.mock_compact.assert_called_once() # Sanity check
+        assert self.mock_compact.call_count == expected_compact_call_ct
 
     async def test_no_resume_if_turn_ends_naturally(self):
         """Compact runs after a naturally-completed turn but the agent is not resumed.
