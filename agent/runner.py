@@ -4,7 +4,7 @@ from typing import AsyncGenerator, TYPE_CHECKING
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
 from pydantic_ai.messages import (
     AgentStreamEvent,
-    FunctionToolResultEvent,
+    ToolResultEvent,
     ToolCallEvent,
     ModelRequest,
     ModelResponse,
@@ -101,13 +101,12 @@ async def run_stateful_agent(agent: Agent,
                     messages_to_persist = []
                     last_part_of_last_msg = messages[-1].parts[-1] if messages else None
 
-                    # TODO: FunctionToolResultEvent is deprecated. Replace with ToolResultEvent everywhere in the codebase
-                    if (isinstance(event, FunctionToolResultEvent)
+                    if (isinstance(event, ToolResultEvent)
                         and isinstance(event.part, ToolReturnPart)
                         and not isinstance(last_part_of_last_msg, ToolReturnPart)
                         and isinstance(last_part_of_last_msg, ToolCallPart)):
                         # As of 1.97.0, pydantic-ai adds the ToolReturn to the captured messages list only
-                        # when the next step starts, not when FunctionToolResultEvent is yielded. Persist the tool pair atomically
+                        # when the next step starts, not when ToolResultEvent is yielded. Persist the tool pair atomically
                         # from the event data directly, so we don't lose it on cancel
                         # The last two gating conditions are a sanity check: Ensure the tool return is NOT available but the tool call IS
                         tool_return_msg = ModelRequest(parts=[event.part])

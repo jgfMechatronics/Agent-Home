@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from httpx import AsyncClient, Response
 from pydantic_ai import Agent, AgentRunResultEvent
 from pydantic_ai.messages import (
+    ToolCallEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
@@ -347,8 +348,8 @@ class FunctionModelTestAgent:
         ModelRequest(parts=[DUMMY_TOOL_RETURN_PART]),
     ]
     # What should be persisted for CRASH_STEPS: both tool pairs.
-    # FunctionToolResultEvent fires after each tool completes, before the next step starts.
-    # Our route persists the tool pair atomically on FunctionToolResultEvent, so both pairs
+    # ToolResultEvent fires after each tool completes, before the next step starts.
+    # Our route persists the tool pair atomically on ToolResultEvent, so both pairs
     # are committed before the crash hits on step 3.
     CRASH_EXPECTED_PARTIAL_MODELMSGS: list[ModelMessage] = EXPECTED_TOOL_PAIR * 2
     # THREE_TOOL_CALL_STEPS: 3 tool call/return pairs followed by a final text response
@@ -739,9 +740,9 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 
     test_graceful_cancel: xfail pending cancel route + _cancel_signals implementation.
 
-    Corner case — ToolCallPart buffered but not yet consumed as FunctionToolCallEvent:
+    Corner case — ToolCallPart buffered but not yet consumed as ToolCallEvent:
     pydantic-ai appends ModelResponse([ToolCallPart]) to its capture_run_messages buffer
-    BEFORE emitting FunctionToolCallEvent to the consumer. If cancel is serviced in this
+    BEFORE emitting ToolCallEvent to the consumer. If cancel is serviced in this
     narrow window, the captured list may contain a bare ToolCallPart with no return.
     This is a non-issue: the route passes the captured list as-is to persist_messages,
     which already has orphan sanitization logic and will drop the unpaired ToolCallPart.
@@ -888,9 +889,9 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 async def test_rendezvous_tool_does_not_start_before_event_consumed():
     """Regression guard: pydantic-ai rendezvous semantics.
 
-    Property: a tool does NOT begin executing until its FunctionToolCallEvent has
+    Property: a tool does NOT begin executing until its ToolCallEvent has
     been consumed by the caller.  Our cancel strategy depends entirely on this —
-    we can break out of the event stream BEFORE consuming FunctionToolCallEvent
+    we can break out of the event stream BEFORE consuming ToolCallEvent
     and guarantee the tool has not started (and therefore cancel without orphaning it).
 
     Drives a real Agent directly (no HTTP route) to isolate the pydantic-ai behaviour.
@@ -908,36 +909,36 @@ async def test_rendezvous_tool_does_not_start_before_event_consumed():
         async with agent.run_stream_events("test", message_history=[]) as stream:
             events_iter = stream.__aiter__()
 
-            # Consume events strictly before FunctionToolCallEvent.
-            # FunctionToolCallEvent is emitted only after the stream function's generator
+            # Consume events strictly before ToolCallEvent.
+            # ToolCallEvent is emitted only after the stream function's generator
             # is exhausted, so at least one PartStartEvent/PartDeltaEvent precedes it.
             event = await events_iter.__anext__()
             pre_tool_event_seen = False
 
-            while not isinstance(event, FunctionToolCallEvent):
+            while not isinstance(event, ToolCallEvent):
                 pre_tool_event_seen = True
-                # THE INVARIANT: until FunctionToolCallEvent is consumed, the tool
+                # THE INVARIANT: until ToolCallEvent is consumed, the tool
                 # must not have started (producer is blocked on the rendezvous send).
                 # Yield real time to the event loop to let the producer attempt to advance.
                 await asyncio.sleep(0.2)
                 assert not test_agent.tool_entered.is_set(), (
                     f"Rendezvous violated: blocking_tool started before "
-                    f"FunctionToolCallEvent was consumed "
+                    f"ToolCallEvent was consumed "
                     f"(pydantic-ai {_PYDANTIC_AI_VERSION}). "
                     f"Cancel strategy must be re-evaluated."
                 )
                 event = await events_iter.__anext__()
             
-            await asyncio.wait_for(test_agent.tool_entered.wait(), timeout=2) # Tool should execute now that we popped the FunctionToolCallEvent off
+            await asyncio.wait_for(test_agent.tool_entered.wait(), timeout=2) # Tool should execute now that we popped the ToolCallEvent off
             test_agent.resume_tool_exec.set()
 
             assert pre_tool_event_seen, (
-                "No events appeared before FunctionToolCallEvent — "
+                "No events appeared before ToolCallEvent — "
                 "the rendezvous invariant was never exercised. "
                 "Check whether pydantic-ai changed its event ordering."
             )
 
-            # FunctionToolCallEvent consumed: tool is now allowed to start.
+            # ToolCallEvent consumed: tool is now allowed to start.
             # Drain remaining events to allow clean context-manager teardown.
             async for _ in stream:
                 pass
