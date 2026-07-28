@@ -987,12 +987,11 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         assert isinstance(events[-1], AgentRunResultEvent)
 
     async def test_only_interrupts_directly_after_tool_return(self):
-        """Compact does not fire while a tool call is in flight.
-
-        Step sequence starts directly with TOOL_CALL (no pre-tool events) so
-        there is no opportunity for an early interrupt before the tool starts.
-        With the tool blocked, compact must not be called; after the tool
-        returns it may fire.
+        """
+        We constrain compact to only fire directly after a tool return or a final event. This is to avoid orphaning tool calls,
+        and also attempting to minimize how much generation we possibly discard. Note that this doesn't discard 0 generation
+        with the current impl, as we need to switch to agent.iter for that level of control. run_stream_events likely forms a new request
+        as soon as we pull the ToolResultEvent off the iterator (or possibly before). This is a temporary wastefulness we accept.
         """
         self.mock_needs_compact.return_value = True  # stress test the event type guard
 
