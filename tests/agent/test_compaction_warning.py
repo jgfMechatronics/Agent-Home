@@ -7,10 +7,50 @@ from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
-from pydantic_ai import ModelSettings
-from pydantic_ai.messages import ModelRequest, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestParameters, ModelSettings
 from pydantic_ai.models.test import TestModel
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+class SequentialTestModel(TestModel):
+    """TestModel variant that emits tool calls one at a time (sequential, not parallel)."""
+
+    def _request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        tool_calls = self._get_tool_calls(model_request_parameters)
+
+        # Count tool returns we've seen
+        tool_returns = 0
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        tool_returns += 1
+
+        # If more tools to call than returns, call next one
+        if tool_calls and tool_returns < len(tool_calls):
+            name, args = tool_calls[tool_returns]
+            return ModelResponse(
+                parts=[ToolCallPart(name, self.gen_tool_args(args), tool_call_id=f"seq_{tool_returns}")],
+                model_name=self._model_name,
+            )
+
+        # All tools called, return text
+        text = self.custom_output_text or "Done"
+        return ModelResponse(parts=[TextPart(content=text)], model_name=self._model_name)
 
 from agent.compaction_warner import (
     COMPACTION_WARNING_TEXT,
@@ -108,6 +148,91 @@ class TestCompactionWarnerIntegration:
                         break
         
         assert found_warning, f"Warning should appear in persisted history. Messages: {[type(m).__name__ for m in messages]}"
+
+    async def test_warning_injected_mid_sequential_tool_chain(self):
+        """Warning can be injected BETWEEN sequential tool calls, not just at end.
+        
+        This tests that after_model_request fires between each tool call in a
+        sequential chain, allowing warnings to interrupt the chain.
+        
+        Uses SequentialTestModel which emits one tool call per model response,
+        unlike TestModel which emits all tool calls in parallel.
+        """
+        agent_app_state_reg: dict[str, AgentAppState] = {}
+        # Sequential model: emits tool calls one at a time
+        test_model = SequentialTestModel(
+            call_tools=["duckduckgo_search", "duckduckgo_search", "duckduckgo_search"],
+            custom_output_text="Done with all tools.",
+        )
+
+        with (
+            patch("agent.factory.get_model", return_value=test_model),
+            patch("agent.runner.is_compaction_needed", return_value=False),
+        ):
+            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
+            async with factory.build_agent_and_deps() as (pydantic_agent, deps):
+                events = [
+                    event async for event in run_stateful_agent(
+                        pydantic_agent, deps,
+                        agent_app_state_reg[self.agent_record.id],
+                        "Hello",
+                    )
+                ]
+
+        # Verify run completed
+        assert len(events) > 0, "Should have received events"
+
+        # Load persisted messages
+        records = await load_messages(self.session, self.agent_record.id)
+        messages = deserialize_messages(records)
+
+        # Debug output
+        print("\n=== Sequential Tool Chain Messages ===")
+        for i, msg in enumerate(messages):
+            parts_summary = []
+            if hasattr(msg, 'parts'):
+                for p in msg.parts:
+                    ptype = type(p).__name__[:8]
+                    if hasattr(p, 'content'):
+                        content = str(p.content)[:40].replace('\n', ' ')
+                        parts_summary.append(f"{ptype}:{content}")
+                    elif hasattr(p, 'tool_name'):
+                        parts_summary.append(f"{ptype}:{p.tool_name}")
+                    else:
+                        parts_summary.append(ptype)
+            print(f"{i}: {type(msg).__name__[:7]} | {', '.join(parts_summary)}")
+
+        # Find position of warning in message sequence
+        warning_index = None
+        tool_call_indices = []
+        tool_return_indices = []
+        
+        for i, msg in enumerate(messages):
+            if isinstance(msg, ModelRequest):
+                for part in msg.parts:
+                    if isinstance(part, UserPromptPart) and COMPACTION_WARNING_TEXT in part.content:
+                        warning_index = i
+                    if isinstance(part, ToolReturnPart):
+                        tool_return_indices.append(i)
+            elif isinstance(msg, ModelResponse):
+                for part in msg.parts:
+                    if isinstance(part, ToolCallPart):
+                        tool_call_indices.append(i)
+
+        print(f"\nTool calls at indices: {tool_call_indices}")
+        print(f"Tool returns at indices: {tool_return_indices}")
+        print(f"Warning at index: {warning_index}")
+
+        # Key assertion: warning should appear BETWEEN tool operations, not just at end
+        assert warning_index is not None, "Warning should be present"
+        assert len(tool_call_indices) >= 2, f"Should have multiple tool calls, got {len(tool_call_indices)}"
+        
+        # Warning should appear before the last tool call (proving mid-chain injection)
+        last_tool_call_index = max(tool_call_indices)
+        assert warning_index < last_tool_call_index, (
+            f"Warning (index {warning_index}) should appear before last tool call "
+            f"(index {last_tool_call_index}) to prove mid-chain injection"
+        )
 
     async def test_warning_not_injected_when_below_threshold(self):
         """No warning when token usage stays below threshold."""
