@@ -30,6 +30,7 @@ Custom capability using `before_model_request` hook.
 
 ### Implementation Shape
 
+This implementation is an example and not necessarily representative of what we will actually write during TDD.
 ```python
 @dataclass
 class CompactionWarner(AbstractCapability[AgentDeps]):
@@ -44,6 +45,9 @@ class CompactionWarner(AbstractCapability[AgentDeps]):
         if agent_record.compaction_warning_fired:
             return request_context  # already warned this cycle
         
+        # JF Note: Use an actual usage value from the provider, not a token estimate.
+        # If pydantic doesn't provide one natively in RunContext, consider pulling the last persisted message
+        # with one of our helper functions.
         estimated_tokens = _estimate_tokens(request_context.messages)
         if estimated_tokens >= self.warning_threshold_tokens:
             agent_record.compaction_warning_fired = True
@@ -84,12 +88,6 @@ Rejected because:
 
 Rolling our own is ~25 lines and gives exactly the behavior we need.
 
-### Open Questions
-
-- Exact warning message wording
-- Warning threshold value (e.g., 75% of compaction limit)
-- Token estimation approach (character heuristic vs tiktoken)
-
 ---
 
 Behaviors to test:
@@ -98,6 +96,8 @@ Behaviors to test:
 - Warning can be injected mid turn, not only at the start or end
 - Only injects warning once when above threshold. Resets upon compaction.
 	- After reset, warning can fire again, but still only once (IE once per compaction cycle)
+    - Threshold should be token count is 75% of the soft compaction limit. 
+    (if we need this adjustable per agent later we can but for now hard coded is fine)
 - Warning appears to agent where expected
 	- I don't actually know where in the agent's run/context it will appear. 
 	- This test can be written after the impl, I mostly just want it so that we can inspect and define whatever the behavior is.
