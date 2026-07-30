@@ -192,7 +192,6 @@ class TestCompactionWarnerUnit:
         mock_ctx.deps = mock_deps
         mock_ctx.enqueue = MagicMock()
         
-        # Token count now comes from response.usage, not ctx.usage
         mock_response = MagicMock()
         mock_response.usage.total_tokens = tokens
         mock_request_context = MagicMock()
