@@ -110,6 +110,7 @@ class AgentFactory:
                 **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
                     "max_tokens": 16000}
                    if deps.config.thinking_enabled else {}),
+                parallel_tool_calls=False, # our current orphan remover isn't compatible with parallel tool calls
             )
             agent = Agent(model,
                           instructions=get_system_prompt,
