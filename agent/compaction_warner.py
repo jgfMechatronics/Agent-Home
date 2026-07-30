@@ -49,10 +49,7 @@ class CompactionWarner(AbstractCapability[AgentDeps]):
         """Check token usage after response and enqueue warning if threshold crossed.
         
         Uses ctx.enqueue() so the warning is delivered on the NEXT model request,
-        which ensures it gets captured and persisted in message history.
-        
-        Checking after_model_request means we see the actual usage from this request
-        and the warning appears on the immediate next request (e.g., tool return).
+        also ensures it gets captured and persisted in message history.
         """
         # Already warned this compaction cycle
         if ctx.deps.compaction_warning_fired:
