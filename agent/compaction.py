@@ -77,5 +77,6 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
         return
 
     deps.context_window_start = messages[-n_msg_to_keep].seq_id
+    deps.compaction_warning_fired = False  # Reset for next compaction cycle
     await compile_system_prompt(deps)
     await deps.commit_changes_refresh_agent_record()

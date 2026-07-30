@@ -1,5 +1,5 @@
 """Tests for CompactionWarner capability."""
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -16,7 +16,8 @@ from pydantic_ai.models import ModelRequestParameters, ModelSettings
 from pydantic_ai.models.test import TestModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.compaction_warner import COMPACTION_WARNING_TEXT
+from agent.compaction import compact
+from agent.compaction_warner import COMPACTION_WARNING_TEXT, CompactionWarner
 from agent.factory import AgentFactory
 from agent.runner import run_stateful_agent
 from agent.types import AgentAppState, AgentConfig
@@ -55,7 +56,7 @@ class SequentialTestModel(TestModel):
 
 
 @pytest.mark.asyncio
-class TestCompactionWarner:
+class TestCompactionWarnerIntegration:
     """Integration tests for CompactionWarner capability."""
 
     @pytest_asyncio.fixture(autouse=True)
@@ -151,3 +152,71 @@ class TestCompactionWarner:
         
         await self.session.refresh(self.agent_record)
         assert self.agent_record.compaction_warning_fired is True
+
+
+@pytest.mark.asyncio
+class TestCompactionWarnerUnit:
+    """Unit tests for CompactionWarner threshold logic and compaction flag reset."""
+
+    @pytest.mark.parametrize("tokens,soft_limit,should_warn", [
+        (74, 100, False),   # Below 75% threshold
+        (75, 100, True),    # Exactly at threshold
+        (76, 100, True),    # Above threshold
+        (0, 100, False),    # Zero tokens
+        (749, 1000, False), # Just below threshold (larger numbers)
+        (750, 1000, True),  # Exactly at threshold (larger numbers)
+    ])
+    async def test_threshold_boundary(self, tokens: int, soft_limit: int, should_warn: bool):
+        """Verify exact threshold calculation: warn iff tokens >= soft_limit * 0.75."""
+        # Mock the minimal context needed by after_model_request
+        mock_config = MagicMock()
+        mock_config.soft_compaction_limit = soft_limit
+        
+        mock_deps = MagicMock()
+        mock_deps.config = mock_config
+        mock_deps.compaction_warning_fired = False
+        
+        mock_usage = MagicMock()
+        mock_usage.total_tokens = tokens
+        
+        mock_ctx = MagicMock()
+        mock_ctx.deps = mock_deps
+        mock_ctx.usage = mock_usage
+        mock_ctx.enqueue = MagicMock()
+        
+        mock_response = MagicMock()
+        mock_request_context = MagicMock()
+        
+        # Call the capability directly
+        warner = CompactionWarner()
+        await warner.after_model_request(mock_ctx, request_context=mock_request_context, response=mock_response)
+        
+        if should_warn:
+            mock_ctx.enqueue.assert_called_once()
+            assert mock_deps.compaction_warning_fired is True
+        else:
+            mock_ctx.enqueue.assert_not_called()
+            assert mock_deps.compaction_warning_fired is False
+
+    async def test_compact_resets_warning_flag(self):
+        """Compaction resets the warning flag for the next cycle."""
+        # Mock deps with the flag set to True
+        mock_deps = MagicMock()
+        mock_deps.context_window_start = None
+        mock_deps.compiled_system_prompt = "x" * 100  # ~25 tokens
+        mock_deps.config = MagicMock()
+        mock_deps.config.compaction_target_fraction = 0.25
+        mock_deps.config.soft_compaction_limit = 1000
+        mock_deps.compaction_warning_fired = True  # Flag is set from previous warning
+        mock_deps.commit_changes_refresh_agent_record = AsyncMock()
+        
+        # Mock load_messages to return enough messages for compaction to proceed
+        # Need > 4 messages, and ensure the candidate message won't trigger deserialization
+        mock_messages = [MagicMock(seq_id=i, type="ModelResponse") for i in range(10)]
+        
+        with patch("agent.compaction.load_messages", return_value=mock_messages):
+            with patch("agent.compaction.compile_system_prompt", new_callable=AsyncMock):
+                await compact(mock_deps, total_tokens=5000)
+        
+        # Flag should be reset to False
+        assert mock_deps.compaction_warning_fired is False
