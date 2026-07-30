@@ -59,7 +59,7 @@ class CompactionWarner(AbstractCapability[AgentDeps]):
         threshold = int(ctx.deps.config.soft_compaction_limit * COMPACTION_WARNING_THRESHOLD_FRACTION)
         
         # Check if we've crossed the threshold
-        total_tokens = ctx.usage.total_tokens if ctx.usage else 0
+        total_tokens = response.usage.total_tokens if response.usage.total_tokens else 0
         if total_tokens >= threshold:
             # Set flag (will be persisted by runner's commit)
             ctx.deps.compaction_warning_fired = True

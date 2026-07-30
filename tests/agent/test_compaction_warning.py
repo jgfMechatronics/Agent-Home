@@ -64,7 +64,7 @@ class TestCompactionWarnerIntegration:
         self.session = session
         self.agent_record = agent_record
 
-    async def _run_and_get_messages(self, model: TestModel, soft_limit: int = 50) -> list[ModelMessage]:
+    async def _run_and_get_messages(self, model: TestModel, soft_limit: int = 100) -> list[ModelMessage]:
         """Run agent with given model and return persisted messages."""
         self.agent_record.agent_config = AgentConfig(
             model_name="claude-sonnet-4-20250514",
