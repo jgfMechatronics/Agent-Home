@@ -188,15 +188,13 @@ class TestCompactionWarnerUnit:
         mock_deps.config = mock_config
         mock_deps.compaction_warning_fired = False
         
-        mock_usage = MagicMock()
-        mock_usage.total_tokens = tokens
-        
         mock_ctx = MagicMock()
         mock_ctx.deps = mock_deps
-        mock_ctx.usage = mock_usage
         mock_ctx.enqueue = MagicMock()
         
+        # Token count now comes from response.usage, not ctx.usage
         mock_response = MagicMock()
+        mock_response.usage.total_tokens = tokens
         mock_request_context = MagicMock()
         
         # Call the capability directly
