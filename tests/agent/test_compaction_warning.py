@@ -154,20 +154,32 @@ class TestCompactionWarnerIntegration:
         assert self.agent_record.compaction_warning_fired is True
 
 
+# Expected threshold fraction — tests will fail if implementation constant diverges.
+# This makes the dependency explicit rather than hiding it in magic numbers.
+EXPECTED_WARNING_THRESHOLD = 0.75
+
+
+def _threshold_test_cases() -> list[tuple[int, int, bool]]:
+    """Generate boundary test cases from the expected threshold constant."""
+    cases = []
+    for soft_limit in (100, 1000):
+        threshold = int(soft_limit * EXPECTED_WARNING_THRESHOLD)
+        cases.extend([
+            (threshold - 1, soft_limit, False),  # Below threshold
+            (threshold, soft_limit, True),       # At threshold
+            (threshold + 1, soft_limit, True),   # Above threshold
+        ])
+    cases.append((0, 100, False))  # Zero tokens edge case
+    return cases
+
+
 @pytest.mark.asyncio
 class TestCompactionWarnerUnit:
     """Unit tests for CompactionWarner threshold logic and compaction flag reset."""
 
-    @pytest.mark.parametrize("tokens,soft_limit,should_warn", [
-        (74, 100, False),   # Below 75% threshold
-        (75, 100, True),    # Exactly at threshold
-        (76, 100, True),    # Above threshold
-        (0, 100, False),    # Zero tokens
-        (749, 1000, False), # Just below threshold (larger numbers)
-        (750, 1000, True),  # Exactly at threshold (larger numbers)
-    ])
+    @pytest.mark.parametrize("tokens,soft_limit,should_warn", _threshold_test_cases())
     async def test_threshold_boundary(self, tokens: int, soft_limit: int, should_warn: bool):
-        """Verify exact threshold calculation: warn iff tokens >= soft_limit * 0.75."""
+        """Verify exact threshold calculation: warn iff tokens >= soft_limit * EXPECTED_WARNING_THRESHOLD."""
         # Mock the minimal context needed by after_model_request
         mock_config = MagicMock()
         mock_config.soft_compaction_limit = soft_limit
