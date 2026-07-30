@@ -169,13 +169,14 @@ class TestCompactionWarnerUnit:
     """Unit tests for CompactionWarner threshold logic and compaction flag reset."""
 
     @pytest.mark.parametrize("tokens,soft_limit,should_warn", [
-        (SMALL_THRESHOLD - 1, SMALL_COMPACT_LIMIT, False),  # Below (74)
-        (SMALL_THRESHOLD, SMALL_COMPACT_LIMIT, True),       # At (75)
-        (SMALL_THRESHOLD + 1, SMALL_COMPACT_LIMIT, True),   # Above (76)
-        (LARGE_THRESHOLD - 1, LARGE_COMPACT_LIMIT, False),  # Below (749)
-        (LARGE_THRESHOLD, LARGE_COMPACT_LIMIT, True),       # At (750)
-        (LARGE_THRESHOLD + 1, LARGE_COMPACT_LIMIT, True),   # Above (751)
-        (0, SMALL_COMPACT_LIMIT, False),                    # Zero tokens
+        (SMALL_THRESHOLD - 1, SMALL_COMPACT_LIMIT, False),    # Below (74)
+        (SMALL_THRESHOLD, SMALL_COMPACT_LIMIT, True),         # At (75)
+        (SMALL_THRESHOLD + 1, SMALL_COMPACT_LIMIT, True),     # Above (76)
+        (LARGE_THRESHOLD - 1, LARGE_COMPACT_LIMIT, False),    # Below (749)
+        (LARGE_THRESHOLD, LARGE_COMPACT_LIMIT, True),         # At (750)
+        (LARGE_THRESHOLD + 1, LARGE_COMPACT_LIMIT, True),     # Above (751)
+        (LARGE_COMPACT_LIMIT + 1, LARGE_COMPACT_LIMIT, True), # Probably shouldn't be possible
+        (0, SMALL_COMPACT_LIMIT, False),                      # Zero tokens
     ])
     async def test_threshold_boundary(self, tokens: int, soft_limit: int, should_warn: bool):
         """Verify exact threshold calculation: warn iff tokens >= soft_limit * EXPECTED_WARNING_THRESHOLD."""
