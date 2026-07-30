@@ -4,8 +4,8 @@ Injects a warning message when context tokens exceed 75% of soft_compaction_limi
 Fire-once behavior: only warns once per compaction cycle (flag resets when compaction runs).
 """
 from dataclasses import dataclass
-
 from typing import TYPE_CHECKING
+import logging
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from agent.types import AgentDeps
 
+logger = logging.getLogger(__name__)
 
 COMPACTION_WARNING_THRESHOLD_FRACTION = 0.75
 
@@ -55,6 +56,7 @@ class CompactionWarner(AbstractCapability[AgentDeps]):
         """
         # Already warned this compaction cycle
         if ctx.deps.compaction_warning_fired:
+            logger.info("compaction warning already fired, skipping")
             return response
         
         # Calculate threshold
@@ -62,11 +64,13 @@ class CompactionWarner(AbstractCapability[AgentDeps]):
         
         # Check if we've crossed the threshold
         total_tokens = response.usage.total_tokens if response.usage.total_tokens else 0
+        logger.info(f"current usage visible to after request hook: {total_tokens} tok")
         if total_tokens >= threshold:
             # Set flag (will be persisted by runner's commit)
             ctx.deps.compaction_warning_fired = True
             
             # Enqueue warning — delivered on next request, available for persistence in message history
             ctx.enqueue(UserPromptPart(content=COMPACTION_WARNING_TEXT))
+            logger.info("firing compaction warning")
         
         return response

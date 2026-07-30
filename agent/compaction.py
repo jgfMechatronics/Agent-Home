@@ -52,6 +52,7 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     if len(messages) <= MIN_MESSAGES_AFTER_COMPACTION:
         return
 
+    logger.info("compacting")
     # TODO (low priority): we may eventually want a more sophisticated way to estiamte tokens, and some sort of 
     # check and loop on resulting in-context message token count to be more accurate if we find it necessary
     sys_tokens = len(deps.compiled_system_prompt) / 4
