@@ -13,6 +13,9 @@ from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 logger = logging.getLogger(__name__)
 
 
+MIN_MESSAGES_AFTER_COMPACTION = 4
+
+
 def is_compaction_needed(total_tokens: int | None, config: AgentConfig) -> bool:
     """Check if compaction should be triggered based on token count.
 
@@ -40,12 +43,13 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     - Tool call/return pairs are kept atomic (never split across the boundary)
     - Calls compile_system_prompt after advancing pointer
     """
+    
     messages = await load_messages(
         deps.session, deps.agent_id, start_seq_id=deps.context_window_start
     )
 
     # small context guard/avoid div by 0
-    if len(messages) <= 4:
+    if len(messages) <= MIN_MESSAGES_AFTER_COMPACTION:
         return
 
     # TODO (low priority): we may eventually want a more sophisticated way to estiamte tokens, and some sort of 
@@ -56,7 +60,7 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     if avg_tokens_per_msg <= 0:
         return  # System prompt dominates token budget — can't estimate, skip this turn
     target_tokens = deps.config.compaction_target_fraction * deps.config.soft_compaction_limit
-    n_msg_to_keep = max(4, int((target_tokens - sys_tokens) / avg_tokens_per_msg))
+    n_msg_to_keep = max(MIN_MESSAGES_AFTER_COMPACTION, int((target_tokens - sys_tokens) / avg_tokens_per_msg))
 
     if n_msg_to_keep >= len(messages):
         return
