@@ -212,23 +212,34 @@ class TestCompactionWarnerUnit:
 
     async def test_compact_resets_warning_flag(self):
         """Compaction resets the warning flag for the next cycle."""
-        # Mock deps with the flag set to True
+        # Compaction proceeds when n_msg_to_keep < n_messages. The math:
+        #   sys_tokens = len(system_prompt) / 4
+        #   target_tokens = target_fraction * soft_limit
+        #   avg_tokens_per_msg = (total_tokens - sys_tokens) / n_messages
+        #   n_msg_to_keep = max(4, (target_tokens - sys_tokens) / avg_tokens_per_msg)
+        #
+        # These values are chosen so compaction proceeds (n_msg_to_keep=4 < n_messages=10):
+        n_messages = 10
+        sys_prompt_chars = 100  # → 25 tokens at 4 chars/token
+        soft_limit = 1000
+        target_fraction = 0.25  # → target = 250 tokens
+        total_tokens = 5000     # → avg ~500 tokens/msg → n_msg_to_keep = max(4, 0) = 4
+
         mock_deps = MagicMock()
         mock_deps.context_window_start = None
-        mock_deps.compiled_system_prompt = "x" * 100  # ~25 tokens
+        mock_deps.compiled_system_prompt = "x" * sys_prompt_chars
         mock_deps.config = MagicMock()
-        mock_deps.config.compaction_target_fraction = 0.25
-        mock_deps.config.soft_compaction_limit = 1000
+        mock_deps.config.compaction_target_fraction = target_fraction
+        mock_deps.config.soft_compaction_limit = soft_limit
         mock_deps.compaction_warning_fired = True  # Flag is set from previous warning
         mock_deps.commit_changes_refresh_agent_record = AsyncMock()
         
-        # Mock load_messages to return enough messages for compaction to proceed
-        # Need > 4 messages, and ensure the candidate message won't trigger deserialization
-        mock_messages = [MagicMock(seq_id=i, type="ModelResponse") for i in range(10)]
+        # Need > 4 messages; type="ModelResponse" avoids deserialization branch
+        mock_messages = [MagicMock(seq_id=i, type="ModelResponse") for i in range(n_messages)]
         
         with patch("agent.compaction.load_messages", return_value=mock_messages):
             with patch("agent.compaction.compile_system_prompt", new_callable=AsyncMock):
-                await compact(mock_deps, total_tokens=5000)
+                await compact(mock_deps, total_tokens=total_tokens)
         
         # Flag should be reset to False
         assert mock_deps.compaction_warning_fired is False
