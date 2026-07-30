@@ -64,7 +64,7 @@ class CompactionWarner(AbstractCapability[AgentDeps]):
             # Set flag (will be persisted by runner's commit)
             ctx.deps.compaction_warning_fired = True
             
-            # Enqueue warning — delivered on next request, persisted in message history
+            # Enqueue warning — delivered on next request, available for persistence in message history
             ctx.enqueue(UserPromptPart(content=COMPACTION_WARNING_TEXT))
         
         return response
