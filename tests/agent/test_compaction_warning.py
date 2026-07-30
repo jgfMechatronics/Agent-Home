@@ -212,18 +212,19 @@ class TestCompactionWarnerUnit:
 
     async def test_compact_resets_warning_flag(self):
         """Compaction resets the warning flag for the next cycle."""
-        # Compaction proceeds when n_msg_to_keep < n_messages. The math:
-        #   sys_tokens = len(system_prompt) / 4
-        #   target_tokens = target_fraction * soft_limit
-        #   avg_tokens_per_msg = (total_tokens - sys_tokens) / n_messages
-        #   n_msg_to_keep = max(4, (target_tokens - sys_tokens) / avg_tokens_per_msg)
-        #
-        # These values are chosen so compaction proceeds (n_msg_to_keep=4 < n_messages=10):
+        # Test inputs
         n_messages = 10
-        sys_prompt_chars = 100  # → 25 tokens at 4 chars/token
+        sys_prompt_chars = 100
         soft_limit = 1000
-        target_fraction = 0.25  # → target = 250 tokens
-        total_tokens = 5000     # → avg ~500 tokens/msg → n_msg_to_keep = max(4, 0) = 4
+        target_fraction = 0.25
+        total_tokens = 5000
+
+        # Compaction proceeds only when n_msg_to_keep < n_messages
+        sys_tokens = sys_prompt_chars / 4
+        target_tokens = target_fraction * soft_limit
+        avg_tokens_per_msg = (total_tokens - sys_tokens) / n_messages
+        n_msg_to_keep = max(4, int((target_tokens - sys_tokens) / avg_tokens_per_msg))
+        assert n_msg_to_keep < n_messages, "Test setup error: compaction won't proceed"
 
         mock_deps = MagicMock()
         mock_deps.context_window_start = None
