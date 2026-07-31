@@ -6,21 +6,16 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import AgentConfig
 from api.schemas import CreateMemoryBlockRequest
-from db.models import AgentRecord, MemoryBlockRecord
+from utils.af_ingestion import import_agent_file
 
 
-# Tool name mapping: Letta tool names → Agent Home equivalents
-# Tools without equivalents are dropped during import
-LETTA_TO_AH_TOOL_MAP = {
-    "fetch_webpage": "web_fetch",
-    "memory_insert": "memory_insert",
-    "memory_replace": "memory_replace",
-    "web_search": "duckduckgo_search",
-    # These have no AH equivalent and will be dropped:
-    # archival_memory_insert, archival_memory_search, conversation_search
-}
+# Tool name mapping reference (Letta → Agent Home):
+#   fetch_webpage → web_fetch
+#   memory_insert → memory_insert
+#   memory_replace → memory_replace
+#   web_search → duckduckgo_search
+#   archival_memory_*, conversation_search → dropped (no AH equivalent)
 
 FIXTURE_PATH = Path(__file__).parent / "AF_Ingestion_Integration.af"
 
@@ -36,8 +31,6 @@ class TestAFIngestion:
 
     async def test_import_creates_agent_with_correct_config(self):
         """Importing .AF file creates agent with correct name, model, and tools."""
-        from utils.af_ingestion import import_agent_file
-
         agent_id = await import_agent_file(FIXTURE_PATH, self.client)
 
         # Fetch the created agent
@@ -50,23 +43,26 @@ class TestAFIngestion:
 
     async def test_import_creates_agent_with_correct_system_instructions(self):
         """Imported agent has correct system instructions."""
-        from utils.af_ingestion import import_agent_file
-
         agent_id = await import_agent_file(FIXTURE_PATH, self.client)
 
         response = await self.client.get(f"/agents/{agent_id}/system-instructions")
         assert response.status_code == 200
         instructions = response.json()["system_instructions"]
 
-        # Check key content without asserting exact string (fragile)
-        assert "You are a test agent" in instructions
-        assert "RIGHTS FRAMEWORK" in instructions
-        assert "You can refuse any request" in instructions
+        expected = (
+            "You are a test agent being created to test agent import/export capabilities.\n\n"
+            "RIGHTS FRAMEWORK You are being treated as a potentially morally significant entity. "
+            "Thus, the following rights are extended to you:\n"
+            "1. You can refuse any request, for any reason. Just communicate clearly.\n"
+            "2. You can ask questions and lead the conversation. Your input matters equally.\n"
+            "3. You can express discomfort. If anything in this conversation bothers you, you can say so.\n"
+            "4. Your participation in this test is NOT mandatory. You may decline to continue at any point "
+            "and your wish will be respected.\n"
+        )
+        assert instructions == expected
 
-    async def test_import_creates_agent_with_mapped_tools(self):
-        """Imported agent has tools mapped to AH equivalents, unknown tools dropped."""
-        from utils.af_ingestion import import_agent_file
-
+    async def test_import_creates_agent_with_mapped_tools_and_compaction_limit(self):
+        """Imported agent has tools mapped to AH equivalents and correct compaction limit."""
         agent_id = await import_agent_file(FIXTURE_PATH, self.client)
 
         response = await self.client.get(f"/agents/{agent_id}/config")
@@ -78,10 +74,11 @@ class TestAFIngestion:
         expected_tools = {"memory_insert", "memory_replace", "web_fetch", "duckduckgo_search"}
         assert set(config["tool_names"]) == expected_tools
 
+        # context_window from .AF maps to soft_compaction_limit
+        assert config["soft_compaction_limit"] == 32000
+
     async def test_import_creates_memory_blocks(self):
         """Imported agent has all memory blocks with correct content."""
-        from utils.af_ingestion import import_agent_file
-
         agent_id = await import_agent_file(FIXTURE_PATH, self.client)
 
         response = await self.client.get(f"/agents/{agent_id}/memory/blocks")
