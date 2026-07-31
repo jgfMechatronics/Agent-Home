@@ -101,13 +101,13 @@ async def run_stateful_agent(agent: Agent,
         
         # pydantic-ai merges adjacent ModelRequests, which shifts indices in the captured messages list
         merge_adjustment = _count_adjacent_model_request_merges(message_history)
+        # Track where new messages start for persistence; adjust for merges pydantic-ai will perform
+        new_message_idx = len(message_history) - merge_adjustment
 
         with capture_run_messages() as messages:
             async with agent.run_stream_events(user_prompt=user_prompt,
                                                 message_history=message_history,
                                                 deps=deps) as stream:
-                # Track what we've persisted; adjust for merges pydantic-ai will perform
-                new_message_idx = len(message_history) - merge_adjustment
                 last_total_tokens_value = None
 
                 async for event in stream:
