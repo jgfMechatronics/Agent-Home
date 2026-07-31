@@ -43,6 +43,18 @@ def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent_id: s
     return tool_schemas
 
 
+def _count_adjacent_model_request_merges(messages: list) -> int:
+    """Count adjacent ModelRequest pairs that pydantic-ai will merge.
+    
+    pydantic-ai merges consecutive ModelRequests in message_history, which affects
+    indexing when tracking new messages to persist. Returns the count of merges
+    (i.e., how many messages will "disappear" due to merging).
+    """
+    return sum(1 for i in range(len(messages) - 1)
+               if isinstance(messages[i], ModelRequest) 
+               and isinstance(messages[i+1], ModelRequest))
+
+
 async def _check_and_handle_cancel(
     agent_app_state: AgentAppState,
     deps: AgentDeps,
@@ -86,12 +98,16 @@ async def run_stateful_agent(agent: Agent,
         
         records = await load_messages(deps.session, deps.agent_id, start_seq_id=deps.context_window_start)
         message_history = deserialize_messages(records)
+        
+        # pydantic-ai merges adjacent ModelRequests, which shifts indices in the captured messages list
+        merge_adjustment = _count_adjacent_model_request_merges(message_history)
 
         with capture_run_messages() as messages:
             async with agent.run_stream_events(user_prompt=user_prompt,
                                                 message_history=message_history,
                                                 deps=deps) as stream:
-                new_message_idx = len(message_history)  # track what we have persisted already from messages
+                # Track what we've persisted; adjust for merges pydantic-ai will perform
+                new_message_idx = len(message_history) - merge_adjustment
                 last_total_tokens_value = None
 
                 async for event in stream:
