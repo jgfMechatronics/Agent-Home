@@ -728,6 +728,58 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         self.mock_session.commit.assert_not_called()
         assert sse_events[-1]["event"] == "Error"
 
+    @pytest.mark.parametrize("fake_history", [
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content="prior turn")]),
+                ModelRequest(parts=[UserPromptPart(content="compaction warning")]),
+            ],
+            id="one_adjacent_pair",
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content="prior turn")]),
+                ModelRequest(parts=[UserPromptPart(content="warning 1")]),
+                ModelRequest(parts=[UserPromptPart(content="warning 2")]),
+            ],
+            id="three_consecutive_model_requests",
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content="prior turn 1")]),
+                ModelRequest(parts=[UserPromptPart(content="warning 1")]),
+                ModelResponse(parts=[TextPart(content="response 1")]),
+                ModelRequest(parts=[UserPromptPart(content="prior turn 2")]),
+                ModelRequest(parts=[UserPromptPart(content="warning 2")]),
+            ],
+            id="two_separated_pairs",
+        ),
+    ])
+    async def test_adjacent_model_requests_in_history_persists_full_new_turn(
+        self, client: AsyncClient, fake_history: list
+    ):
+        """Adjacent ModelRequests in history do not corrupt new_message_idx.
+
+        pydantic-ai merges consecutive ModelRequests, so a history of N messages
+        with K adjacent pairs becomes N-K messages internally. Without the
+        count_adjacent_model_request_pairs offset, new_message_idx is too large
+        and the new turn's user prompt is never persisted.
+
+        Asserts that the full new-turn message list (including user prompt) is
+        persisted, and no history messages are included.
+        """
+        self.mock_deserialize_msgs.return_value = fake_history
+
+        events = await stream_and_collect(client, self.agent_record.id)
+        assert "Error" not in [e["event"] for e in events], f"Unexpected Error event: {events}"
+
+        persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
+
+        expected_msg_list = [
+            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+        ] + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS
+        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
+
 
 # ---------------------------------------------------------------------------
 # TestCancellation
