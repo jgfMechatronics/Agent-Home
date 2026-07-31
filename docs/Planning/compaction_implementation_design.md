@@ -1,13 +1,13 @@
 # Compaction Implementation Design (Gaps 9+10)
 
 **Created:** July 25, 2026  
-**Status:** Warning injection design settled; compaction mechanics TBD
+**Status:** Implemented
 
 ## Compaction Warning (Gap 9)
 
 ### Mechanism
 
-Custom capability using `before_model_request` hook.
+Custom capability using `after_model_request` hook with `ctx.enqueue()` for injection.
 
 ### Behavior
 
@@ -30,47 +30,32 @@ Custom capability using `before_model_request` hook.
 
 ### Implementation Shape
 
-This implementation is an example and not necessarily representative of what we will actually write during TDD.
+Actual implementation in `agent/compaction_warner.py`:
 ```python
 @dataclass
 class CompactionWarner(AbstractCapability[AgentDeps]):
-    warning_threshold_tokens: int
-    warning_message: str
-
-    async def before_model_request(
-        self, ctx: RunContext[AgentDeps], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        agent_record = ctx.deps.agent_app_state.agent_record
+    async def after_model_request(
+        self, ctx: RunContext[AgentDeps], *, 
+        request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        if ctx.deps.compaction_warning_fired:
+            return response  # already warned this cycle
         
-        if agent_record.compaction_warning_fired:
-            return request_context  # already warned this cycle
+        threshold = int(ctx.deps.config.soft_compaction_limit * 0.75)
+        total_tokens = response.usage.total_tokens if response.usage.total_tokens else 0
         
-        # JF Note: Use an actual usage value from the provider, not a token estimate.
-        # If pydantic doesn't provide one natively in RunContext, consider pulling the last persisted message
-        # with one of our helper functions.
-        estimated_tokens = _estimate_tokens(request_context.messages)
-        if estimated_tokens >= self.warning_threshold_tokens:
-            agent_record.compaction_warning_fired = True
-            # persist to DB...
-            
-            # Inject warning as user message
-            # JF Note: This part may require a bit more fleshing out, we might want to enqueue.
-            # I havent seen this method but it might also be fine.
-            request_context.messages = [
-                *request_context.messages,
-                ModelRequest(parts=[UserPromptPart(content=self.warning_message)])
-            ]
+        if total_tokens >= threshold:
+            ctx.deps.compaction_warning_fired = True
+            ctx.enqueue(UserPromptPart(content=COMPACTION_WARNING_TEXT))
         
-        return request_context
+        return response
 ```
 
 ### Hook Timing
 
-`before_model_request` fires before EVERY model request in a turn:
-- Before initial model request
-- Before each subsequent request (after tool returns)
+`after_model_request` fires after EVERY model response in a turn. We use `ctx.enqueue()` to inject the warning, which delivers it on the NEXT model request and ensures it gets captured in message history.
 
-This allows mid-turn warning injection — the warning can fire after the agent has accumulated context from tool results.
+This allows mid-turn warning injection — the warning can fire after tool results accumulate context.
 
 ### Deps Access
 
