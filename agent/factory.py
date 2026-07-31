@@ -18,6 +18,7 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.compaction_warner import CompactionWarner
 from agent.crud import get_agent_record
 from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError, validate_model_name
 from memory.system_prompt_compilation import get_system_prompt
@@ -109,6 +110,7 @@ class AgentFactory:
                 **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
                     "max_tokens": 16000}
                    if deps.config.thinking_enabled else {}),
+                parallel_tool_calls=False, # our current orphan remover isn't compatible with parallel tool calls
             )
             agent = Agent(model,
                           instructions=get_system_prompt,
@@ -117,7 +119,8 @@ class AgentFactory:
                           tools=get_tools_for_agent(deps.config.tool_names),
                           retries=deps.config.retries,
                           output_type=[str, DeferredToolRequests],
-                          model_settings=model_settings)
+                          model_settings=model_settings,
+                          capabilities=[CompactionWarner()])
             
             yield (agent, deps)
 

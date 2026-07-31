@@ -17,8 +17,10 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI, HTTPException
 from httpx import AsyncClient, Response
-from pydantic_ai import Agent, AgentRunResultEvent
+from pydantic_ai import Agent, AgentRunResultEvent, RunContext
 from pydantic_ai.messages import (
+    ToolCallEvent,
+    ToolResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
@@ -37,6 +39,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 # Local
+from messages.messages import format_system_alert
+from agent.runner import run_stateful_agent
 from agent.types import AgentAppState
 from api.fastapi_deps import get_agent_and_deps
 from conftest import make_deps, make_mock_agent, _make_mock_session
@@ -308,6 +312,8 @@ class FunctionModelTestAgent:
     # --- Dummy tool identity ---
     # Couples the FunctionModel stream deltas, expected message parts, and the tool implementation.
     # NOTE: the tool function name below in _build() must match DUMMY_TOOL_NAME.
+    ENQUEUED_WARNING_TEXT = "system warning: approaching compaction"
+
     DUMMY_TOOL_NAME    = "dummy_tool"
     DUMMY_TOOL_ARGS    = '{"arg": "dummy"}'
     DUMMY_TOOL_CALL_ID = "tc-a1"
@@ -347,8 +353,8 @@ class FunctionModelTestAgent:
         ModelRequest(parts=[DUMMY_TOOL_RETURN_PART]),
     ]
     # What should be persisted for CRASH_STEPS: both tool pairs.
-    # FunctionToolResultEvent fires after each tool completes, before the next step starts.
-    # Our route persists the tool pair atomically on FunctionToolResultEvent, so both pairs
+    # ToolResultEvent fires after each tool completes, before the next step starts.
+    # Our route persists the tool pair atomically on ToolResultEvent, so both pairs
     # are committed before the crash hits on step 3.
     CRASH_EXPECTED_PARTIAL_MODELMSGS: list[ModelMessage] = EXPECTED_TOOL_PAIR * 2
     # THREE_TOOL_CALL_STEPS: 3 tool call/return pairs followed by a final text response
@@ -362,6 +368,8 @@ class FunctionModelTestAgent:
         self._stream_steps = self.DEFAULT_STEPS
         # use to pause tool execution to test intermediate states
         self.block_in_tool = False
+        # when True, dummy_tool calls ctx.enqueue() to inject a mid-turn UserPromptPart
+        self.enqueue_from_tool = False
         # Set when dummy_tool begins executing (tests can await this); cleared after each resume
         self.tool_entered = asyncio.Event()
         # Tests set this to let dummy_tool resume after blocking
@@ -426,7 +434,9 @@ class FunctionModelTestAgent:
     def _build(self) -> Agent:
         agent: Agent = Agent(FunctionModel(stream_function=self._stream))
 
-        async def dummy_tool(arg: str) -> str:
+        async def dummy_tool(ctx: RunContext, arg: str) -> str:
+            if self.enqueue_from_tool:
+                ctx.enqueue(UserPromptPart(content=self.ENQUEUED_WARNING_TEXT))
             if self.block_in_tool:
                 self.tool_entered.set()
                 await self.resume_tool_exec.wait()
@@ -436,7 +446,7 @@ class FunctionModelTestAgent:
                 self.resume_tool_exec.clear()
             return self.TOOL_RETURN_VALUE
 
-        agent.tool_plain(dummy_tool)
+        agent.tool(dummy_tool)
         return agent
 
     async def _block_after_chunk(self) -> None:
@@ -725,6 +735,87 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         self.mock_session.commit.assert_not_called()
         assert sse_events[-1]["event"] == "Error"
 
+    async def test_enqueued_message_is_persisted(self, client: AsyncClient):
+        """Mid-turn ctx.enqueue() produces an adjacent ModelRequest that must be persisted.
+
+        When dummy_tool calls ctx.enqueue(UserPromptPart(...)), pydantic-ai appends a new
+        ModelRequest to the captured messages list adjacent to the MR_tool_return. This
+        exercises the case where adjacent ModelRequests arise *during* the turn itself,
+        not from history.
+
+        Asserts that both the enqueued UserPromptPart and the final ModelResponse are
+        persisted — i.e. the enqueued message is not swallowed.
+        """
+        self.function_agent.enqueue_from_tool = True
+
+        events = await stream_and_collect(client, self.agent_record.id)
+        assert "Error" not in [e["event"] for e in events], f"Unexpected Error event: {events}"
+
+        persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
+
+        expected_msg_list = [
+            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+            ModelResponse(parts=[ThinkingPart(content=FunctionModelTestAgent.THINKING_TEXT),
+                                  TextPart(content=FunctionModelTestAgent.PRE_TOOL_TEXT),
+                                  FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
+            ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
+            ModelRequest(parts=[UserPromptPart(content=FunctionModelTestAgent.ENQUEUED_WARNING_TEXT)]),
+            ModelResponse(parts=[TextPart(content=FunctionModelTestAgent.COMPLETION_TEXT)]),
+        ]
+        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
+
+    @pytest.mark.parametrize("fake_history", [
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content="prior turn")]),
+                ModelRequest(parts=[UserPromptPart(content="compaction warning")]),
+            ],
+            id="one_adjacent_pair",
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content="prior turn")]),
+                ModelRequest(parts=[UserPromptPart(content="warning 1")]),
+                ModelRequest(parts=[UserPromptPart(content="warning 2")]),
+            ],
+            id="three_consecutive_model_requests",
+        ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content="prior turn 1")]),
+                ModelRequest(parts=[UserPromptPart(content="warning 1")]),
+                ModelResponse(parts=[TextPart(content="response 1")]),
+                ModelRequest(parts=[UserPromptPart(content="prior turn 2")]),
+                ModelRequest(parts=[UserPromptPart(content="warning 2")]),
+            ],
+            id="two_separated_pairs",
+        ),
+    ])
+    async def test_adjacent_model_requests_in_history_persists_full_new_turn(
+        self, client: AsyncClient, fake_history: list
+    ):
+        """Adjacent ModelRequests in history do not corrupt new_message_idx.
+
+        pydantic-ai merges consecutive ModelRequests, so a history of N messages
+        with K adjacent pairs becomes N-K messages internally. Without the
+        count_adjacent_model_request_pairs offset, new_message_idx is too large
+        and the new turn's user prompt is never persisted.
+
+        Asserts that the full new-turn message list (including user prompt) is
+        persisted, and no history messages are included.
+        """
+        self.mock_deserialize_msgs.return_value = fake_history
+
+        events = await stream_and_collect(client, self.agent_record.id)
+        assert "Error" not in [e["event"] for e in events], f"Unexpected Error event: {events}"
+
+        persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
+
+        expected_msg_list = [
+            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+        ] + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS
+        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
+
 
 # ---------------------------------------------------------------------------
 # TestCancellation
@@ -739,9 +830,9 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 
     test_graceful_cancel: xfail pending cancel route + _cancel_signals implementation.
 
-    Corner case — ToolCallPart buffered but not yet consumed as FunctionToolCallEvent:
+    Corner case — ToolCallPart buffered but not yet consumed as ToolCallEvent:
     pydantic-ai appends ModelResponse([ToolCallPart]) to its capture_run_messages buffer
-    BEFORE emitting FunctionToolCallEvent to the consumer. If cancel is serviced in this
+    BEFORE emitting ToolCallEvent to the consumer. If cancel is serviced in this
     narrow window, the captured list may contain a bare ToolCallPart with no return.
     This is a non-issue: the route passes the captured list as-is to persist_messages,
     which already has orphan sanitization logic and will drop the unpaired ToolCallPart.
@@ -752,7 +843,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
     # NOTE: Ideally this would be a ModelRequest (user message), but pydantic-ai merges consecutive
     # ModelRequests, breaking cursor-based persistence. Using ModelResponse avoids the merge.
     # Consider switching back after migrating to agent.iter().
-    CANCEL_NOTICE = ModelResponse(parts=[TextPart(content="<system_message>Turn cancelled by user.</system_message>")])
+    CANCEL_NOTICE = ModelRequest(parts=[UserPromptPart(content=format_system_alert("Turn cancelled by user."))])
 
     async def test_cancel_no_active_run_returns_409(self, client: AsyncClient):
         """Cancel route returns 409 when no run is active for the given agent_id."""
@@ -809,7 +900,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 
         Covers requirements:
             — active tool is allowed to complete before cancel takes effect
-            — cancellation notice wrapped in <system_message> tags is persisted
+            — cancellation notice wrapped in <system_alert> tags is persisted
             — cancel is delivered via POST /agents/{id}/cancel
         """
         await self._test_cancel_during_tool_exec(client)
@@ -888,9 +979,9 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 async def test_rendezvous_tool_does_not_start_before_event_consumed():
     """Regression guard: pydantic-ai rendezvous semantics.
 
-    Property: a tool does NOT begin executing until its FunctionToolCallEvent has
+    Property: a tool does NOT begin executing until its ToolCallEvent has
     been consumed by the caller.  Our cancel strategy depends entirely on this —
-    we can break out of the event stream BEFORE consuming FunctionToolCallEvent
+    we can break out of the event stream BEFORE consuming ToolCallEvent
     and guarantee the tool has not started (and therefore cancel without orphaning it).
 
     Drives a real Agent directly (no HTTP route) to isolate the pydantic-ai behaviour.
@@ -908,36 +999,142 @@ async def test_rendezvous_tool_does_not_start_before_event_consumed():
         async with agent.run_stream_events("test", message_history=[]) as stream:
             events_iter = stream.__aiter__()
 
-            # Consume events strictly before FunctionToolCallEvent.
-            # FunctionToolCallEvent is emitted only after the stream function's generator
+            # Consume events strictly before ToolCallEvent.
+            # ToolCallEvent is emitted only after the stream function's generator
             # is exhausted, so at least one PartStartEvent/PartDeltaEvent precedes it.
             event = await events_iter.__anext__()
             pre_tool_event_seen = False
 
-            while not isinstance(event, FunctionToolCallEvent):
+            while not isinstance(event, ToolCallEvent):
                 pre_tool_event_seen = True
-                # THE INVARIANT: until FunctionToolCallEvent is consumed, the tool
+                # THE INVARIANT: until ToolCallEvent is consumed, the tool
                 # must not have started (producer is blocked on the rendezvous send).
                 # Yield real time to the event loop to let the producer attempt to advance.
                 await asyncio.sleep(0.2)
                 assert not test_agent.tool_entered.is_set(), (
                     f"Rendezvous violated: blocking_tool started before "
-                    f"FunctionToolCallEvent was consumed "
+                    f"ToolCallEvent was consumed "
                     f"(pydantic-ai {_PYDANTIC_AI_VERSION}). "
                     f"Cancel strategy must be re-evaluated."
                 )
                 event = await events_iter.__anext__()
             
-            await asyncio.wait_for(test_agent.tool_entered.wait(), timeout=2) # Tool should execute now that we popped the FunctionToolCallEvent off
+            await asyncio.wait_for(test_agent.tool_entered.wait(), timeout=2) # Tool should execute now that we popped the ToolCallEvent off
             test_agent.resume_tool_exec.set()
 
             assert pre_tool_event_seen, (
-                "No events appeared before FunctionToolCallEvent — "
+                "No events appeared before ToolCallEvent — "
                 "the rendezvous invariant was never exercised. "
                 "Check whether pydantic-ai changed its event ordering."
             )
 
-            # FunctionToolCallEvent consumed: tool is now allowed to start.
+            # ToolCallEvent consumed: tool is now allowed to start.
             # Drain remaining events to allow clean context-manager teardown.
             async for _ in stream:
                 pass
+
+
+class TestRunStatefulAgentCompaction(_BaseRouteTest):
+    """Compaction interrupt-and-resume behavior in run_stateful_agent.
+
+    Drives run_stateful_agent directly (bypassing HTTP) for precise control
+    over the compaction loop. Inherits _BaseRouteTest patches for
+    is_compaction_needed, compact, persist_messages, load_messages, and
+    deserialize_messages.
+
+    NOTE: These tests cover the temporary stand-in compaction implementation
+    and will be replaced when agentic compaction lands.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, agent_record):
+        self.test_agent = FunctionModelTestAgent()
+        self.agent_app_state = AgentAppState()
+        self._deps = make_deps(_make_mock_session(), agent_record)
+
+    async def _run_agent_to_completion(self, user_prompt: str = "test") -> list:
+        return [event async for event in run_stateful_agent(
+            self.test_agent.agent, self._deps, self.agent_app_state, user_prompt
+        )]
+
+    async def test_compaction_interrupts_turn_and_resumes(self):
+        """Threshold crossed during a turn → compact fires, agent is resumed and completes.
+
+        DEFAULT_STEPS: tool call on step 1, text completion on step 2.
+        Compaction fires after the first step's tool returns; the resumed turn
+        runs step 2 and completes normally.
+        """
+        # Return True until compact has fired once; False thereafter.
+        self.mock_needs_compact.side_effect = lambda *_: not self.mock_compact.called
+
+        events = await self._run_agent_to_completion()
+
+        self.mock_compact.assert_called_once()
+        assert len(self.test_agent.calls) == 2, "agent should run twice: initial turn + one resume"
+        assert isinstance(events[-1], AgentRunResultEvent)
+
+    async def test_only_interrupts_directly_after_tool_return(self):
+        """
+        We constrain compact to only fire directly after a tool return or a final event. This is to avoid orphaning tool calls,
+        and also attempting to minimize how much generation we possibly discard. Note that this doesn't discard 0 generation
+        with the current impl, as we need to switch to agent.iter for that level of control. run_stream_events likely forms a new request
+        as soon as we pull the ToolResultEvent off the iterator (or possibly before). This is a temporary wastefulness we accept.
+        """
+        self.mock_needs_compact.return_value = True  # stress test the event type guard
+
+        expected_compact_call_ct = 0
+        async for event in run_stateful_agent(self.test_agent.agent, self._deps, self.agent_app_state, "test"):
+            # When the ToolResultEvent is yielded, run_stateful_agent will be suspended at the yield point which is *before* the compaction check
+            # inspects the last yielded event. Thus we expect compact to have been called once run_stateful_agent has been resumed after yielding that event.
+            assert self.mock_compact.call_count == expected_compact_call_ct
+            if isinstance(event, ToolResultEvent):
+                expected_compact_call_ct += 1
+            elif isinstance(event, AgentRunResultEvent):
+                expected_compact_call_ct += 1
+
+        assert self.mock_compact.call_count == expected_compact_call_ct
+
+    async def test_no_resume_if_turn_ends_naturally(self):
+        """Compact runs after a naturally-completed turn but the agent is not resumed.
+
+        A turn that ends with AgentRunResultEvent (not an interruption) should
+        trigger compaction if the threshold is crossed at that moment, but must
+        not start a new turn.
+
+        The compaction check fires AFTER yield inside the event loop, so we can
+        enable is_compaction_needed from the consumer side on AgentRunResultEvent
+        to simulate the threshold being crossed exactly at natural turn end.
+        """
+        self.test_agent.set_steps([FunctionModelTestAgent.COMPLETION_TEXT])
+        # Return True only after the natural turn end has been observed by the consumer.
+        # Prevents is_compaction_needed from firing early and interrupting the turn.
+        natural_end_seen = [False]
+        self.mock_needs_compact.side_effect = lambda *_: natural_end_seen[0]
+
+        async for event in run_stateful_agent(self.test_agent.agent, self._deps, self.agent_app_state, "test"):
+            if isinstance(event, AgentRunResultEvent):
+                natural_end_seen[0] = True
+
+        self.mock_compact.assert_called()
+        assert len(self.test_agent.calls) == 1, "agent must not be resumed after a natural turn end"
+
+    async def test_multiple_compactions_in_single_run(self):
+        """The interrupt-and-resume loop handles back-to-back compactions correctly.
+
+        Each interrupted turn is compacted and resumed; the loop exits only
+        when is_compaction_needed returns False.
+        """
+        # Two tool-call steps to interrupt, then a completion to exit naturally.
+        self.test_agent.set_steps([
+            FunctionModelTestAgent.TOOL_CALL,
+            FunctionModelTestAgent.TOOL_CALL,
+            FunctionModelTestAgent.COMPLETION_TEXT,
+        ])
+        # Return True until compact has fired twice; False thereafter.
+        self.mock_needs_compact.side_effect = lambda *_: self.mock_compact.call_count < 2
+
+        events = await self._run_agent_to_completion()
+
+        assert self.mock_compact.call_count == 2
+        assert len(self.test_agent.calls) == 3, "agent should run three times: original + two resumes"
+        assert isinstance(events[-1], AgentRunResultEvent)

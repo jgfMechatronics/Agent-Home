@@ -58,6 +58,7 @@ class AgentRecord(Base):
     compiled_system_prompt: Mapped[str] = mapped_column(default='')
     sys_prompt_compiled_at: Mapped[datetime | None]
     context_window_start: Mapped[int] = mapped_column(default=0)
+    compaction_warning_fired: Mapped[bool] = mapped_column(default=False)
     # SQLite uses utc internally by default, matches our intent
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

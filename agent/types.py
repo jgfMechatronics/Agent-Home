@@ -190,6 +190,14 @@ class AgentDeps:
     def context_window_start(self, value: int) -> None:
         self._agent_record.context_window_start = value
 
+    @property
+    def compaction_warning_fired(self) -> bool:
+        return self._agent_record.compaction_warning_fired
+
+    @compaction_warning_fired.setter
+    def compaction_warning_fired(self, value: bool) -> None:
+        self._agent_record.compaction_warning_fired = value
+
     async def commit_changes_refresh_agent_record(self) -> None:
         """Commit the session and immediately refresh _agent_record.
 

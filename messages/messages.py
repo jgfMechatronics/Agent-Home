@@ -1,5 +1,5 @@
 """
-Message persistence and retrieval
+Message persistence, retrieval, and formatting utilities.
 """
 import dataclasses
 import hashlib
@@ -33,6 +33,13 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def format_system_alert(content: str, tags_on_newline: bool = False) -> str:
+    """Wrap content in <system_alert> XML tags for agent-facing system messages."""
+    if tags_on_newline:
+        return f"<system_alert>\n{content}\n</system_alert>"
+    return f"<system_alert>{content}</system_alert>"
+
 
 def _make_orphan_replacement(
     msg: ModelMessage, part_type: type
