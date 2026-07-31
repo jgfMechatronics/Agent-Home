@@ -17,7 +17,7 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI, HTTPException
 from httpx import AsyncClient, Response
-from pydantic_ai import Agent, AgentRunResultEvent
+from pydantic_ai import Agent, AgentRunResultEvent, RunContext
 from pydantic_ai.messages import (
     ToolCallEvent,
     ToolResultEvent,
@@ -311,6 +311,8 @@ class FunctionModelTestAgent:
     # --- Dummy tool identity ---
     # Couples the FunctionModel stream deltas, expected message parts, and the tool implementation.
     # NOTE: the tool function name below in _build() must match DUMMY_TOOL_NAME.
+    ENQUEUED_WARNING_TEXT = "system warning: approaching compaction"
+
     DUMMY_TOOL_NAME    = "dummy_tool"
     DUMMY_TOOL_ARGS    = '{"arg": "dummy"}'
     DUMMY_TOOL_CALL_ID = "tc-a1"
@@ -365,6 +367,8 @@ class FunctionModelTestAgent:
         self._stream_steps = self.DEFAULT_STEPS
         # use to pause tool execution to test intermediate states
         self.block_in_tool = False
+        # when True, dummy_tool calls ctx.enqueue() to inject a mid-turn UserPromptPart
+        self.enqueue_from_tool = False
         # Set when dummy_tool begins executing (tests can await this); cleared after each resume
         self.tool_entered = asyncio.Event()
         # Tests set this to let dummy_tool resume after blocking
@@ -429,7 +433,9 @@ class FunctionModelTestAgent:
     def _build(self) -> Agent:
         agent: Agent = Agent(FunctionModel(stream_function=self._stream))
 
-        async def dummy_tool(arg: str) -> str:
+        async def dummy_tool(ctx: RunContext, arg: str) -> str:
+            if self.enqueue_from_tool:
+                ctx.enqueue(UserPromptPart(content=self.ENQUEUED_WARNING_TEXT))
             if self.block_in_tool:
                 self.tool_entered.set()
                 await self.resume_tool_exec.wait()
@@ -439,7 +445,7 @@ class FunctionModelTestAgent:
                 self.resume_tool_exec.clear()
             return self.TOOL_RETURN_VALUE
 
-        agent.tool_plain(dummy_tool)
+        agent.tool(dummy_tool)
         return agent
 
     async def _block_after_chunk(self) -> None:
@@ -727,6 +733,35 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         self.mock_session.rollback.assert_called_once()
         self.mock_session.commit.assert_not_called()
         assert sse_events[-1]["event"] == "Error"
+
+    async def test_enqueued_message_is_persisted(self, client: AsyncClient):
+        """Mid-turn ctx.enqueue() produces an adjacent ModelRequest that must be persisted.
+
+        When dummy_tool calls ctx.enqueue(UserPromptPart(...)), pydantic-ai appends a new
+        ModelRequest to the captured messages list adjacent to the MR_tool_return. This
+        exercises the case where adjacent ModelRequests arise *during* the turn itself,
+        not from history.
+
+        Asserts that both the enqueued UserPromptPart and the final ModelResponse are
+        persisted — i.e. the enqueued message is not swallowed.
+        """
+        self.function_agent.enqueue_from_tool = True
+
+        events = await stream_and_collect(client, self.agent_record.id)
+        assert "Error" not in [e["event"] for e in events], f"Unexpected Error event: {events}"
+
+        persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
+
+        expected_msg_list = [
+            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+            ModelResponse(parts=[ThinkingPart(content=FunctionModelTestAgent.THINKING_TEXT),
+                                  TextPart(content=FunctionModelTestAgent.PRE_TOOL_TEXT),
+                                  FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
+            ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
+            ModelRequest(parts=[UserPromptPart(content=FunctionModelTestAgent.ENQUEUED_WARNING_TEXT)]),
+            ModelResponse(parts=[TextPart(content=FunctionModelTestAgent.COMPLETION_TEXT)]),
+        ]
+        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
     @pytest.mark.parametrize("fake_history", [
         pytest.param(
