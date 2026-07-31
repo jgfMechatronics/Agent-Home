@@ -1071,7 +1071,6 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
 
         self.mock_compact.assert_called_once()
         assert len(self.test_agent.calls) == 2, "agent should run twice: initial turn + one resume"
-        # assert any(isinstance(e, AgentRunResultEvent) for e in events)
         assert isinstance(events[-1], AgentRunResultEvent)
 
     async def test_only_interrupts_directly_after_tool_return(self):

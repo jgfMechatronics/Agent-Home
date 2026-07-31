@@ -13,9 +13,8 @@ from pydantic_ai.messages import (
 from pydantic_ai.toolsets.function import FunctionToolset
 
 from agent.compaction import compact, is_compaction_needed
-from messages.messages import format_system_alert
 from agent.types import AgentAppState, AgentDeps
-from messages.messages import deserialize_messages, load_messages, persist_messages
+from messages.messages import deserialize_messages, format_system_alert, load_messages, persist_messages
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
