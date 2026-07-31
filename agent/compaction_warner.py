@@ -69,4 +69,3 @@ class CompactionWarner(AbstractCapability[AgentDeps]):
             ctx.enqueue(UserPromptPart(content=COMPACTION_WARNING_TEXT))
         
         return response
-
