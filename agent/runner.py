@@ -6,14 +6,14 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     ToolResultEvent,
     ModelRequest,
-    ModelResponse,
-    TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.toolsets.function import FunctionToolset
 
 from agent.compaction import compact, is_compaction_needed
+from messages.messages import format_system_alert
 from agent.types import AgentAppState, AgentDeps
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMPACTION_RESUME_NOTICE = "<system_message>Resuming after compaction. Context was trimmed to stay within limits.</system_message>"
+COMPACTION_RESUME_NOTICE = format_system_alert("Resuming after compaction. Context was trimmed to stay within limits.")
 
 
 def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent_id: str) -> "list[ToolDefinition]":
@@ -62,11 +62,8 @@ async def _check_and_handle_cancel(
 ) -> bool:
     if not agent_app_state.cancel_requested.is_set():
         return False
-    # NOTE: Ideally this would be a ModelRequest (user message), but pydantic-ai merges
-    # consecutive ModelRequests, breaking cursor-based persistence. Using ModelResponse
-    # avoids the merge. Consider switching back after migrating to agent.iter().
-    cancel_notice = ModelResponse(parts=[TextPart(
-        content="<system_message>Turn cancelled by user.</system_message>"
+    cancel_notice = ModelRequest(parts=[UserPromptPart(
+        content=format_system_alert("Turn cancelled by user.")
     )])
     await persist_messages(deps=deps, messages=[cancel_notice], tool_schemas=tool_schemas)
     await deps.commit_changes_refresh_agent_record()

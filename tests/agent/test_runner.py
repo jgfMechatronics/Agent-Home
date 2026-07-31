@@ -39,6 +39,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 # Local
+from messages.messages import format_system_alert
 from agent.runner import run_stateful_agent
 from agent.types import AgentAppState
 from api.fastapi_deps import get_agent_and_deps
@@ -842,7 +843,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
     # NOTE: Ideally this would be a ModelRequest (user message), but pydantic-ai merges consecutive
     # ModelRequests, breaking cursor-based persistence. Using ModelResponse avoids the merge.
     # Consider switching back after migrating to agent.iter().
-    CANCEL_NOTICE = ModelResponse(parts=[TextPart(content="<system_message>Turn cancelled by user.</system_message>")])
+    CANCEL_NOTICE = ModelRequest(parts=[UserPromptPart(content=format_system_alert("Turn cancelled by user."))])
 
     async def test_cancel_no_active_run_returns_409(self, client: AsyncClient):
         """Cancel route returns 409 when no run is active for the given agent_id."""
@@ -899,7 +900,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 
         Covers requirements:
             — active tool is allowed to complete before cancel takes effect
-            — cancellation notice wrapped in <system_message> tags is persisted
+            — cancellation notice wrapped in <system_alert> tags is persisted
             — cancel is delivered via POST /agents/{id}/cancel
         """
         await self._test_cancel_during_tool_exec(client)

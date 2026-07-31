@@ -15,13 +15,13 @@ from pydantic_ai.models import ModelRequestContext
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelResponse
 
+from messages.messages import format_system_alert
 from agent.types import AgentDeps
 
 
 COMPACTION_WARNING_THRESHOLD_FRACTION = 0.75
 
-COMPACTION_WARNING_TEXT = """\
-<system_alert>
+COMPACTION_WARNING_TEXT = format_system_alert("""\
 You are nearing compaction. Oldest messages at the beginning of your context will soon be evicted.
 Please scan your context and look for anything that should be moved to an appropriate core memory block.
 Start your scan from the OLDEST messages. Compaction starts with the oldest messages and works forward until the token ct target is reached.
@@ -29,8 +29,7 @@ You do NOT need to re-save anything you have already saved in this context, or a
 Remember, anything compacted away and not archived or saved to core-memory will be GONE, as if it never happened from your perspective!
 Take your time with the memory consolidation! Your active task will still be waiting for you when you're done. Preserving memories is more important than resuming the task quickly.
 Once you are finished with consolidation, you can resume your previous task. The compaction will be seamless from your perspective
-If your memory is already up to date with your active context, you can ignore this message.
-</system_alert>"""
+If your memory is already up to date with your active context, you can ignore this message.""", tags_on_newline=True)
 
 
 @dataclass
