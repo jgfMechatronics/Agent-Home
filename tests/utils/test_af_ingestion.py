@@ -9,13 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.schemas import CreateMemoryBlockRequest
 from utils.af_ingestion import import_agent_file
 
-
-# Tool name mapping reference (Letta → Agent Home):
-#   fetch_webpage → web_fetch
-#   memory_insert → memory_insert
-#   memory_replace → memory_replace
-#   web_search → duckduckgo_search
-#   archival_memory_*, conversation_search → dropped (no AH equivalent)
+"""
+Tool name mapping reference (Letta → Agent Home):
+  fetch_webpage → web_fetch
+  memory_insert → memory_insert
+  memory_replace → memory_replace
+  web_search → duckduckgo_search
+  archival_memory_*, conversation_search → dropped (no AH equivalent)
+"""
 
 FIXTURE_PATH = Path(__file__).parent / "AF_Ingestion_Integration.af"
 
