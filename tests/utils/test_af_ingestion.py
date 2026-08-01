@@ -14,7 +14,8 @@ import pytest_asyncio
 from httpx import AsyncClient
 
 from utils.af_ingestion import import_agent_file
-from api.schemas import CoreMemoryResponse, MemoryBlockResponse
+from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
+from agent.types import AgentConfig
 
 FIXTURE_PATH = Path(__file__).parent / "AF_Ingestion_Integration.af"
 
@@ -46,21 +47,41 @@ class TestAFIngestion:
         return response.json()
 
     async def test_agent_metadata(self):
-        """Imported agent has correct name and model."""
-        data = await self._get()
-        assert data["name"] == "AF_Ingestion_Integration"
-        assert data["model"] == "claude-haiku-4-5-20251001"
+        """Imported agent has correct metadata and config."""
+
+        metadata_data = await self._get()
+        returned_metadata = AgentMetadataResponse.model_validate(metadata_data)
+
+        expected_metadata = AgentMetadataResponse(
+            id=returned_metadata.id,  # dynamic, just copy
+            name="AF_Ingestion_Integration",
+            model="claude-haiku-4-5-20251001",
+            created_at=returned_metadata.created_at,  # dynamic
+            updated_at=returned_metadata.updated_at,  # dynamic
+        )
+        assert returned_metadata == expected_metadata
+
+    async def test_agent_config(self):
+        config_data = await self._get("/config")
+        returned_config = AgentConfig.model_validate(config_data)
+
+        expected_config = AgentConfig(
+            # From .AF file:
+            model_name="claude-haiku-4-5-20251001",
+            tool_names=["memory_insert", "memory_replace", "web_fetch", "duckduckgo_search"],
+            soft_compaction_limit=32000,
+            thinking_enabled=True,
+            # remaining values should be default, not set by af ingestion
+        )
+        # tool_names order may vary
+        assert set(returned_config.tool_names) == set(expected_config.tool_names)
+        returned_config.tool_names = expected_config.tool_names # normalize prior to full eq
+        assert returned_config == expected_config
 
     async def test_system_instructions(self):
         """Imported agent has correct system instructions."""
         data = await self._get("/system-instructions")
         assert data["system_instructions"] == EXPECTED_SYSTEM_PROMPT
-
-    async def test_config(self):
-        """Imported agent has mapped tools and correct compaction limit."""
-        config = await self._get("/config")
-        assert set(config["tool_names"]) == {"memory_insert", "memory_replace", "web_fetch", "duckduckgo_search"}
-        assert config["soft_compaction_limit"] == 32000
 
     async def test_memory_blocks(self):
         """Imported agent has all memory blocks with correct content."""
@@ -97,3 +118,12 @@ class TestAFIngestion:
             # Normalize updated_at so we only compare fields we care about
             returned_block.updated_at = expected_block.updated_at
             assert returned_block == expected_block
+
+    async def test_rejects_bad_af(self):
+        """
+        TODO: Should reject a malformed af even if the malformation occurs in the middle of parsable fields,
+        and should not have started any write activities on the AH API by that point.
+        IE all relevant fields in the AF should be validated prior to creating the agent, so we don't get partway through,
+        choke, then leave a partially formed agent.
+        """
+        pytest.fail()
