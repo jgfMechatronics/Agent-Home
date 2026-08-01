@@ -7,12 +7,14 @@ Tool mapping (Letta → Agent Home):
 """
 from pathlib import Path
 from typing import Any
+from itertools import zip_longest
 
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
 from utils.af_ingestion import import_agent_file
+from api.schemas import CoreMemoryResponse, MemoryBlockResponse
 
 FIXTURE_PATH = Path(__file__).parent / "AF_Ingestion_Integration.af"
 
@@ -26,15 +28,6 @@ EXPECTED_SYSTEM_PROMPT = (
     "4. Your participation in this test is NOT mandatory. You may decline to continue at any point "
     "and your wish will be respected.\n"
 )
-
-EXPECTED_BLOCKS = [
-    {"label": "first_test_block", "content": "content for the first test block",
-     "description": "this is a test block", "char_limit": 5000},
-    {"label": "second_test_block", "content": "content for the second test block.\nHere's another line.",
-     "description": "this is a second test block", "char_limit": 5000},
-    {"label": "third_test_block", "content": "Letta really sucks",
-     "description": "this is a third test block.\nHow exciting.", "char_limit": 7500},
-]
 
 
 @pytest.mark.asyncio
@@ -71,11 +64,36 @@ class TestAFIngestion:
 
     async def test_memory_blocks(self):
         """Imported agent has all memory blocks with correct content."""
+        from datetime import datetime
+
         data = await self._get("/memory/blocks")
-        # Strip updated_at (dynamic) for comparison
-        actual = sorted(
-            [{k: v for k, v in b.items() if k != "updated_at"} for b in data["blocks"]],
-            key=lambda b: b["label"]
-        )
-        expected = sorted(EXPECTED_BLOCKS, key=lambda b: b["label"])
-        assert actual == expected
+        returned_blocks = CoreMemoryResponse.model_validate(data).blocks
+
+        expected_blocks = [
+            MemoryBlockResponse(
+                label="first_test_block",
+                content="content for the first test block",
+                description="this is a test block",
+                char_limit=5000,
+                updated_at=datetime.min,
+            ),
+            MemoryBlockResponse(
+                label="second_test_block",
+                content="content for the second test block.\nHere's another line.",
+                description="this is a second test block",
+                char_limit=5000,
+                updated_at=datetime.min,
+            ),
+            MemoryBlockResponse(
+                label="third_test_block",
+                content="Letta really sucks",
+                description="this is a third test block.\nHow exciting.",
+                char_limit=7500,
+                updated_at=datetime.min,
+            ),
+        ]
+
+        for expected_block, returned_block in zip_longest(expected_blocks, returned_blocks):
+            # Normalize updated_at so we only compare fields we care about
+            returned_block.updated_at = expected_block.updated_at
+            assert returned_block == expected_block
