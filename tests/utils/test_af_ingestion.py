@@ -119,6 +119,12 @@ class TestAFIngestion:
             returned_block.updated_at = expected_block.updated_at
             assert returned_block == expected_block
 
+    async def test_empty_conversation_history(self):
+        """
+        TODO: We don't currently support loading conversation history
+        """
+        pytest.fail()
+
     async def test_rejects_bad_af(self):
         """
         TODO: Should reject a malformed af even if the malformation occurs in the middle of parsable fields,
