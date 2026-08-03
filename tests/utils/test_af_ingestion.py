@@ -13,7 +13,7 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
-from utils.af_ingestion import import_agent_file
+from utils.af_ingestion import AFIngestionError, import_agent_file
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from agent.types import AgentConfig
 
@@ -120,16 +120,83 @@ class TestAFIngestion:
             assert returned_block == expected_block
 
     async def test_empty_conversation_history(self):
-        """
-        TODO: We don't currently support loading conversation history
-        """
-        pytest.fail()
+        """Conversation history in the .AF is not imported — agent starts with no messages."""
+        data = await self._get("/messages")
+        assert data["messages"] == []
 
-    async def test_rejects_bad_af(self):
+    # --- bad AF fixtures ---
+
+    _VALID_AGENT_BASE = {
+        "name": "bad-agent",
+        "system": "some instructions",
+        "tool_ids": [],
+        "block_ids": ["block-1"],
+        "llm_config": {
+            "model": "claude-haiku-4-5-20251001",
+            "context_window": 8000,
+            "enable_reasoner": False,
+        },
+    }
+
+    @pytest.mark.parametrize("bad_af", [
+        pytest.param(
+            {
+                "agents": [{
+                    **_VALID_AGENT_BASE,
+                    "llm_config": {
+                        # model intentionally missing — agent config level malformation
+                        "context_window": 8000,
+                        "enable_reasoner": False,
+                    },
+                    "block_ids": [],  # no blocks so block validation isn't reached
+                }],
+                "blocks": [],
+                "tools": [],
+            },
+            id="missing_llm_config_model",
+        ),
+        pytest.param(
+            {
+                "agents": [_VALID_AGENT_BASE],
+                "blocks": [
+                    {
+                        "id": "block-1",
+                        # label intentionally missing — valid agent config, bad block
+                        "value": "some content",
+                        "limit": 5000,
+                        "description": "a block",
+                    }
+                ],
+                "tools": [],
+            },
+            id="missing_block_label",
+        ),
+    ])
+    async def test_rejects_bad_af(self, tmp_path: Path, bad_af: dict):
+        """Malformed .AF is rejected before any API writes — no partial agent is created.
+
+        Parametrized over two failure modes:
+        - Agent config level: missing llm_config.model
+        - Block level: valid agent config but a block is missing its label
+
+        The block-level case proves that validation covers the full .AF, not just
+        the fields needed to construct the agent — so a bad block won't slip through
+        and leave a partial (agent created, no blocks) state.
+
+        NOTE: its possible that the "good af" implied by this test is not actually good and therefore the test
+        may not be testing what we expect.
         """
-        TODO: Should reject a malformed af even if the malformation occurs in the middle of parsable fields,
-        and should not have started any write activities on the AH API by that point.
-        IE all relevant fields in the AF should be validated prior to creating the agent, so we don't get partway through,
-        choke, then leave a partially formed agent.
-        """
-        pytest.fail()
+        import json
+
+        bad_path = tmp_path / "bad.af"
+        bad_path.write_text(json.dumps(bad_af))
+
+        before = await self.client.get("/agents")
+        agent_count_before = len(before.json())
+
+        with pytest.raises(AFIngestionError):
+            await import_agent_file(bad_path, self.client)
+
+        # No new agent should have been created
+        after = await self.client.get("/agents")
+        assert len(after.json()) == agent_count_before
