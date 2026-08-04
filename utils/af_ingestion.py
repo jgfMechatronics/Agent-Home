@@ -77,7 +77,6 @@ def _parse_af(data: dict) -> tuple[dict, list[dict]]:
     context_window = _extract_or_raise(llm_config, "context_window", context="agents[0].llm_config")
     enable_reasoner = _extract_or_raise(llm_config, "enable_reasoner", context="agents[0].llm_config")
 
-    # Resolve tool names via tool_ids → tools array
     # Resolve tools — not all tools in the AF are necessarily attached to this agent
     letta_tools_for_agent = _get_referenced_items(agent, "tool_ids", data, "tools")
     # this is where we drop tools outside our explicit mapping
