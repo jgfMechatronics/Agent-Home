@@ -1,5 +1,6 @@
 """
 .AF file ingestion — imports Letta agent exports into Agent Home.
+https://docs.letta.com/v1-sdk/concepts/agent-file
 
 Parses Letta's AgentFile (.af) JSON format and creates the equivalent
 agent with memory blocks via the Agent Home API.
@@ -10,6 +11,9 @@ Tool mapping:
 - memory_replace → memory_replace
 - web_search → duckduckgo_search
 - archival_memory_*, conversation_search → dropped (no AH equivalent)
+
+NOTE: This is primarily intended for a one time import of James F's Letta agents and has not been rigorously tested against many permutations of .AF files. 
+It was developed against an example .af we generated, not .af spec docs.
 """
 import json
 from pathlib import Path
