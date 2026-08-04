@@ -83,9 +83,10 @@ class TestAFIngestion:
         data = await self._get("/system-instructions")
         assert data["system_instructions"] == EXPECTED_SYSTEM_PROMPT
 
-    async def test_memory_blocks(self):
+    async def test_memory_blocks(self, session):
         """Imported agent has all memory blocks with correct content."""
         from datetime import datetime
+        from agent.crud import get_agent_record
 
         data = await self._get("/memory/blocks")
         returned_blocks = CoreMemoryResponse.model_validate(data).blocks
@@ -118,6 +119,13 @@ class TestAFIngestion:
             # Normalize updated_at so we only compare fields we care about
             returned_block.updated_at = expected_block.updated_at
             assert returned_block == expected_block
+
+        # Verify system prompt was recompiled with blocks included
+        agent_record = await get_agent_record(session, self.agent_id)
+        assert agent_record.compiled_system_prompt != ""
+        # Check that at least one block label appears in the compiled prompt
+        # compilation accuracy is not our concern here, we just need to know that the (re)compilation endpoint was hit
+        assert expected_blocks[0].label in agent_record.compiled_system_prompt
 
     async def test_empty_conversation_history(self):
         """Conversation history in the .AF is not imported — agent starts with no messages."""

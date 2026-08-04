@@ -144,4 +144,8 @@ async def import_agent_file(af_path: Path, client: "AsyncClient") -> str:
         block_response = await client.post(f"/agents/{agent_id}/memory/blocks", json=block)
         block_response.raise_for_status()
 
+    # Recompile system prompt so blocks are included in context
+    recompile_response = await client.post(f"/agents/{agent_id}/recompile_system_prompt")
+    recompile_response.raise_for_status()
+
     return agent_id
