@@ -42,7 +42,7 @@ This document outlines what key features we are still missing leading up to dogf
 - [xr] Gap 4: Full Context Reconstruction for ModelResponse
 - [xr] Gap 10: Enable mid run compaction
 - [xr] Gap 9: Compaction Warnings
-- [ ] Gap 7: .AF Ingestion
+- [xr] Gap 7: .AF Ingestion
 
 ---
 
