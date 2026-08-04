@@ -64,7 +64,7 @@ def _parse_af(data: dict) -> tuple[dict, list[dict]]:
     agents = _extract_or_raise(data, "agents", context=".AF root")
     if not isinstance(agents, list) or len(agents) == 0:
         raise AFIngestionError("'agents' must be a non-empty list")
-    elif not len(agents) == 1:
+    if not len(agents) == 1:
         raise AFIngestionError(f"only one agent per AF supported. Provided file contained {len(agents)} agents")
 
     agent = agents[0]
