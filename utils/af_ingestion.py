@@ -40,6 +40,21 @@ def _extract_or_raise(obj: dict, key: str, context: str = "") -> Any:
     return obj[key]
 
 
+def _get_referenced_items(agent: dict, id_key: str, data: dict, items_key: str) -> list[dict]:
+    """
+    Return items from data[items_key] whose 'id' is referenced by agent[id_key].
+    AF files track what resources are attached to a particular agent by recording an ID on the agent dict
+    Technically the full list of tools and blocks in the AF could include items not attached to that agent
+    NOTE: this may not happen in practice with only a single agent in the file, which we enforce elsewhere
+    """
+    raw_ids = _extract_or_raise(agent, id_key, context="agents[0]")
+    if not isinstance(raw_ids, list):
+        raise AFIngestionError(f"'{id_key}' in agents[0] must be a list")
+    ids = set(raw_ids)
+    all_items = _extract_or_raise(data, items_key, context=".AF root")
+    return [item for item in all_items if item["id"] in ids]
+
+
 def _parse_af(data: dict) -> tuple[dict, list[dict]]:
     """Parse and validate the .AF structure, returning (agent_payload, blocks_payload).
 
@@ -63,17 +78,10 @@ def _parse_af(data: dict) -> tuple[dict, list[dict]]:
     enable_reasoner = _extract_or_raise(llm_config, "enable_reasoner", context="agents[0].llm_config")
 
     # Resolve tool names via tool_ids → tools array
-    # technically the tools in the AF may not all be attached to the agent. The agent's tools is determined by tool_ids_for_agent
-    raw_tool_ids_for_agent = _extract_or_raise(agent, "tool_ids", context="agents[0]")
-    if not isinstance(raw_tool_ids_for_agent, list):
-        raise AFIngestionError("'tool_ids' in agents[0] must be a list")
-    tool_ids_for_agent = set(raw_tool_ids_for_agent)
-    all_letta_tools = _extract_or_raise(data, "tools", context=".AF root")
-    # Letta stores tool dicts in a straight list — build a lookup dict to resolve by ID
-    letta_tools_by_id = {t["id"]: t["name"] for t in all_letta_tools}
-    letta_tool_names_for_agent = [letta_tools_by_id[tid] for tid in tool_ids_for_agent]
+    # Resolve tools — not all tools in the AF are necessarily attached to this agent
+    letta_tools_for_agent = _get_referenced_items(agent, "tool_ids", data, "tools")
     # this is where we drop tools outside our explicit mapping
-    tool_names = [TOOL_NAME_MAP[n] for n in letta_tool_names_for_agent if n in TOOL_NAME_MAP]
+    tool_names = [TOOL_NAME_MAP[t["name"]] for t in letta_tools_for_agent if t["name"] in TOOL_NAME_MAP]
 
     agent_payload = {
         "name": name,
@@ -86,13 +94,8 @@ def _parse_af(data: dict) -> tuple[dict, list[dict]]:
         },
     }
 
-    # Resolve blocks via block_ids → blocks array
-    raw_block_ids = _extract_or_raise(agent, "block_ids", context="agents[0]")
-    if not isinstance(raw_block_ids, list):
-        raise AFIngestionError("'block_ids' in agents[0] must be a list")
-    block_ids = set(raw_block_ids)
-    blocks_list = _extract_or_raise(data, "blocks", context=".AF root")
-    referenced_blocks = [b for b in blocks_list if b["id"] in block_ids]
+    # Resolve blocks
+    referenced_blocks = _get_referenced_items(agent, "block_ids", data, "blocks")
 
     blocks_payload = []
     for block in referenced_blocks:
