@@ -63,15 +63,17 @@ def _parse_af(data: dict) -> tuple[dict, list[dict]]:
     enable_reasoner = _extract_or_raise(llm_config, "enable_reasoner", context="agents[0].llm_config")
 
     # Resolve tool names via tool_ids → tools array
-    raw_tool_ids = _extract_or_raise(agent, "tool_ids", context="agents[0]")
-    if not isinstance(raw_tool_ids, list):
+    # technically the tools in the AF may not all be attached to the agent. The agent's tools is determined by tool_ids_for_agent
+    raw_tool_ids_for_agent = _extract_or_raise(agent, "tool_ids", context="agents[0]")
+    if not isinstance(raw_tool_ids_for_agent, list):
         raise AFIngestionError("'tool_ids' in agents[0] must be a list")
-    letta_tool_ids = set(raw_tool_ids)
-    letta_tools_list = _extract_or_raise(agent, "tools", context="agents[0]")
-    letta_tool_names = {t["name"] for t in letta_tools_list if t.get("id") in letta_tool_ids and t.get("name")}
-    tool_names = [
-        TOOL_NAME_MAP[name] for name in letta_tool_names if name in TOOL_NAME_MAP
-    ]
+    tool_ids_for_agent = set(raw_tool_ids_for_agent)
+    all_letta_tools = _extract_or_raise(data, "tools", context=".AF root")
+    # Letta stores tool dicts in a straight list — build a lookup dict to resolve by ID
+    letta_tools_by_id = {t["id"]: t["name"] for t in all_letta_tools}
+    letta_tool_names_for_agent = [letta_tools_by_id[tid] for tid in tool_ids_for_agent]
+    # this is where we drop tools outside our explicit mapping
+    tool_names = [TOOL_NAME_MAP[n] for n in letta_tool_names_for_agent if n in TOOL_NAME_MAP]
 
     agent_payload = {
         "name": name,
@@ -89,17 +91,16 @@ def _parse_af(data: dict) -> tuple[dict, list[dict]]:
     if not isinstance(raw_block_ids, list):
         raise AFIngestionError("'block_ids' in agents[0] must be a list")
     block_ids = set(raw_block_ids)
-    blocks_list = data.get("blocks") or []
-    referenced_blocks = [b for b in blocks_list if b.get("id") in block_ids]
+    blocks_list = _extract_or_raise(data, "blocks", context=".AF root")
+    referenced_blocks = [b for b in blocks_list if b["id"] in block_ids]
 
     blocks_payload = []
     for block in referenced_blocks:
-        label = _extract_or_raise(block, "label", context="block")
         blocks_payload.append({
-            "label": label,
-            "content": block.get("value", ""),
-            "description": block.get("description", ""),
-            "char_limit": block.get("limit", 20000),
+            "label": _extract_or_raise(block, "label", context="block"),
+            "content": _extract_or_raise(block, "value", context="block"),
+            "description": _extract_or_raise(block, "description", context="block"),
+            "char_limit": _extract_or_raise(block, "limit", context="block"),
         })
 
     return agent_payload, blocks_payload
@@ -121,6 +122,9 @@ async def import_agent_file(af_path: Path, client: "AsyncClient") -> str:
     Raises:
         AFIngestionError: If the .AF file is malformed or missing required fields
         httpx.HTTPStatusError: If any API call fails
+    TODO: If something is wrong with the af in a way that it can still parse here but fail validation server side (could happen)
+    we end up with a partially created agent. The easiest thing to do here would be to add a delete agent route then delete the agent
+    we created if any of the steps fail. Otherwise we have to pull a lot of validation infrastructure into this script (like db/pyd models)
     """
     data = json.loads(af_path.read_text())
 
