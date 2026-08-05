@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# For starting up server outside a docker container for quick tests. Not intended for proper deployment
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
