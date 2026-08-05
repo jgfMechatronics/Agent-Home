@@ -1,0 +1,31 @@
+# Agent Home Docker Compose
+#
+# Copy this file to your deployment directory (e.g., ~/agent-home/)
+# and rename to docker-compose.yml
+#
+# Usage:
+#   docker compose up -d      # start in background
+#   docker compose logs -f    # follow logs
+#   docker compose down       # stop
+#
+# Before first run:
+#   1. Build the image with ./utils/build.sh in the repo
+#   2. Create .env file with your API keys (see below)
+#   3. mkdir -p data in the dir compose is being run from
+
+services:
+  agent-home:
+    image: agent-home:production  # or :experimental for testing
+    container_name: agent-home
+    restart: no
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data  # Persistent storage for SQLite DB
+    environment:
+      - AGENT_HOME_DB_PATH=/data/db.sqlite 
+    env_file:
+      - .env  # Load API keys and other vars from .env file
+
+# Example .env file contents:
+# ANTHROPIC_API_KEY=sk-ant-...
