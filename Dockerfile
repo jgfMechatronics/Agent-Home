@@ -17,9 +17,6 @@ LABEL git.branch="${GIT_BRANCH}"
 # Don't buffer Python output (better for container logs)
 ENV PYTHONUNBUFFERED=1
 
-# Default DB path inside container (override via AGENT_HOME_DB_PATH env var)
-ENV AGENT_HOME_DB_PATH=/data/db.sqlite
-
 WORKDIR /app
 
 # Install uv
@@ -28,14 +25,11 @@ RUN pip install --no-cache-dir uv
 # Copy dependency files first (better layer caching - this layer only rebuilds when deps change)
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies (--frozen = use lockfile exactly, --no-dev = skip test deps)
-RUN uv sync --frozen --no-dev
+# Install dependencies
+RUN uv sync --locked --no-dev
 
 # Copy application code
 COPY . .
-
-# Create data directory
-RUN mkdir -p /data
 
 EXPOSE 8000
 
