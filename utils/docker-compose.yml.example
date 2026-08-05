@@ -9,7 +9,7 @@
 #   docker compose down       # stop
 #
 # Before first run:
-#   1. Build the image with ./utils/build.sh in the repo
+#   1. Build the image with ./build.sh in the repo
 #   2. Create .env file with your API keys (see below)
 #   3. mkdir -p data in the dir compose is being run from
 

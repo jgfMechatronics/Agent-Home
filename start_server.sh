@@ -22,7 +22,7 @@ if [[ ! -d "$DEFAULT_DB_DIR" ]]; then
     mkdir -p "$DEFAULT_DB_DIR"
     echo "created $DEFAULT_DB_DIR"
 fi
-export AGENT_HOME_DB_PATH="$DEFAULT_DB_DIR" # gets picked up by server
+export AGENT_HOME_DB_PATH="$DEFAULT_DB_DIR/db.sqlite" # gets picked up by server
 
 # Stop existing server if running
 if [[ -f "$PID_FILE" ]]; then
