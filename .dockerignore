@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info
+.eggs
+dist
+build
+
+# Testing
+tests
+.pytest_cache
+.coverage
+htmlcov
+
+# Dev/IDE
+.venv
+venv
+.env
+.env.*
+*.swp
+*.swo
+.idea
+.vscode
+
+# Docs
+docs
+*.md
+!README.md
+
+# Misc
+.dockerignore
+Dockerfile
+*.log
+
+# used for starting server outside container context
+start_server.sh

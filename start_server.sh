@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# For starting up server outside a docker container for quick tests. Not intended for proper deployment
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,6 +23,7 @@ if [[ ! -d "$DEFAULT_DB_DIR" ]]; then
     mkdir -p "$DEFAULT_DB_DIR"
     echo "created $DEFAULT_DB_DIR"
 fi
+export AGENT_HOME_DB_PATH="$DEFAULT_DB_DIR/db.sqlite" # gets picked up by server
 
 # Stop existing server if running
 if [[ -f "$PID_FILE" ]]; then
