@@ -1,6 +1,6 @@
 # Agent Home Dockerfile
 #
-# Build with: ./utils/build.sh
+# Build with: ./build.sh
 # Or manually: docker build -t agent-home:experimental .
 
 FROM python:3.12-slim
