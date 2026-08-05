@@ -38,3 +38,6 @@ docs
 .dockerignore
 Dockerfile
 *.log
+
+# used for starting server outside container context
+start_server.sh
