@@ -31,6 +31,7 @@ from api.schemas import (
     CreateAgentRequest,
     CreateMemoryBlockRequest,
     MemoryBlockResponse,
+    MessageItem,
     MessageRequest,
     MessagesResponse,
     SystemInstructionsResponse,
@@ -369,16 +370,29 @@ async def cancel_agent_run(
 async def get_messages(
     agent_id: str,
     full: bool = False,
+    after_seq_id: int | None = None,
     session: AsyncSession = Depends(get_session_dep),
 ) -> MessagesResponse:
-    """
-    Return conversation history. Use ?full=true for complete history.
+    """Return conversation history.
+
+    - Default (no params): in-context messages only.
+    - ?full=true: complete history. Ignored if after_seq_id specified.
+    - ?after_seq_id=<int>: messages with seq_id > the given value (exclusive).
+      Intended for polling — pass the seq_id of the last received message to get only new ones.
+
     TODO: Another instance of bad read-only control
     """
     record = await _get_agent_record_or_404(session, agent_id)
-    # TODO: Don't need agent record if requesting full, but we're likely gonna rework this anyway
-    start_seq_id = 0 if full else record.context_window_start
+    if after_seq_id is not None:
+        # Exclusive: start from the NEXT seq_id after the watermark
+        start_seq_id = after_seq_id + 1
+    elif full:
+        start_seq_id = 0
+    else:
+        # TODO: Don't need agent record if requesting full, but we're likely gonna rework this anyway
+        start_seq_id = record.context_window_start
     messages = await load_messages(session, agent_id, start_seq_id=start_seq_id)
-    # Parse stored JSON and return — format TBD, this is throwaway (TODO)
-    import json
-    return MessagesResponse(messages=[json.loads(m.content) for m in messages])
+    return MessagesResponse(messages=[
+        MessageItem(id=m.id, seq_id=m.seq_id, type=m.type, content=m.content, timestamp=m.timestamp)
+        for m in messages
+    ])

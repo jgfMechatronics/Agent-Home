@@ -445,6 +445,7 @@ class TestGetMessages:
     @staticmethod
     def _make_message_record(
         id: str = "msg-1",
+        seq_id: int = 0,
         type: str = "ModelResponse",
         content: str = '{"kind": "response", "parts": []}',
         timestamp: datetime | None = None,
@@ -452,6 +453,7 @@ class TestGetMessages:
         """Build a mock MessageRecord with the attributes the route accesses."""
         m = Mock()
         m.id = id
+        m.seq_id = seq_id
         m.type = type
         m.content = content
         m.timestamp = timestamp or datetime(2026, 6, 9, 12, 0, 0)
@@ -470,8 +472,9 @@ class TestGetMessages:
 
     async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
         """Without ?full=true: calls load_messages with context_window_start as start_seq_id."""
-        expected_messages = [{"role": "user", "content": "test"}]
-        self.mock_load_messages.return_value = expected_messages
+        self.mock_load_messages.return_value = [
+            self._make_message_record(id="msg-1", seq_id=0, content='{"kind": "response", "parts": []}')
+        ]
 
         response = await client.get(f"/agents/{agent_record.id}/messages")
 
@@ -482,8 +485,10 @@ class TestGetMessages:
 
     async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
         """With ?full=true: calls load_messages with start_seq_id=0 for full history."""
-        expected_messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}]
-        self.mock_load_messages.return_value = expected_messages
+        self.mock_load_messages.return_value = [
+            self._make_message_record(id="msg-1", seq_id=0),
+            self._make_message_record(id="msg-2", seq_id=1),
+        ]
 
         response = await client.get(f"/agents/{agent_record.id}/messages?full=true")
 
@@ -494,11 +499,11 @@ class TestGetMessages:
         )
 
     async def test_response_uses_message_item_format(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
-        """Response items use MessageItem format: id, type, content (raw JSON string), timestamp (ISO string)."""
+        """Response items use MessageItem format: id, seq_id, type, content (raw JSON string), timestamp (ISO string)."""
         ts = datetime(2026, 6, 9, 12, 0, 0)
         raw_content = '{"kind": "response", "parts": [{"part_kind": "text", "content": "hello"}]}'
         self.mock_load_messages.return_value = [
-            self._make_message_record(id="msg-42", type="ModelResponse", content=raw_content, timestamp=ts)
+            self._make_message_record(id="msg-42", seq_id=7, type="ModelResponse", content=raw_content, timestamp=ts)
         ]
 
         response = await client.get(f"/agents/{agent_record.id}/messages")
@@ -508,19 +513,21 @@ class TestGetMessages:
         assert len(messages) == 1
         item = messages[0]
         assert item["id"] == "msg-42"
+        assert item["seq_id"] == 7
         assert item["type"] == "ModelResponse"
         assert item["content"] == raw_content  # raw JSON string — NOT parsed by the route
         assert item["timestamp"] == ts.isoformat()
 
-    async def test_after_param_filters_exclusively(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
-        """?after=<timestamp>: calls load_messages with that timestamp and start_exclusive=True."""
-        cutoff = datetime(2026, 6, 9, 12, 0, 0)
+    async def test_after_seq_id_param_filters_exclusively(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+        """?after_seq_id=<int>: calls load_messages with start_seq_id = after_seq_id + 1 (exclusive)."""
+        watermark_seq_id = 42
 
-        response = await client.get(f"/agents/{agent_record.id}/messages?after={cutoff.isoformat()}")
+        response = await client.get(f"/agents/{agent_record.id}/messages?after_seq_id={watermark_seq_id}")
 
         assert response.status_code == 200
+        # Exclusive: start from the NEXT seq_id after the watermark
         self.mock_load_messages.assert_called_once_with(
-            session, agent_record.id, start_timestamp=cutoff, start_exclusive=True
+            session, agent_record.id, start_seq_id=watermark_seq_id + 1
         )
 
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
