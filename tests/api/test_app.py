@@ -52,7 +52,7 @@ class TestLifespan:
     async def test_happy_path(self):
         await self.startup_and_shutdown_lifespan()
 
-        expected_db_path = os.path.expanduser("~/.agent-home/db.sqlite")
+        expected_db_path = os.environ["AGENT_HOME_DB_PATH"]
         
         self.mock_create_engine.assert_called_once_with(expected_db_path)
         self.mock_init_db.assert_called_once_with(self.mock_db_engine)
