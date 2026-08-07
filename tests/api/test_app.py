@@ -1,6 +1,4 @@
 import os
-# only test so far that requires this var set. Must be set before importing from app I think
-os.environ["AGENT_HOME_DB_PATH"] = os.path.expanduser("~/.agent-home/db.sqlite")
 
 import pytest
 from asgi_lifespan import LifespanManager

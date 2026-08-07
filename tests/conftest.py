@@ -1,4 +1,9 @@
 import os
+
+# Must be set before any import of api.app (which reads it at module level).
+# Conftest is imported first by pytest, making this the right place for it.
+os.environ.setdefault("AGENT_HOME_DB_PATH", os.path.expanduser("~/.agent-home/db.sqlite"))
+
 from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, Mock
