@@ -34,6 +34,8 @@ from conftest import make_deps, SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import DuplicateBlockError
+from api.routes import _parse_slash_cmd, _is_slash_cmd, _handle_slash_cmd, _handle_recompile, SlashCommandDef
+from fastapi.sse import ServerSentEvent
 
 
 # --- Test Classes ---
@@ -92,6 +94,101 @@ class TestCreateAgent:
         response = await client.post("/agents", json=self._VALID_BODY)
         assert response.status_code == 500
         assert response.json()["detail"] == "RuntimeError: DB failure"
+
+
+# =============================================================================
+# Slash Command Unit Tests
+# =============================================================================
+
+
+class TestParseSlashCmd:
+    """_parse_slash_cmd parsing — pure function, no I/O."""
+
+    @pytest.mark.parametrize("msg,expected", [
+        ("/recompile", ("recompile", "")),
+        ("/recompile some args", ("recompile", "some args")),
+        ("/RECOMPILE", ("recompile", "")),
+        ("recompile", None),       # no leading slash
+        ("/unknown_cmd", None),    # unrecognized command passes through to model
+        ("/", None),               # slash with no command
+        ("", None),                # empty string
+    ])
+    def test_parse_slash_cmd(self, msg, expected):
+        assert _parse_slash_cmd(msg) == expected
+
+
+class TestIsSlashCmd:
+    """_is_slash_cmd — boolean wrapper around _parse_slash_cmd."""
+
+    @pytest.mark.parametrize("msg,expected", [
+        ("/recompile", True),
+        ("/unknown_cmd", False),   # unrecognized → passes to model, not a slash cmd
+        ("plain text", False),
+    ])
+    def test_is_slash_cmd(self, msg, expected):
+        assert _is_slash_cmd(msg) == expected
+
+
+class TestHandleSlashCmd:
+    """_handle_slash_cmd dispatch logic."""
+
+    @pytest.mark.parametrize("msg,expected_args", [
+        ("/recompile", ""),
+        ("/recompile some args", "some args"),
+    ])
+    async def test_dispatches_to_handler_with_correct_args(self, msg, expected_args):
+        """_handle_slash_cmd parses the message and calls the registered handler with the right args."""
+        deps = Mock()
+        expected_sse = ServerSentEvent(
+            data={"name": "user_recompile", "args": expected_args, "result": "ok", "status": "success"},
+            event="SlashCommandResult",
+        )
+        mock_handler = AsyncMock(return_value=expected_sse)
+
+        mock_def = SlashCommandDef(handler=mock_handler, description="test")
+        with patch.dict("api.routes.SLASH_COMMANDS", {"recompile": mock_def}):
+            result = await _handle_slash_cmd(deps, msg)
+
+        mock_handler.assert_awaited_once_with(deps, expected_args)
+        assert result is expected_sse
+
+    async def test_returns_error_sse_on_handler_exception(self):
+        """Handler exceptions are caught and returned as a SlashCommandResult with status=error."""
+        deps = Mock()
+        mock_handler = AsyncMock(side_effect=RuntimeError("boom"))
+
+        mock_def = SlashCommandDef(handler=mock_handler, description="test")
+        with patch.dict("api.routes.SLASH_COMMANDS", {"recompile": mock_def}):
+            result = await _handle_slash_cmd(deps, "/recompile")
+
+        assert result.event == "SlashCommandResult"
+        assert result.data["status"] == "error"
+        assert "boom" in result.data["result"]
+
+    async def test_returns_error_sse_when_precondition_violated(self):
+        """Gracefully handles being called with a non-slash-command (precondition violated)."""
+        deps = Mock()
+        result = await _handle_slash_cmd(deps, "not_a_slash_cmd")
+        assert result.event == "SlashCommandResult"
+        assert result.data["status"] == "error"
+
+
+class TestHandleRecompile:
+    """_handle_recompile handler — calls compile + commit, returns success SSE."""
+
+    async def test_calls_compile_and_commit_then_returns_success_sse(self):
+        deps = Mock()
+        deps.commit_changes_refresh_agent_record = AsyncMock()
+
+        with patch("api.routes.compile_system_prompt", new_callable=AsyncMock) as mock_compile:
+            result = await _handle_recompile(deps, "")
+
+        mock_compile.assert_awaited_once_with(deps)
+        deps.commit_changes_refresh_agent_record.assert_awaited_once()
+        assert result.event == "SlashCommandResult"
+        assert result.data["name"] == "user_recompile"
+        assert result.data["status"] == "success"
+        assert result.data["result"]  # non-empty result message
 
     async def test_returns_400_for_invalid_config(self, client: AsyncClient):
         """Missing required fields result in 400 before route logic is reached."""
@@ -338,56 +435,100 @@ class TestGetMemoryBlocks:
 
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
-
-@pytest.mark.xfail(reason="get_messages endpoint format TBD — will be reworked once coding CLI/harness is selected")
+@pytest.mark.note("These tests are REFERENCE ONLY For the TUI PROTOTYPE BRANCH. They are now a mix of official reviewed tests (on main) and tests added for the prototype")
 class TestGetMessages:
     """
     GET /agents/{agent_id}/messages — conversation history.
     TODO: This is OK for now but we will likely rework the endpoint after defining what is most useful for the frontend in terms of message format
     """
 
+    @staticmethod
+    def _make_message_record(
+        id: str = "msg-1",
+        seq_id: int = 0,
+        type: str = "ModelResponse",
+        content: str = '{"kind": "response", "parts": []}',
+        timestamp: datetime | None = None,
+    ) -> Mock:
+        """Build a mock MessageRecord with the attributes the route accesses."""
+        m = Mock()
+        m.id = id
+        m.seq_id = seq_id
+        m.type = type
+        m.content = content
+        m.timestamp = timestamp or datetime(2026, 6, 9, 12, 0, 0)
+        return m
+
     @pytest.fixture(autouse=True)
     def mock_message_loaders(self):
-        """Patch message-loading functions for all TestGetMessages tests.
+        """Patch load_messages for all TestGetMessages tests.
 
         Provides self.mock_load_messages for loader-routing assertions.
         """
-        with (
-            patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load,
-        ):
+        with patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load:
             mock_load.return_value = []
             self.mock_load_messages = mock_load
             yield
 
     async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
         """Without ?full=true: calls load_messages with context_window_start as start_seq_id."""
-        expected_messages = [{"role": "user", "content": "test"}]
-        self.mock_load_messages.return_value = expected_messages
+        self.mock_load_messages.return_value = [
+            self._make_message_record(id="msg-1", seq_id=0, content='{"kind": "response", "parts": []}')
+        ]
 
         response = await client.get(f"/agents/{agent_record.id}/messages")
 
         assert response.status_code == 200
-        assert response.json()["messages"] == expected_messages
         self.mock_load_messages.assert_called_once_with(
             session, agent_record.id, start_seq_id=agent_record.context_window_start
         )
 
     async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
         """With ?full=true: calls load_messages with start_seq_id=0 for full history."""
-        expected_messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}]
-        self.mock_load_messages.return_value = expected_messages
+        self.mock_load_messages.return_value = [
+            self._make_message_record(id="msg-1", seq_id=0),
+            self._make_message_record(id="msg-2", seq_id=1),
+        ]
 
         response = await client.get(f"/agents/{agent_record.id}/messages?full=true")
 
         assert response.status_code == 200
-        assert response.json()["messages"] == expected_messages
+        assert len(response.json()["messages"]) == 2
         self.mock_load_messages.assert_called_once_with(
             session, agent_record.id, start_seq_id=0
         )
 
-    async def test_returns_reasonable_format(self):
-        # TODO: finalize MessageItem format, constrain MessageResponse (or whatever it is) to be list[MessageItem]
-        pytest.fail()
+    async def test_response_uses_message_item_format(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+        """Response items use MessageItem format: id, seq_id, type, content (raw JSON string), timestamp (ISO string)."""
+        ts = datetime(2026, 6, 9, 12, 0, 0)
+        raw_content = '{"kind": "response", "parts": [{"part_kind": "text", "content": "hello"}]}'
+        self.mock_load_messages.return_value = [
+            self._make_message_record(id="msg-42", seq_id=7, type="ModelResponse", content=raw_content, timestamp=ts)
+        ]
+
+        response = await client.get(f"/agents/{agent_record.id}/messages")
+
+        assert response.status_code == 200
+        messages = response.json()["messages"]
+        assert len(messages) == 1
+        item = messages[0]
+        assert item["id"] == "msg-42"
+        assert item["seq_id"] == 7
+        assert item["type"] == "ModelResponse"
+        assert item["content"] == raw_content  # raw JSON string — NOT parsed by the route
+        assert item["timestamp"] == ts.isoformat()
+
+    async def test_after_seq_id_param_filters_exclusively(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+        """?after_seq_id=<int>: calls load_messages with start_seq_id = after_seq_id + 1 (exclusive)."""
+        watermark_seq_id = 42
+
+        response = await client.get(f"/agents/{agent_record.id}/messages?after_seq_id={watermark_seq_id}")
+
+        assert response.status_code == 200
+        # Exclusive: start from the NEXT seq_id after the watermark
+        self.mock_load_messages.assert_called_once_with(
+            session, agent_record.id, start_seq_id=watermark_seq_id + 1
+        )
 
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
