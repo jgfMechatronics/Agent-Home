@@ -195,9 +195,9 @@ class BridgeState:
     # Accumulated usage for the current turn
     usage: dict[str, int] | None = None
 
-    # Watermark for history polling — timestamp of the last message seen from any source.
+    # Watermark for history polling — seq_id of the last message seen from any source.
     # Updated by replay_history, _update_watermark, and poll_for_new_messages.
-    last_message_ts: datetime | None = None
+    last_message_seq_id: int | None = None
 
     # True while a toad-initiated prompt stream is active — polling skips during this window
     # to avoid racing with the live stream and double-sending notifications.
@@ -374,22 +374,22 @@ async def handle_initialize(state: BridgeState, msg: dict[str, Any]) -> None:
     }))
 
 
-def _replay_message_items(session_id: str, items: list[dict[str, Any]]) -> datetime | None:
+def _replay_message_items(session_id: str, items: list[dict[str, Any]]) -> int | None:
     """Convert a list of MessageItem dicts to session/update notifications.
 
-    Each item has shape: {id, type, content, timestamp} where content is a
+    Each item has shape: {id, seq_id, type, content, timestamp} where content is a
     serialized pydantic-ai ModelMessage JSON string.
 
-    Returns the timestamp of the latest item, or None if items is empty.
+    Returns the seq_id of the latest item, or None if items is empty.
     Used by both replay_history (initial load) and poll_for_new_messages (incremental).
     """
     tool_call_args: dict[str, dict[str, Any]] = {}
-    latest_ts: datetime | None = None
+    latest_seq_id: int | None = None
 
     for item in items:
-        ts_str = item.get("timestamp")
-        if ts_str:
-            latest_ts = datetime.fromisoformat(ts_str)
+        seq_id = item.get("seq_id")
+        if seq_id is not None:
+            latest_seq_id = seq_id
 
         # Unwrap the nested pydantic-ai message JSON
         try:
@@ -439,7 +439,7 @@ def _replay_message_items(session_id: str, items: list[dict[str, Any]]) -> datet
                     if content:
                         send(agent_message_chunk(session_id, content))
 
-    return latest_ts
+    return latest_seq_id
 
 
 async def replay_history(state: BridgeState, session_id: str, client: httpx.AsyncClient) -> None:
@@ -453,31 +453,31 @@ async def replay_history(state: BridgeState, session_id: str, client: httpx.Asyn
         print(f"Warning: Failed to fetch history: {e}", file=sys.stderr)
         return
 
-    latest_ts = _replay_message_items(session_id, items)
-    if latest_ts is not None:
-        state.last_message_ts = latest_ts
+    latest_seq_id = _replay_message_items(session_id, items)
+    if latest_seq_id is not None:
+        state.last_message_seq_id = latest_seq_id
 
 
 async def _update_watermark(state: BridgeState, session_id: str, client: httpx.AsyncClient) -> None:
     """Silently advance the watermark after a toad-initiated turn.
 
-    Fetches messages after the current watermark and updates last_message_ts
+    Fetches messages after the current watermark and updates last_message_seq_id
     WITHOUT sending any notifications — the live stream already delivered those.
     Prevents the background poller from re-sending the same turn as notifications.
     """
-    if state.last_message_ts is None:
+    if state.last_message_seq_id is None:
         return
     try:
         resp = await client.get(
             f"{state.server_url}/agents/{session_id}/messages",
-            params={"after": state.last_message_ts.isoformat()},
+            params={"after_seq_id": state.last_message_seq_id},
         )
         resp.raise_for_status()
         items = resp.json().get("messages", [])
         if items:
-            latest_ts_str = items[-1].get("timestamp")
-            if latest_ts_str:
-                state.last_message_ts = datetime.fromisoformat(latest_ts_str)
+            latest_seq_id = items[-1].get("seq_id")
+            if latest_seq_id is not None:
+                state.last_message_seq_id = latest_seq_id
     except Exception as e:
         logger.warning("Watermark update failed: %s", e)
 
@@ -493,19 +493,19 @@ async def poll_for_new_messages(
     """
     while True:
         await asyncio.sleep(2)
-        if state.stream_active or state.last_message_ts is None:
+        if state.stream_active or state.last_message_seq_id is None:
             continue
         try:
             resp = await client.get(
                 f"{state.server_url}/agents/{session_id}/messages",
-                params={"after": state.last_message_ts.isoformat()},
+                params={"after_seq_id": state.last_message_seq_id},
             )
             resp.raise_for_status()
             items = resp.json().get("messages", [])
             if items:
-                latest_ts = _replay_message_items(session_id, items)
-                if latest_ts is not None:
-                    state.last_message_ts = latest_ts
+                latest_seq_id = _replay_message_items(session_id, items)
+                if latest_seq_id is not None:
+                    state.last_message_seq_id = latest_seq_id
         except asyncio.CancelledError:
             raise  # Let cancellation propagate cleanly
         except Exception as e:
