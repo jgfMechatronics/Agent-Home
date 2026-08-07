@@ -8,9 +8,11 @@ Then run this test:
 """
 import asyncio
 
+import pytest
 from pydantic_ai.mcp import MCPToolset
 
 
+@pytest.mark.skip(reason="Requires mcp_tools.fs_proxy running on localhost:8080. Run manually: python -m mcp_tools.test_connection")
 async def test_mcp_connection():
     """Test that we can connect to the MCP server and list tools."""
     server = MCPToolset("http://localhost:8080/mcp")
