@@ -86,6 +86,7 @@ class CoreMemoryResponse(BaseModel):
 # and know what the UI actually needs. Revisit when building the UI/CLI connection.
 class MessageItem(BaseModel):
     id: str
+    seq_id: int     # Sequential ID for polling (use as watermark for after_seq_id param)
     type: str       # 'ModelRequest' | 'ModelResponse' | 'Summary'
     content: str    # raw serialized ModelMessage JSON
     timestamp: datetime
