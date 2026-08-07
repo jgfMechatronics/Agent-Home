@@ -10,10 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.tools import (
     TOOL_REGISTRY,
     _compute_snippet,
+    _format_inter_agent_message,
     get_tools_for_agent,
     memory_insert,
     memory_replace,
+    send_message,
 )
+from agent.types import AgentDeps
 from conftest import SAMPLE_AGENT_CONFIG, make_deps, mock_run_context
 from db.models import AgentRecord, MemoryBlockRecord
 
@@ -565,3 +568,160 @@ class TestMemoryInsert:
         assert "foo three." in self.block.content
         # And new content added
         assert "NEW" in self.block.content
+
+
+# =============================================================================
+# send_message tests
+# =============================================================================
+
+class TestSendMessage:
+    """send_message tool: inter-agent communication."""
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, session: AsyncSession):
+        """Create sender agent and optionally a target for delivery tests."""
+        sender = AgentRecord(
+            name="sender-agent",
+            agent_config=SAMPLE_AGENT_CONFIG,
+            system_instructions="Sender",
+        )
+        session.add(sender)
+        await session.flush()
+        self.sender = sender
+        self.session = session
+        self.deps = make_deps(session, sender)
+        self.ctx = mock_run_context(self.deps)
+
+    async def _create_target(self):
+        """Helper: create target agent in DB."""
+        target = AgentRecord(
+            name="target-agent",
+            agent_config=SAMPLE_AGENT_CONFIG,
+            system_instructions="Target",
+        )
+        self.session.add(target)
+        await self.session.flush()
+        return target
+
+    def _ctx_with_registry(self, mocker):
+        """Helper: context with registry configured (enables send_message)."""
+        deps = AgentDeps(
+            session=self.session,
+            agent_record=self.sender,
+            agent_app_state_reg={self.sender.id: mocker.MagicMock()},
+        )
+        return mock_run_context(deps)
+
+    async def test_target_not_found_raises_model_retry(self):
+        """Raises ModelRetry when no agent with that name exists."""
+        with pytest.raises(ModelRetry, match="ghost"):
+            await send_message(self.ctx, target_name="ghost", content="hello")
+
+    async def test_target_not_found_is_case_sensitive(self):
+        """Name lookup is case-sensitive — mismatched case raises ModelRetry."""
+        with pytest.raises(ModelRetry, match="Sender-Agent"):
+            await send_message(self.ctx, target_name="Sender-Agent", content="hi")
+
+    async def test_rejects_self_message(self):
+        """Raises ModelRetry when agent tries to message itself."""
+        with pytest.raises(ModelRetry, match="cannot send.*yourself|self"):
+            await send_message(self.ctx, target_name="sender-agent", content="talking to myself")
+
+    async def test_raises_model_retry_when_registry_not_configured(self):
+        """Raises ModelRetry when deps lacks agent_app_state_reg."""
+        await self._create_target()
+        with pytest.raises(ModelRetry, match="not configured"):
+            await send_message(self.ctx, target_name="target-agent", content="hello")
+
+    @pytest.mark.parametrize("delivery_succeeds,expect_error", [
+        pytest.param(True, False, id="success"),
+        pytest.param(False, True, id="busy"),
+    ])
+    async def test_delivery_outcome(self, mocker, delivery_succeeds, expect_error):
+        """Delivery success returns message; failure raises ModelRetry."""
+        await self._create_target()
+        ctx = self._ctx_with_registry(mocker)
+
+        async def mock_deliver(*args, **kwargs):
+            kwargs["delivery_future"].set_result(delivery_succeeds)
+        mocker.patch("agent.tools._deliver_message", side_effect=mock_deliver)
+
+        if expect_error:
+            with pytest.raises(ModelRetry, match="target-agent"):
+                await send_message(ctx, target_name="target-agent", content="hello")
+        else:
+            result = await send_message(ctx, target_name="target-agent", content="hello")
+            assert "delivered" in result.lower() and "target-agent" in result
+
+
+class TestDeliverMessage:
+    """_deliver_message: background task for inter-agent delivery."""
+
+    @pytest.fixture
+    def mock_session(self, mocker):
+        """Mock get_session context manager (patch at source — imports are deferred)."""
+        mock_cm = mocker.AsyncMock()
+        mock_cm.__aenter__.return_value = mocker.MagicMock()
+        mock_cm.__aexit__.return_value = None
+        mocker.patch("db.connection.get_session", return_value=mock_cm)
+        return mock_cm
+
+    @pytest.mark.parametrize("lock_acquired", [
+        pytest.param(True, id="lock_acquired"),
+        pytest.param(False, id="lock_unavailable"),
+    ])
+    async def test_signals_future_based_on_lock_outcome(self, mocker, mock_session, lock_acquired):
+        """Future receives True when lock acquired, False when AgentLockedError."""
+        import asyncio
+        from agent.tools import _deliver_message
+        from agent.factory import AgentLockedError
+
+        # Configure factory mock based on test case
+        mock_factory_cm = mocker.AsyncMock()
+        if lock_acquired:
+            mock_factory_cm.__aenter__.return_value = (mocker.MagicMock(), mocker.MagicMock())
+            mock_factory_cm.__aexit__.return_value = None
+            async def mock_run(*args, **kwargs):
+                return
+                yield
+            mocker.patch("agent.runner.run_stateful_agent", side_effect=mock_run)
+        else:
+            mock_factory_cm.__aenter__.side_effect = AgentLockedError("test-agent-id")
+
+        mock_factory = mocker.MagicMock()
+        mock_factory.build_agent_and_deps.return_value = mock_factory_cm
+        mocker.patch("agent.factory.AgentFactory", return_value=mock_factory)
+
+        future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        await _deliver_message(
+            agent_id="test-agent-id",
+            user_prompt="hello",
+            engine=mocker.MagicMock(),
+            agent_app_state_reg={"test-agent-id": mocker.MagicMock()},
+            delivery_future=future,
+        )
+
+        assert future.done() and future.result() is lock_acquired
+
+    @pytest.mark.xfail(reason="TODO: Integration test for final architecture — verify A→B delivery works and histories stay isolated")
+    async def test_cross_agent_delivery_and_history_isolation(self):
+        """Integration test: A sends to B, both histories are correct and isolated.
+        
+        Should verify:
+        - Message actually delivered to B
+        - A's history contains only A's messages
+        - B's history contains only B's messages (+ inter-agent message)
+        - No cross-contamination from contextvars or other shared state
+        """
+        pytest.fail("Not implemented — waiting for stable architecture")
+
+
+class TestFormatInterAgentMessage:
+    """_format_inter_agent_message: pure helper for origin marker formatting."""
+
+    def test_format_structure(self):
+        """Message has header with sender, newline, then content."""
+        result = _format_inter_agent_message("alice", "hello world")
+        assert result.startswith("[INTER AGENT MESSAGE. From: alice]")
+        header, _, body = result.partition("\n")
+        assert body == "hello world"
