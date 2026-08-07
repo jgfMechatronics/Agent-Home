@@ -269,6 +269,16 @@ class TestHandleMessage(_BaseRouteTest):
         assert sse_events[1]["event"] == "Error"
         assert sse_events[1]["data"]["message"] == "Unexpected internal server error: 'RuntimeError: something went wrong'"
 
+    async def test_slash_command_recompile_returns_result_sse_and_skips_agent(self, client: AsyncClient):
+        """/recompile bypasses the agent run entirely and returns a single SlashCommandResult SSE."""
+        with patch("api.routes.compile_system_prompt", new_callable=AsyncMock):
+            events = await stream_and_collect(client, self.agent_record.id, message="/recompile")
+
+        assert len(events) == 1
+        assert events[0]["event"] == "SlashCommandResult"
+        assert events[0]["data"]["name"] == "user_recompile"
+        assert events[0]["data"]["status"] == "success"
+
 
 # ---------------------------------------------------------------------------
 # Detailed Persistence test and Cancellation tests
