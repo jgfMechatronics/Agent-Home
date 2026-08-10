@@ -10,7 +10,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.tools import ToolDefinition
 
 from agent.compaction import compact, is_compaction_needed
 from agent.types import AgentAppState, AgentDeps
@@ -19,7 +21,6 @@ from messages.messages import deserialize_messages, format_system_alert, load_me
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pydantic_ai.tools import ToolDefinition
     from pydantic_ai.toolsets import AbstractToolset
 
 logger = logging.getLogger(__name__)
@@ -27,16 +28,24 @@ logger = logging.getLogger(__name__)
 COMPACTION_RESUME_NOTICE = format_system_alert("Resuming after compaction. Context was trimmed to stay within limits.")
 
 
-def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent_id: str) -> "list[ToolDefinition]":
-    tool_schemas = []
+async def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent_id: str) -> list[ToolDefinition]:
+    tool_schemas: list[ToolDefinition] = []
     for ts in toolsets:
         if isinstance(ts, FunctionToolset):
             for tool in ts.tools.values():
                 tool_schemas.append(tool.tool_def)
+        elif isinstance(ts, MCPToolset):
+            for mcp_tool in await ts.list_tools():
+                tool_schemas.append(ToolDefinition(
+                    name=mcp_tool.name,
+                    description=mcp_tool.description,
+                    parameters_json_schema=mcp_tool.inputSchema,
+                ))
         else:
             logger.error(
-                "Agent %s has a non-FunctionToolset toolset (%s); "
-                "tool definitions for context reconstruction will be incomplete.",
+                "Agent %s has an unsupported toolset type (%s); "
+                "tool definitions for context reconstruction will be incomplete."
+                "Supported toolset types are FunctionToolset and MCPToolset.",
                 agent_id, ts.label,
             )
     return tool_schemas
@@ -85,8 +94,12 @@ async def run_stateful_agent(agent: Agent,
     
     TODO: This function is currently tested through the handle_message route. We should consider moving the bulk of that
     testing into unit testing of this function
+
+    TODO: Convert to agent.iter instead of agent.run_stream_events. Many benefits including getting rid of the funny capture_run_messages
+    Also would allows us to consider switching to RunContext.tool_manager for capturing tool scheams which may be cleaner.
+    agent.iter exposes a RunContext at this level I believe.
     """
-    tool_schemas = _extract_tool_definitions(agent.toolsets, deps.agent_id)
+    tool_schemas = await _extract_tool_definitions(agent.toolsets, deps.agent_id)
     
     interrupted_by_compaction = True
     while interrupted_by_compaction:
