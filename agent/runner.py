@@ -107,7 +107,6 @@ async def run_stateful_agent(agent: Agent,
     Also would allows us to consider switching to RunContext.tool_manager for capturing tool scheams which may be cleaner.
     agent.iter exposes a RunContext at this level I believe.
     """
-    tool_schemas = await _extract_tool_definitions(agent.toolsets, deps.agent_id)
     
     interrupted_by_compaction = True
     while interrupted_by_compaction:
@@ -130,6 +129,9 @@ async def run_stateful_agent(agent: Agent,
                 async for event in stream:
                     yield event
 
+                    # putting tool_schemas capture here should support agent self modifying attached tools.
+                    # not that we have any means or tests for that yet
+                    tool_schemas = await _extract_tool_definitions(agent.toolsets, deps.agent_id)
                     messages_to_persist = []
                     last_part_of_last_msg = messages[-1].parts[-1] if (messages and messages[-1].parts) else None
 
