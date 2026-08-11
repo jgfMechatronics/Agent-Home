@@ -31,6 +31,11 @@ Six commits cherry-picked onto cursed_branch after squash. All applied cleanly (
 - `924b846` — "Allowlist 14 tools in fs_proxy — cut DC junk from context"
 - Branch tip after pick: `924b846` — cursed_branch tip: `3a9796b`
 
+## Cherry-picks from main
+
+### PR #21 — Add import_af.py CLI for .AF file ingestion
+- `2585aa6` cherry-picked from main — cursed_branch tip: `6c5c24e`
+
 ### Prototype/InterAgentComms
 - Squash commit: `79e1f40` — "Squash merge of Prototype/InterAgentComms"
 - Branch tip: `b1bc4e8` — "Reject self-messages in send_message tool"
