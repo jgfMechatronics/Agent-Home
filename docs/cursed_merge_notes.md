@@ -23,6 +23,10 @@ Six commits cherry-picked onto cursed_branch after squash. All applied cleanly (
 - `def81ff` — "moved tool schema capture spot for future support of agent attachable/detachable toolsets"
 - Branch tip after pick: `def81ff` — cursed_branch tip: `0ddaba3`
 
+#### Cherry-pick batch (Aug 11, 2026)
+- `498c7fa` — "Use host.docker.internal for MCP filesystem toolset URL"
+- Branch tip after pick: `498c7fa` — cursed_branch tip: `55f5684`
+
 ### Prototype/InterAgentComms
 - Squash commit: `79e1f40` — "Squash merge of Prototype/InterAgentComms"
 - Branch tip: `b1bc4e8` — "Reject self-messages in send_message tool"
