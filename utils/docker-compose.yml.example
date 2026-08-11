@@ -19,7 +19,12 @@ services:
     container_name: agent-home
     restart: no
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"  # Bind to localhost only — prevents other containers reaching the API via host.docker.internal
+    extra_hosts:
+      # Allows Agent Home to reach MCP tools (e.g. Desktop Commander) running in the ellm-dev container.
+      # TODO: Replace with a proper Docker network between agent-home and ellm-dev.
+      #       At that point, containers address each other by name and host.docker.internal can be removed.
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data  # Persistent storage for SQLite DB
     environment:
