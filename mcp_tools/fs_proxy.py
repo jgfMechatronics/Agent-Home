@@ -17,7 +17,7 @@ import tempfile
 from fastmcp.server import create_proxy
 
 
-DEFAULT_HOST = "127.0.0.1"
+DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8080
 DEFAULT_WORKSPACE = "/workspace/git/misc/test"
 
