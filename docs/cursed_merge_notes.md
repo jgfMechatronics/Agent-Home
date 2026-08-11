@@ -9,6 +9,9 @@ Each entry: squash merge commit on this branch → last commit on the source bra
 - Squash commit: `55c98a7` — "Squash merge of Prototype/TUIRebasedOnMain"
 - Branch tip: `f177166` — "added missing test for slash commands"
 
+#### Cherry-picks
+- bb332a8d1f93d2c89ae6a0112b947bb90476726a
+
 ### Development/MCPFilesystemToolsPrototype
 - Squash commit: `d6170cb` — "Squash merge of Development/MCPFilesystemToolsPrototype. Fixed one conflict in pyproject.toml"
 - Branch tip at squash: `35e568c` — "Skip test_mcp_connection — requires fs_proxy server running, meant for manual use"
