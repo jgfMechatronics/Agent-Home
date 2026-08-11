@@ -21,6 +21,27 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8080
 DEFAULT_WORKSPACE = "/workspace/git/misc/test"
 
+# Allowlist of Desktop Commander tools to expose.
+# Everything else is excluded — keeps context lean and avoids junk tools.
+# TODO: Remove read_multiple_files once parallel tool calls are re-enabled in Agent Home
+#       (currently disabled due to orphan remover incompatibility).
+_ALLOWED_TOOLS = {
+    "read_file",
+    "read_multiple_files",
+    "write_file",
+    "edit_block",
+    "get_file_info",
+    "start_process",
+    "interact_with_process",
+    "read_process_output",
+    "force_terminate",
+    "list_sessions",
+    "start_search",
+    "get_more_search_results",
+    "stop_search",
+    "list_searches",
+}
+
 
 def create_fs_proxy(workspace_path: str = DEFAULT_WORKSPACE):
     """Create a FastMCP proxy for the Desktop Commander MCP server.
@@ -28,6 +49,9 @@ def create_fs_proxy(workspace_path: str = DEFAULT_WORKSPACE):
     Desktop Commander reads config.json from its working directory. We pre-write
     a config scoping filesystem access to workspace_path via allowedDirectories,
     then pass that directory as cwd to the subprocess.
+
+    Only tools in _ALLOWED_TOOLS are exposed — the rest are hidden via allowlist
+    to keep context lean and exclude DC-internal/junk tools.
 
     Args:
         workspace_path: Directory to scope file operations to.
@@ -43,7 +67,7 @@ def create_fs_proxy(workspace_path: str = DEFAULT_WORKSPACE):
     with open(os.path.join(config_dir, "config.json"), "w") as f:
         json.dump(config, f)
 
-    return create_proxy(
+    proxy = create_proxy(
         {
             "mcpServers": {
                 "desktop-commander": {
@@ -55,6 +79,8 @@ def create_fs_proxy(workspace_path: str = DEFAULT_WORKSPACE):
         },
         name="desktop-commander-proxy",
     )
+    proxy.enable(names=_ALLOWED_TOOLS, only=True)
+    return proxy
 
 
 def main():
