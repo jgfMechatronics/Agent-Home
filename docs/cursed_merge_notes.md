@@ -26,6 +26,8 @@ Six commits cherry-picked onto cursed_branch after squash. All applied cleanly (
 #### Cherry-pick batch (Aug 11, 2026)
 - `498c7fa` — "Use host.docker.internal for MCP filesystem toolset URL"
 - Branch tip after pick: `498c7fa` — cursed_branch tip: `55f5684`
+- `0bb8a34` — "Bind fs_proxy to 0.0.0.0 for cross-container MCP access"
+- Branch tip after pick: `0bb8a34` — cursed_branch tip: `15fa71f`
 
 ### Prototype/InterAgentComms
 - Squash commit: `79e1f40` — "Squash merge of Prototype/InterAgentComms"
