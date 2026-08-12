@@ -3,6 +3,8 @@
 Reference for cherry-picking from prototype branches post-squash.
 Each entry: squash merge commit on this branch → last commit on the source branch (tip to cherry-pick from).
 
+> **Note:** We stopped tracking individual cherry-picks here — too much overhead. Check `git log` for current state.
+
 ## Squashed Branches
 
 ### Prototype/TUIRebasedOnMain
