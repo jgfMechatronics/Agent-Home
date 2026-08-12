@@ -50,7 +50,6 @@ _START_PROCESS_DESCRIPTION = (
     "Exceeding timeout_ms does NOT kill the process — it simply unblocks the caller and continues execution in the background. "
     "For background processes, poll for output with read_process_output. "
     "Supports interactive REPLs (e.g. 'python3 -i', 'bash') — detects prompts and ready states automatically; use interact_with_process to send further input. "
-    "To run one-off shell commands, use 'bash -c \"your_cmd\"' with the default timeout. "
     "Prefer absolute paths."
 )
 
