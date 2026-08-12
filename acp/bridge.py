@@ -19,6 +19,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of historical messages to replay when toad connects
+HISTORY_REPLAY_LIMIT = 40
+
 
 # =============================================================================
 # JSON-RPC Helpers
@@ -452,6 +455,9 @@ async def replay_history(state: BridgeState, session_id: str, client: httpx.Asyn
         # History replay is best-effort — don't fail the session
         print(f"Warning: Failed to fetch history: {e}", file=sys.stderr)
         return
+
+    # Limit to last N messages to avoid replaying entire history
+    items = items[-HISTORY_REPLAY_LIMIT:]
 
     latest_seq_id = _replay_message_items(session_id, items)
     if latest_seq_id is not None:
