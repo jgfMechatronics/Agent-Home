@@ -15,6 +15,8 @@ import os
 import tempfile
 
 from fastmcp.server import create_proxy
+from fastmcp.server.transforms import ToolTransform
+from fastmcp.tools.tool_transform import ArgTransformConfig, ToolTransformConfig
 
 
 DEFAULT_HOST = "0.0.0.0"
@@ -41,6 +43,23 @@ _ALLOWED_TOOLS = {
     "stop_search",
     "list_searches",
 }
+
+_START_PROCESS_DESCRIPTION = (
+    "Start a terminal process and capture its output. "
+    "Behaves synchronously when process exits within timeout_ms. "
+    "Exceeding timeout_ms does NOT kill the process — it simply unblocks the caller and continues execution in the background. "
+    "For background processes, poll for output with read_process_output. "
+    "Supports interactive REPLs (e.g. 'python3 -i', 'bash') — detects prompts and ready states automatically; use interact_with_process to send further input. "
+    "To run one-off shell commands, use 'bash -c \"your_cmd\"' with the default timeout. "
+    "Prefer absolute paths."
+)
+
+_TIMEOUT_MS_DESCRIPTION = (
+    "How long to wait for output before returning (milliseconds). "
+    "Default 10000 (10s) — suitable for most quick commands. "
+    "For synchronous behavior, set high enough that the process will finish before the timeout. "
+    "For background execution, set a short timeout — the process keeps running and you can poll with read_process_output."
+)
 
 
 def create_fs_proxy(workspace_path: str = DEFAULT_WORKSPACE):
@@ -80,6 +99,17 @@ def create_fs_proxy(workspace_path: str = DEFAULT_WORKSPACE):
         name="desktop-commander-proxy",
     )
     proxy.enable(names=_ALLOWED_TOOLS, only=True)
+    proxy.add_transform(ToolTransform({
+        "start_process": ToolTransformConfig(
+            description=_START_PROCESS_DESCRIPTION,
+            arguments={
+                "timeout_ms": ArgTransformConfig(
+                    default=10000,
+                    description=_TIMEOUT_MS_DESCRIPTION,
+                ),
+            },
+        )
+    }))
     return proxy
 
 
