@@ -1237,3 +1237,26 @@ class TestMCPToolSchemaSnapshotting(_BaseRouteTest):
             assert sorted(schemas, key=lambda s: s.name) == sorted(
                 [_EXPECTED_MCP_SCHEMA, _EXPECTED_LOCAL_SCHEMA], key=lambda s: s.name
             )
+
+
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "TODO (low priority): requires a custom pydantic-ai Model subclass to produce "
+        "ModelResponse(parts=[]). FunctionModel cannot reproduce this scenario — its "
+        "stream validation requires at least one yielded item. Likely breaks on the "
+        "agent.iter rewrite anyway. Fix is verified in production via Haiku live logs."
+    ),
+)
+async def test_empty_model_response_parts_does_not_crash():
+    """Runner handles ModelResponse(parts=[], finish_reason='end_turn') without IndexError.
+
+    Real Anthropic models return an empty response when the agent ends its turn silently
+    after a tool call (no content blocks). The last_part_of_last_msg guard in runner.py
+    must handle messages[-1].parts being empty, otherwise IndexError on AgentRunResultEvent.
+
+    Trigger confirmed: Haiku live log showed ModelResponse(parts=[], finish_reason='end_turn',
+    provider_response_id='msg_...') followed by IndexError at runner.py line 154.
+    Fix: `messages[-1].parts[-1] if (messages and messages[-1].parts) else None`.
+    """
+    pytest.fail("not yet implemented")
