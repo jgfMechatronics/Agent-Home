@@ -118,7 +118,7 @@ async def run_stateful_agent(agent: Agent,
                     yield event
 
                     messages_to_persist = []
-                    last_part_of_last_msg = messages[-1].parts[-1] if messages else None
+                    last_part_of_last_msg = messages[-1].parts[-1] if (messages and messages[-1].parts) else None
 
                     if (isinstance(event, ToolResultEvent)
                         and isinstance(event.part, ToolReturnPart)
