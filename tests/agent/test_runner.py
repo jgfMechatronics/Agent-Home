@@ -790,6 +790,20 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
             ],
             id="two_separated_pairs",
         ),
+        pytest.param(
+            [
+                ModelRequest(parts=[UserPromptPart(content="prior turn")], instructions="system-v1"),
+                ModelRequest(parts=[UserPromptPart(content="compaction warning")], instructions="system-v2"),
+            ],
+            id="adjacent_pair_incompatible_instructions",
+        ),
+        pytest.param(
+                    [
+                        ModelRequest(parts=[UserPromptPart(content="prior turn")], instructions="system-v1"),
+                        ModelRequest(parts=[UserPromptPart(content="compaction warning")], instructions="system-v1"),
+                    ],
+                    id="adjacent_pair_compatible_instructions",
+        ),
     ])
     async def test_adjacent_model_requests_in_history_persists_full_new_turn(
         self, client: AsyncClient, fake_history: list
