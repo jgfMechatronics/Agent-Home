@@ -58,9 +58,24 @@ def _count_adjacent_model_request_merges(messages: list) -> int:
     indexing when tracking new messages to persist. Returns the count of merges
     (i.e., how many messages will "disappear" due to merging).
     """
+    def _instructions_compatible(a: ModelRequest, b: ModelRequest) -> bool:
+        return not a.instructions or not b.instructions or a.instructions == b.instructions
+
     return sum(1 for i in range(len(messages) - 1)
-               if isinstance(messages[i], ModelRequest) 
-               and isinstance(messages[i+1], ModelRequest))
+               if isinstance(messages[i], ModelRequest)
+               and isinstance(messages[i+1], ModelRequest)
+               and _instructions_compatible(messages[i], messages[i+1]))
+
+
+def _debug_fmt_messages(msgs: list) -> list:
+    """PERSIST_DEBUG: Format messages for logging, suppressing noisy ModelRequest.instructions."""
+    import dataclasses
+    return [
+        dataclasses.replace(msg, instructions="<suppressed>")
+        if isinstance(msg, ModelRequest) and msg.instructions
+        else msg
+        for msg in msgs
+    ]
 
 
 async def _check_and_handle_cancel(
@@ -111,8 +126,10 @@ async def run_stateful_agent(agent: Agent,
         merge_adjustment = _count_adjacent_model_request_merges(message_history)
         # Track where new messages start for persistence; adjust for merges pydantic-ai will perform
         new_message_idx = len(message_history) - merge_adjustment
+        _log_from = new_message_idx  # PERSIST_DEBUG: static capture point — does not advance with cursor
 
         with capture_run_messages() as messages:
+            _prev_msg_len = len(messages)  # PERSIST_DEBUG
             async with agent.run_stream_events(user_prompt=user_prompt,
                                                 message_history=message_history,
                                                 deps=deps) as stream:
@@ -120,6 +137,15 @@ async def run_stateful_agent(agent: Agent,
 
                 async for event in stream:
                     yield event
+
+                    # PERSIST_DEBUG: log messages[_log_from:] whenever the list grows
+                    if len(messages) != _prev_msg_len:
+                        logger.warning(
+                            "PERSIST_DEBUG | len %d->%d | event=%s | new_message_idx=%d | messages[%d:]=%s",
+                            _prev_msg_len, len(messages), type(event).__name__,
+                            new_message_idx, _log_from, _debug_fmt_messages(messages[_log_from:]),
+                        )
+                        _prev_msg_len = len(messages)
 
                     # putting tool_schemas capture here should support agent self modifying attached tools.
                     # not that we have any means or tests for that yet
@@ -141,6 +167,10 @@ async def run_stateful_agent(agent: Agent,
                         messages_to_persist = messages[new_message_idx:]
 
                     if messages_to_persist:
+                        logger.warning(  # PERSIST_DEBUG
+                            "PERSIST_DEBUG | PERSISTING %d msg(s) | new_message_idx %d->%d",
+                            len(messages_to_persist), new_message_idx, new_message_idx + len(messages_to_persist),
+                        )
                         total_tokens = await persist_messages(deps=deps, messages=messages_to_persist, tool_schemas=tool_schemas)
                         await deps.commit_changes_refresh_agent_record()
                         new_message_idx += len(messages_to_persist)
