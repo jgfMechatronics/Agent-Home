@@ -40,7 +40,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThink
 
 # Local
 from messages.messages import format_system_alert
-from agent.runner import run_stateful_agent
+from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
 from agent.types import AgentAppState
 from api.fastapi_deps import get_agent_and_deps
 from conftest import make_deps, make_mock_agent, _make_mock_session
@@ -1152,6 +1152,56 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         assert self.mock_compact.call_count == 2
         assert len(self.test_agent.calls) == 3, "agent should run three times: original + two resumes"
         assert isinstance(events[-1], AgentRunResultEvent)
+
+    async def test_resumed_run_persists_new_messages_not_stale(self):
+        """After compaction+resume, only new messages are persisted — not history, not stale content.
+
+        Simulates the compaction dynamic: iteration 1 has prior history of one
+        request/response pair, compaction fires after a tool call, then
+        iteration 2 loads a 1-item post-compaction history (the compacted summary).
+        Asserts the exact set of persisted messages: all newly generated content from both
+        iterations, none of the history items.
+
+        If capture_run_messages() returns a stale list in iteration 2, history from
+        iteration 1 bleeds into the persisted set and/or iteration 2's output is lost.
+        """
+        F = FunctionModelTestAgent
+        history_iter1 = [
+            ModelRequest(parts=[UserPromptPart(content="old question 1")]),
+            ModelResponse(parts=[TextPart(content="old response 1")]),
+            ModelRequest(parts=[UserPromptPart(content="old question 2")]),
+            ModelResponse(parts=[TextPart(content="old response 2")]),
+        ]
+        history_iter2 = [
+            ModelRequest(parts=[UserPromptPart(content="old question 2")]),
+            ModelResponse(parts=[TextPart(content="old response 2")]),
+        ]
+        self.mock_deserialize_msgs.side_effect = [history_iter1, history_iter2]
+
+        # Compact fires after the first tool return, then stops
+        self.mock_needs_compact.side_effect = lambda *_: not self.mock_compact.called
+
+        events = await self._run_agent_to_completion()
+
+        self.mock_compact.assert_called_once()
+        assert len(self.test_agent.calls) == 2, "agent should run twice: initial turn + one resume"
+        assert isinstance(events[-1], AgentRunResultEvent)
+
+        # Exact expected set: all new content from both iterations, no history messages.
+        # Iter 1: user prompt + tool call response + tool return.
+        # Iter 2: resume notice + text completion.
+        expected = [
+            ModelRequest(parts=[UserPromptPart(content="test")]),
+            ModelResponse(parts=[ThinkingPart(content=F.THINKING_TEXT), TextPart(content=F.PRE_TOOL_TEXT), F.DUMMY_TOOL_CALL_PART]),
+            ModelRequest(parts=[F.DUMMY_TOOL_RETURN_PART]),
+            ModelRequest(parts=[UserPromptPart(content=COMPACTION_RESUME_NOTICE)]),
+            ModelResponse(parts=[TextPart(content=F.COMPLETION_TEXT)]),
+        ]
+        B = _PersistenceAndCancellationTestBase
+        B._assert_ModelMessage_list_eq(
+            B._list_persisted_messages(self.mock_persist_messages),
+            expected,
+        )
 
 
 @pytest.mark.xfail(
