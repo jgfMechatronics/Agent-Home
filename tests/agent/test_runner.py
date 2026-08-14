@@ -1156,16 +1156,27 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
     async def test_resumed_run_persists_new_messages_not_stale(self):
         """After compaction+resume, only new messages are persisted — not history, not stale content.
 
-        Simulates the compaction dynamic: iteration 1 has prior history of one
-        request/response pair, compaction fires after a tool call, then
-        iteration 2 loads a 1-item post-compaction history (the compacted summary).
-        Asserts the exact set of persisted messages: all newly generated content from both
-        iterations, none of the history items.
+        Simulates the compaction dynamic: iteration 1 has prior history, compaction fires
+        after a tool call, then iteration 2 loads post-compaction history. Asserts the exact
+        set of persisted messages: all newly generated content from both iterations, none of
+        the history items.
 
-        If capture_run_messages() returns a stale list in iteration 2, history from
-        iteration 1 bleeds into the persisted set and/or iteration 2's output is lost.
+        NOTE: The contextvar pre-set simulates _deliver_message's setup for send_message.
+        This triggers a known bug (L0/L2 list decoupling) where iteration 2 sees stale
+        iteration 1 content. Remove the contextvar block to test normal compaction behavior.
+        
+        KEY INSIGHT: The bug only manifests when iteration 2 ALSO has a tool call. The
+        ToolResultEvent persist path (Condition 1) REQUIRES last_part to be ToolCallPart,
+        which the stale L0 list provides. Without a tool call in iter2, the general persist
+        path (Condition 2) blocks because it checks `not isinstance(..., ToolCallPart)`.
         """
+        from pydantic_ai._agent_graph import _messages_ctx_var, _RunMessages
+        
         F = FunctionModelTestAgent
+        # Use THREE_TOOL_CALL_STEPS so iteration 2 also has tool calls.
+        # This is critical — the bug only triggers via the ToolResultEvent persist path.
+        self.test_agent.set_steps(F.THREE_TOOL_CALL_STEPS)
+        
         history_iter1 = [
             ModelRequest(parts=[UserPromptPart(content="old question 1")]),
             ModelResponse(parts=[TextPart(content="old response 1")]),
@@ -1173,35 +1184,49 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
             ModelResponse(parts=[TextPart(content="old response 2")]),
         ]
         history_iter2 = [
-            ModelRequest(parts=[UserPromptPart(content="old question 2")]),
-            ModelResponse(parts=[TextPart(content="old response 2")]),
+            ModelRequest(parts=[UserPromptPart(content="second iter question")]),
+            ModelResponse(parts=[TextPart(content="second iter resp")]),
         ]
         self.mock_deserialize_msgs.side_effect = [history_iter1, history_iter2]
 
         # Compact fires after the first tool return, then stops
         self.mock_needs_compact.side_effect = lambda *_: not self.mock_compact.called
 
-        events = await self._run_agent_to_completion()
+        # Simulate _deliver_message's contextvar setup (send_message path).
+        # This triggers a known bug (L0/L2 list decoupling) - remove this block once
+        # we have a dedicated send_message test that covers this scenario.
+        run_messages_obj = _RunMessages([])
+        ctx_token = _messages_ctx_var.set(run_messages_obj)
+        try:
+            events = await self._run_agent_to_completion()
+        finally:
+            _messages_ctx_var.reset(ctx_token)
 
+        # Basic flow assertions
         self.mock_compact.assert_called_once()
-        assert len(self.test_agent.calls) == 2, "agent should run twice: initial turn + one resume"
+        # 4 steps total: iter1 does step 1, iter2 does steps 2-4
+        assert len(self.test_agent.calls) == 4, "agent should be called 4 times across both iterations"
         assert isinstance(events[-1], AgentRunResultEvent)
 
-        # Exact expected set: all new content from both iterations, no history messages.
-        # Iter 1: user prompt + tool call response + tool return.
-        # Iter 2: resume notice + text completion.
+        # Expected messages without the bug:
+        # Iter 1: user prompt + tool call + tool return (persisted before compaction)
+        # Iter 2: resume notice + 2 more tool pairs + completion
         expected = [
+            # Iter 1 content
             ModelRequest(parts=[UserPromptPart(content="test")]),
-            ModelResponse(parts=[ThinkingPart(content=F.THINKING_TEXT), TextPart(content=F.PRE_TOOL_TEXT), F.DUMMY_TOOL_CALL_PART]),
+            ModelResponse(parts=[F.DUMMY_TOOL_CALL_PART]),
             ModelRequest(parts=[F.DUMMY_TOOL_RETURN_PART]),
+            # Iter 2 content
             ModelRequest(parts=[UserPromptPart(content=COMPACTION_RESUME_NOTICE)]),
+            ModelResponse(parts=[F.DUMMY_TOOL_CALL_PART]),
+            ModelRequest(parts=[F.DUMMY_TOOL_RETURN_PART]),
+            ModelResponse(parts=[F.DUMMY_TOOL_CALL_PART]),
+            ModelRequest(parts=[F.DUMMY_TOOL_RETURN_PART]),
             ModelResponse(parts=[TextPart(content=F.COMPLETION_TEXT)]),
         ]
         B = _PersistenceAndCancellationTestBase
-        B._assert_ModelMessage_list_eq(
-            B._list_persisted_messages(self.mock_persist_messages),
-            expected,
-        )
+        actual = B._list_persisted_messages(self.mock_persist_messages)
+        B._assert_ModelMessage_list_eq(actual, expected)
 
 
 @pytest.mark.xfail(
