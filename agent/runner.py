@@ -44,14 +44,22 @@ def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent_id: s
 
 def _count_adjacent_model_request_merges(messages: list) -> int:
     """Count adjacent ModelRequest pairs that pydantic-ai will merge.
-    
+
     pydantic-ai merges consecutive ModelRequests in message_history, which affects
     indexing when tracking new messages to persist. Returns the count of merges
     (i.e., how many messages will "disappear" due to merging).
+
+    Mirrors pydantic-ai's merge condition: requests are only merged when their
+    instructions are compatible (neither has instructions, or they match). Adjacent
+    requests with differing instructions are left separate and must not be counted.
     """
+    def _instructions_compatible(a: ModelRequest, b: ModelRequest) -> bool:
+        return not a.instructions or not b.instructions or a.instructions == b.instructions
+
     return sum(1 for i in range(len(messages) - 1)
-               if isinstance(messages[i], ModelRequest) 
-               and isinstance(messages[i+1], ModelRequest))
+               if isinstance(messages[i], ModelRequest)
+               and isinstance(messages[i + 1], ModelRequest)
+               and _instructions_compatible(messages[i], messages[i + 1]))
 
 
 async def _check_and_handle_cancel(
@@ -110,7 +118,7 @@ async def run_stateful_agent(agent: Agent,
                     yield event
 
                     messages_to_persist = []
-                    last_part_of_last_msg = messages[-1].parts[-1] if messages else None
+                    last_part_of_last_msg = messages[-1].parts[-1] if (messages and messages[-1].parts) else None
 
                     if (isinstance(event, ToolResultEvent)
                         and isinstance(event.part, ToolReturnPart)
