@@ -767,32 +767,15 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         )
         session.add_all([sender_record, recipient_record])
         await session.flush()
+        # Refresh to load all attributes — prevents MissingGreenlet on later access
+        await session.refresh(sender_record)
+        await session.refresh(recipient_record)
 
-        # Cache primitive IDs now while session is live (before any potential expiry)
+        # Use real records directly (refresh prevents lazy load issues)
+        self.sender_record = sender_record
+        self.recipient_record = recipient_record
         sender_id = sender_record.id
         recipient_id = recipient_record.id
-
-        # -----------------------------------------------------------------
-        # Mock records for deps — plain MagicMocks with pre-baked values.
-        # deps properties (agent_id, name, config …) read through _agent_record,
-        # so we replace it with a mock that never touches the ORM layer.
-        # -----------------------------------------------------------------
-        def _mock_record(rec_id, name, instructions):
-            r = mocker.MagicMock(spec=AgentRecord)
-            r.id = rec_id
-            r.name = name
-            r.agent_config = SAMPLE_AGENT_CONFIG
-            r.system_instructions = instructions
-            r.compiled_system_prompt = None
-            r.sys_prompt_compiled_at = None
-            r.context_window_start = None
-            r.compaction_warning_fired = False
-            return r
-
-        self.mock_sender_record = _mock_record(sender_id, "sender-agent", "You are the sender.")
-        self.mock_recipient_record = _mock_record(
-            recipient_id, _SenderTestAgent.RECIPIENT_NAME, "You are the recipient."
-        )
 
         # Shared registry — keyed by real recipient UUID
         self.app_state_reg = {recipient_id: AgentAppState()}
@@ -801,16 +784,16 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # mocked get_all_agents; session.bind still needed for engine extraction)
         self.sender_deps = AgentDeps(
             session=_make_mock_session(),
-            agent_record=self.mock_sender_record,
+            agent_record=self.sender_record,
             agent_app_state_reg=self.app_state_reg,
         )
         self.sender_app_state = AgentAppState()
         self.sender_agent = _SenderTestAgent()
 
-        # Recipient deps: mock session + mock record (no ORM access needed during B's run)
+        # Recipient deps: mock session + real record (refreshed to avoid lazy load)
         self.recipient_deps = AgentDeps(
             session=_make_mock_session(),
-            agent_record=self.mock_recipient_record,
+            agent_record=self.recipient_record,
         )
         # B runs two loop iterations: iter1 ends at ToolResultEvent (compaction fires),
         # iter2 runs steps 2–4 (two more tool calls + completion).  With the fix, all 9
@@ -823,18 +806,11 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # L0 last_part=ToolCallPart, triggering re-persist of stale history via the if-branch.
         recipient_test_agent.set_steps(FunctionModelTestAgent.THREE_TOOL_CALL_STEPS)
 
-        # Mock get_all_agents: return plain-mock records so send_message's name
-        # lookup (a.name == target_name) never hits the ORM layer.
-        lookup_sender = mocker.MagicMock(spec=AgentRecord)
-        lookup_sender.id = sender_id
-        lookup_sender.name = "sender-agent"
-        lookup_recipient = mocker.MagicMock(spec=AgentRecord)
-        lookup_recipient.id = recipient_id
-        lookup_recipient.name = _SenderTestAgent.RECIPIENT_NAME
+        # Mock get_all_agents: return real refreshed records (no lazy load issues)
         mocker.patch(
             "agent.tools.get_all_agents",
             new_callable=mocker.AsyncMock,
-            return_value=[lookup_sender, lookup_recipient],
+            return_value=[sender_record, recipient_record],
         )
 
         # Mock AgentFactory → yields (recipient's agent, recipient's deps)
@@ -862,7 +838,7 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         b_first_persist_done = [False]
 
         async def _persist_side_effect(deps, messages, tool_schemas):
-            if deps._agent_record is self.mock_recipient_record and not b_first_persist_done[0]:
+            if deps._agent_record is self.recipient_record and not b_first_persist_done[0]:
                 b_first_persist_done[0] = True
                 return 999_999  # > soft_compaction_limit (10 000) → compaction fires
             return None
@@ -944,7 +920,7 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         b_persisted = [
             msg
             for call in self.mock_persist_messages.call_args_list
-            if call.kwargs["deps"]._agent_record is self.mock_recipient_record
+            if call.kwargs["deps"]._agent_record is self.recipient_record
             for msg in call.kwargs["messages"]
         ]
 
@@ -971,7 +947,7 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         a_persisted = [
             msg
             for call in self.mock_persist_messages.call_args_list
-            if call.kwargs["deps"]._agent_record is self.mock_sender_record
+            if call.kwargs["deps"]._agent_record is self.sender_record
             for msg in call.kwargs["messages"]
         ]
         a_expected = [
