@@ -889,8 +889,8 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # re-persisted. Agent A gets empty history (only B's history matters here).
         _B_ITER1 = "__b_iter1__"
         _B_ITER2 = "__b_iter2__"
-        b_history_long = make_alternating_messages(10)  # 5 req/resp pairs
-        b_history_short = make_alternating_messages(2)  # 1 req/resp pair
+        b_history_long = make_alternating_messages(10, "history should not be persist")
+        b_history_short = make_alternating_messages(2, "history should not be persist")
         b_load_call = [0]
 
         async def _load_side_effect(session, agent_id, start_seq_id=0, end_seq_id=None):
