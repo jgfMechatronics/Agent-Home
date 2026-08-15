@@ -24,7 +24,7 @@ from agent.tools import (
     send_message,
 )
 from agent.types import AgentAppState, AgentDeps
-from conftest import SAMPLE_AGENT_CONFIG, _make_mock_session, make_deps, mock_run_context
+from conftest import SAMPLE_AGENT_CONFIG, _make_mock_session, make_alternating_messages, make_deps, mock_run_context
 from db.models import AgentRecord, MemoryBlockRecord
 
 # TODO: move to conftest once on a proper PR branch
@@ -831,10 +831,10 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # Without the fix, iter2's stale _RunMessages list ends in ToolCallPart which gates
         # out the AgentRunResultEvent elif branch — items 4+5 are never persisted.
         recipient_test_agent = FunctionModelTestAgent()
-        recipient_test_agent.set_steps([
-            [FunctionModelTestAgent.TOOL_CALL],       # iter1: tool → ToolResultEvent → compact
-            FunctionModelTestAgent.COMPLETION_TEXT,   # iter2: completion → AgentRunResultEvent
-        ])
+        # THREE_TOOL_CALL_STEPS: compaction fires after step 1 (iter1), then iter2 also has
+        # tool calls. Critical: without the fix, iter2's ToolResultEvent fires with stale
+        # L0 last_part=ToolCallPart, triggering re-persist of stale history via the if-branch.
+        recipient_test_agent.set_steps(FunctionModelTestAgent.THREE_TOOL_CALL_STEPS)
 
         # Mock get_all_agents: return plain-mock records so send_message's name
         # lookup (a.name == target_name) never hits the ORM layer.
@@ -882,24 +882,56 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
 
         self.mock_persist_messages.side_effect = _persist_side_effect
 
+        # Simulate realistic message history: B has 5 pairs on iter1 (pre-compaction),
+        # then 1 pair on iter2 (post-compaction trim). Without the fix, the stale
+        # capture list still reflects the longer iter1 history, so the lower
+        # new_message_idx from the short iter2 history causes old messages to be
+        # re-persisted. Agent A gets empty history (only B's history matters here).
+        _B_ITER1 = "__b_iter1__"
+        _B_ITER2 = "__b_iter2__"
+        b_history_long = make_alternating_messages(10)  # 5 req/resp pairs
+        b_history_short = make_alternating_messages(2)  # 1 req/resp pair
+        b_load_call = [0]
+
+        async def _load_side_effect(session, agent_id, start_seq_id=0, end_seq_id=None):
+            if agent_id == recipient_id:
+                b_load_call[0] += 1
+                return _B_ITER1 if b_load_call[0] == 1 else _B_ITER2
+            return []
+
+        def _deserialize_side_effect(raw):
+            if raw == _B_ITER1:
+                return b_history_long
+            if raw == _B_ITER2:
+                return b_history_short
+            return []
+
+        self.mock_load_messages.side_effect = _load_side_effect
+        self.mock_deserialize_msgs.side_effect = _deserialize_side_effect
+
     async def test_recipient_messages_persisted_after_compaction(self):
         """
         A calls send_message → B spawned in background task.
-        B runs 2 loop iterations: compaction fires after iter1's ToolResultEvent,
-        then iter2 resumes and produces only a completion text response.
+        B runs 2 loop iterations using THREE_TOOL_CALL_STEPS (tool, tool, tool, done):
+          iter1: step 1 (tool call) → compaction fires after ToolResultEvent
+          iter2: steps 2–4 (two more tool calls + completion text)
 
         With the contextvar fix (context=contextvars.Context()):
-          B's captures list is isolated per-iteration → all 5 messages persisted.
+          B's capture list is isolated per-iteration → all 9 messages persisted correctly.
         Without the fix (surgical _RunMessages only):
-          iter2 reuses the stale iter1 captures list which still ends in ToolCallPart;
-          the AgentRunResultEvent elif guard is blocked → items 4–5 never persisted.
+          iter2 reuses the stale iter1 capture list which ends in ToolCallPart;
+          the ToolResultEvent if-branch fires with stale history and re-persists it → 15 msgs.
 
-        Expected persisted messages for B:
-          iter1  ① ModelRequest  [UserPromptPart(inter-agent msg)]   ← PartStartEvent elif
-          iter1  ② ModelResponse [DUMMY_TOOL_CALL_PART]              ┐ ToolResultEvent
-          iter1  ③ ModelRequest  [DUMMY_TOOL_RETURN_PART]            ┘  atomic persist
+        Expected persisted messages for B (9 total):
+          iter1  ① ModelRequest  [UserPromptPart(inter-agent msg)]        ← PartStartEvent elif
+          iter1  ② ModelResponse [DUMMY_TOOL_CALL_PART]                   ┐ ToolResultEvent
+          iter1  ③ ModelRequest  [DUMMY_TOOL_RETURN_PART]                 ┘  step 1 atomic persist
           iter2  ④ ModelRequest  [UserPromptPart(COMPACTION_RESUME_NOTICE)] ← PartStartEvent elif
-          iter2  ⑤ ModelResponse [TextPart(COMPLETION_TEXT)]         ← AgentRunResultEvent elif
+          iter2  ⑤ ModelResponse [DUMMY_TOOL_CALL_PART]                   ┐ ToolResultEvent
+          iter2  ⑥ ModelRequest  [DUMMY_TOOL_RETURN_PART]                 ┘  step 2 atomic persist
+          iter2  ⑦ ModelResponse [DUMMY_TOOL_CALL_PART]                   ┐ ToolResultEvent
+          iter2  ⑧ ModelRequest  [DUMMY_TOOL_RETURN_PART]                 ┘  step 3 atomic persist
+          iter2  ⑨ ModelResponse [TextPart(COMPLETION_TEXT)]              ← AgentRunResultEvent elif
         """
         a_events = [event async for event in run_stateful_agent(
             self.sender_agent.agent,
@@ -923,12 +955,19 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         ]
 
         expected = [
+            # iter1: initial inter-agent message + step 1 tool call/return
             ModelRequest(parts=[UserPromptPart(content=_format_inter_agent_message(
                 "sender-agent", "hello from sender"
             ))]),
             ModelResponse(parts=[FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
             ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
+            # iter2: compaction resume notice + steps 2 and 3 tool call/return pairs
             ModelRequest(parts=[UserPromptPart(content=COMPACTION_RESUME_NOTICE)]),
+            ModelResponse(parts=[FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
+            ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
+            ModelResponse(parts=[FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
+            ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
+            # iter2: step 4 completion
             ModelResponse(parts=[TextPart(content=FunctionModelTestAgent.COMPLETION_TEXT)]),
         ]
         self._assert_ModelMessage_list_eq(b_persisted, expected)
