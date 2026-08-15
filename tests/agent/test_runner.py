@@ -804,6 +804,13 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
                     ],
                     id="adjacent_pair_compatible_instructions",
         ),
+        pytest.param(
+            [
+                ModelResponse(parts=[TextPart(content="response 1")]),
+                ModelResponse(parts=[TextPart(content="response 2")]),
+            ],
+            id="adjacent_model_responses",
+        ),
     ])
     async def test_adjacent_model_requests_in_history_persists_full_new_turn(
         self, client: AsyncClient, fake_history: list
