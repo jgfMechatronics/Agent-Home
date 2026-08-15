@@ -15,7 +15,8 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from pydantic_ai import Agent, DeferredToolRequests
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
@@ -112,17 +113,42 @@ class AgentFactory:
                    if deps.config.thinking_enabled else {}),
                 parallel_tool_calls=False, # our current orphan remover isn't compatible with parallel tool calls
             )
+            toolsets = _construct_toolsets(deps.config.toolset_names)
+            
             agent = Agent(model,
                           instructions=get_system_prompt,
                           deps_type=AgentDeps,
                           name=deps.name,
                           tools=get_tools_for_agent(deps.config.tool_names),
+                          toolsets=toolsets,
                           retries=deps.config.retries,
                           output_type=[str, DeferredToolRequests],
                           model_settings=model_settings,
                           capabilities=[CompactionWarner()])
             
             yield (agent, deps)
+
+
+def _construct_toolsets(toolset_names: list[str]) -> list:
+    """Construct toolset instances from a list of toolset names.
+    
+    Maps toolset names to their constructors and builds instances.
+    Unknown names are silently skipped (may want to warn/error in future).
+    
+    Args:
+        toolset_names: List of toolset identifiers (e.g., ["mcp_filesystem"])
+    
+    Returns:
+        List of constructed toolset instances ready for Agent consumption.
+    """
+    # TODO: Make URLs configurable via env or config
+    # TODO: Consider module-level instances for connection reuse
+    toolsets = []
+    for name in toolset_names:
+        if name == "mcp_filesystem":
+            toolsets.append(MCPToolset("http://host.docker.internal:8080/mcp"))
+        # Future toolsets can be added here with elif branches
+    return toolsets
 
 
 def get_model(model_name: str) -> AnthropicModel:

@@ -16,12 +16,13 @@ are not ideal
 """
 import asyncio
 import time
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 import pytest_asyncio
 from pytest_mock import MockerFixture
 from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models.anthropic import AnthropicModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -462,3 +463,81 @@ async def test_build_agent_and_deps_agent_has_correct_tools(
             mock_get_tools.assert_called_once_with(agent_record.agent_config.tool_names)
             actual_tool_names = set(agent._function_toolset.tools.keys())
             assert actual_tool_names == expected_tool_names
+
+
+# --- Toolset Conditional Attachment Tests ---
+
+class TestToolsetConditionalAttachment:
+    """Tests for conditional MCP toolset attachment based on AgentConfig.toolset_names.
+    
+    MCPToolset should only be instantiated when its name appears in toolset_names.
+    This prevents connection attempts when MCP server isn't running.
+    """
+    
+    @pytest.fixture(autouse=True)
+    def patch_factory_deps(self):
+        """Patch get_tools_for_agent and MCPToolset for all tests in this class."""
+        with (
+            patch("agent.factory.get_tools_for_agent", return_value=[]),
+            patch("agent.factory.MCPToolset") as mock_mcp,
+        ):
+            # Configure mock to return something that passes pydantic-ai's toolset validation
+            mock_mcp.return_value = MagicMock(spec=MCPToolset)
+            self.mock_mcp = mock_mcp
+            yield
+    
+    @pytest_asyncio.fixture
+    async def agent_record_no_toolsets(self, session: AsyncSession) -> AgentRecord:
+        """Agent record with empty toolset_names (default behavior)."""
+        config = SAMPLE_AGENT_CONFIG.model_copy(update={"toolset_names": []})
+        record = AgentRecord(
+            name="no-toolsets-agent",
+            agent_config=config,
+            system_instructions="Test agent with no toolsets",
+        )
+        session.add(record)
+        await session.flush()
+        return record
+    
+    @pytest_asyncio.fixture
+    async def agent_record_with_mcp(self, session: AsyncSession) -> AgentRecord:
+        """Agent record with MCP filesystem toolset enabled."""
+        config = SAMPLE_AGENT_CONFIG.model_copy(update={"toolset_names": ["mcp_filesystem"]})
+        record = AgentRecord(
+            name="mcp-enabled-agent",
+            agent_config=config,
+            system_instructions="Test agent with MCP toolset",
+        )
+        session.add(record)
+        await session.flush()
+        return record
+    
+    @pytest.mark.asyncio
+    async def test_empty_toolset_names_no_mcp_instantiation(
+        self,
+        session: AsyncSession,
+        agent_record_no_toolsets: AgentRecord,
+        agent_app_state_reg: dict,
+    ):
+        """When toolset_names is empty, MCPToolset should not be instantiated."""
+        factory = AgentFactory(agent_record_no_toolsets.id, agent_app_state_reg, session)
+        
+        async with factory.build_agent_and_deps() as (agent, deps):
+            self.mock_mcp.assert_not_called()
+            assert agent._user_toolsets == [], "No toolsets should be attached"
+    
+    @pytest.mark.asyncio
+    async def test_mcp_in_toolset_names_triggers_instantiation(
+        self,
+        session: AsyncSession,
+        agent_record_with_mcp: AgentRecord,
+        agent_app_state_reg: dict,
+    ):
+        """When toolset_names includes 'mcp_filesystem', MCPToolset should be instantiated."""
+        factory = AgentFactory(agent_record_with_mcp.id, agent_app_state_reg, session)
+        
+        async with factory.build_agent_and_deps() as (agent, deps):
+            self.mock_mcp.assert_called_once_with("http://localhost:8080/mcp")
+            assert len(agent._user_toolsets) == 1, "One toolset should be attached"
+            # The toolset is the return value of our mocked MCPToolset constructor
+            assert agent._user_toolsets[0] is self.mock_mcp.return_value
