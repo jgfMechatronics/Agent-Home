@@ -40,7 +40,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThink
 
 # Local
 from messages.messages import format_system_alert
-from agent.runner import run_stateful_agent
+from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
 from agent.types import AgentAppState
 from api.fastapi_deps import get_agent_and_deps
 from conftest import make_deps, make_mock_agent, _make_mock_session
@@ -1152,6 +1152,67 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         assert self.mock_compact.call_count == 2
         assert len(self.test_agent.calls) == 3, "agent should run three times: original + two resumes"
         assert isinstance(events[-1], AgentRunResultEvent)
+
+    async def test_resumed_run_persists_new_messages_not_stale(self):
+        """After compaction+resume, only new messages are persisted — not history, not stale content.
+
+        Simulates the compaction dynamic: iteration 1 has prior history, compaction fires
+        after a tool call, then iteration 2 loads post-compaction history. Asserts the exact
+        set of persisted messages: all newly generated content from both iterations, none of
+        the history items.
+
+        Origin: This test was initially written while investigating a send_message history
+        corruption bug related to state bleed caused by send_message impl. The bug-specific parts were later extracted
+        to a dedicated send_message test; this version covers general compaction+resume
+        persistence behavior.
+        """
+        F = FunctionModelTestAgent
+        # Use THREE_TOOL_CALL_STEPS: multiple tool calls across both iterations exercises
+        # the full persistence flow (PartStartEvent, ToolResultEvent, AgentRunResultEvent paths).
+        self.test_agent.set_steps(F.THREE_TOOL_CALL_STEPS)
+        
+        history_iter1 = [
+            ModelRequest(parts=[UserPromptPart(content="old question 1")]),
+            ModelResponse(parts=[TextPart(content="old response 1")]),
+            ModelRequest(parts=[UserPromptPart(content="old question 2")]),
+            ModelResponse(parts=[TextPart(content="old response 2")]),
+        ]
+        history_iter2 = [
+            ModelRequest(parts=[UserPromptPart(content="second iter question")]),
+            ModelResponse(parts=[TextPart(content="second iter resp")]),
+        ]
+        self.mock_deserialize_msgs.side_effect = [history_iter1, history_iter2]
+
+        # Compact fires after the first tool return, then stops
+        self.mock_needs_compact.side_effect = lambda *_: not self.mock_compact.called
+
+        events = await self._run_agent_to_completion()
+
+        # Basic flow assertions
+        self.mock_compact.assert_called_once()
+        # 4 steps total: iter1 does step 1, iter2 does steps 2-4
+        assert len(self.test_agent.calls) == 4, "agent should be called 4 times across both iterations"
+        assert isinstance(events[-1], AgentRunResultEvent)
+
+        # Expected: only newly generated messages, not loaded history
+        # Iter 1: user prompt + tool call + tool return (persisted before compaction)
+        # Iter 2: resume notice + remaining tool pairs + completion
+        expected = [
+            # Iter 1 content
+            ModelRequest(parts=[UserPromptPart(content="test")]),
+            ModelResponse(parts=[F.DUMMY_TOOL_CALL_PART]),
+            ModelRequest(parts=[F.DUMMY_TOOL_RETURN_PART]),
+            # Iter 2 content
+            ModelRequest(parts=[UserPromptPart(content=COMPACTION_RESUME_NOTICE)]),
+            ModelResponse(parts=[F.DUMMY_TOOL_CALL_PART]),
+            ModelRequest(parts=[F.DUMMY_TOOL_RETURN_PART]),
+            ModelResponse(parts=[F.DUMMY_TOOL_CALL_PART]),
+            ModelRequest(parts=[F.DUMMY_TOOL_RETURN_PART]),
+            ModelResponse(parts=[TextPart(content=F.COMPLETION_TEXT)]),
+        ]
+        B = _PersistenceAndCancellationTestBase
+        actual = B._list_persisted_messages(self.mock_persist_messages)
+        B._assert_ModelMessage_list_eq(actual, expected)
 
 
 @pytest.mark.xfail(
