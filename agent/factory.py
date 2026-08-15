@@ -44,12 +44,17 @@ class AgentFactory:
     Read-only operations can use session directly without factory.
     Write operations require build_deps() or build_agent_and_deps(),
     which proves the caller holds the lock.
+    NOTE: The changes to AgentFactory and AgentDeps on this branch (Prototype/InterAgentComms)
+    are likely temporary and will not be integrated to main in favor of a queue based design with a server idle task for 
+    running agents in background 
     """
 
-    def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState], session: AsyncSession):
-        """Resolve (or create) the agent slot from the registry, then discard the registry ref."""
+    def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState],
+                 session: AsyncSession):
+        """Resolve (or create) the agent slot from the registry, then store refs needed for deps."""
         self._agent_id = agent_id
         self._agent_app_state = self._get_or_create_agent_app_state(agent_app_state_reg, agent_id)
+        self._agent_app_state_reg = agent_app_state_reg  # kept for passing to deps (send_message tool)
         self._session = session  # TODO: session also lives and is passed around in deps. ref spaghetti?
 
     @staticmethod
@@ -77,7 +82,8 @@ class AgentFactory:
             if agent_record is None:
                 raise AgentNotFoundError(f"Agent {self._agent_id!r} not found")
 
-            deps = AgentDeps(self._session, agent_record)
+            deps = AgentDeps(self._session, agent_record,
+                             agent_app_state_reg=self._agent_app_state_reg)
             yield deps
         finally:
             # Clear cancel_requested on exit to prevent a stale signal (e.g. a cancel that arrived
@@ -91,7 +97,7 @@ class AgentFactory:
 
 
     @asynccontextmanager
-    async def build_agent_and_deps(self) -> AsyncIterator[tuple[Agent[AgentDeps, DeferredToolRequests | str], AgentDeps]]:
+    async def build_agent_and_deps(self, timeout: float = LOCK_TIMEOUT_SECONDS) -> AsyncIterator[tuple[Agent[AgentDeps, DeferredToolRequests | str], AgentDeps]]:
         """Async context manager that yields a configured (Agent, AgentDeps) tuple.
         
         Wraps build_deps and constructs the Pydantic AI Agent with correct model and tools.
@@ -100,7 +106,7 @@ class AgentFactory:
         TODO: This doesn't actually manage context properly. It might release the lock but that seems to be pretty much ALL
         it does, it doesn't null out the resources actually associated with the lock!!!! Oops.
         """
-        async with self.build_deps() as deps:
+        async with self.build_deps(timeout=timeout) as deps:
             model = get_model(deps.config.model_name)
             
             model_settings = AnthropicModelSettings(
