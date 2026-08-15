@@ -2,11 +2,18 @@
 
 Tests the tool registry, lookup, and memory editing tools (memory_replace, memory_insert).
 """
+import asyncio
+import json
+
 import pytest
 import pytest_asyncio
+from pydantic_ai import Agent, AgentRunResultEvent
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.function import DeltaToolCall, DeltaToolCalls, FunctionModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.runner import COMPACTION_RESUME_NOTICE, run_stateful_agent, is_compaction_needed as _real_is_compaction_needed
 from agent.tools import (
     TOOL_REGISTRY,
     _compute_snippet,
@@ -16,9 +23,12 @@ from agent.tools import (
     memory_replace,
     send_message,
 )
-from agent.types import AgentDeps
-from conftest import SAMPLE_AGENT_CONFIG, make_deps, mock_run_context
+from agent.types import AgentAppState, AgentDeps
+from conftest import SAMPLE_AGENT_CONFIG, _make_mock_session, make_deps, mock_run_context
 from db.models import AgentRecord, MemoryBlockRecord
+
+# TODO: move to conftest once on a proper PR branch
+from tests.agent.test_runner import FunctionModelTestAgent, _BaseRouteTest, _PersistenceAndCancellationTestBase
 
 
 # --- Fixtures ---
@@ -714,6 +724,214 @@ class TestDeliverMessage:
         - No cross-contamination from contextvars or other shared state
         """
         pytest.fail("Not implemented — waiting for stable architecture")
+
+
+class _SenderTestAgent(FunctionModelTestAgent):
+    """FunctionModelTestAgent subclass: emits a send_message tool call, then completes."""
+
+    RECIPIENT_NAME = "recipient-agent"
+    SEND_MSG_ARGS = json.dumps({"target_name": RECIPIENT_NAME, "content": "hello from sender"})
+    SEND_MSG_CALL = DeltaToolCalls({
+        0: DeltaToolCall(name="send_message", json_args=SEND_MSG_ARGS, tool_call_id="sm-tc-1")
+    })
+
+    def __init__(self):
+        super().__init__()
+        self.set_steps([[self.SEND_MSG_CALL], self.COMPLETION_TEXT])
+
+    def _build(self) -> Agent:
+        """Agent with send_message as its only tool."""
+        agent = Agent(FunctionModel(stream_function=self._stream), deps_type=AgentDeps)
+        agent.tool(send_message)
+        return agent
+
+
+class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
+    """
+    Integration: send_message spawns a background agent (B) that runs through
+    compaction+resume (2 iterations). Verifies B's messages from both iterations
+    are correctly persisted.
+
+    Fails without the asyncio.create_task contextvar isolation fix: B's iter2
+    messages are invisible to the runner (it watches the stale iter1 _RunMessages
+    list while pydantic-ai writes to a fresh one).
+
+    TODO: Move fixture dependencies to conftest once on a proper PR branch
+    TODO: This test got very painful. Will need to rework once we are targeting the proper send messages impl,
+    and really we probably want better integration test infrastructure in general.
+    """
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, session: AsyncSession, mocker):
+        # Real DB records — only needed for flush (gives us real UUIDs) and
+        # as registry keys. NOT used inside the agent-run path to avoid
+        # ORM attribute access inside pydantic-ai's async context (which
+        # uses anyio greenlets that are not SQLAlchemy greenlets, causing
+        # MissingGreenlet on lazy-load of expired ORM objects).
+        sender_record = AgentRecord(
+            name="sender-agent",
+            agent_config=SAMPLE_AGENT_CONFIG,
+            system_instructions="You are the sender.",
+        )
+        recipient_record = AgentRecord(
+            name=_SenderTestAgent.RECIPIENT_NAME,
+            agent_config=SAMPLE_AGENT_CONFIG,
+            system_instructions="You are the recipient.",
+        )
+        session.add_all([sender_record, recipient_record])
+        await session.flush()
+
+        # Cache primitive IDs now while session is live (before any potential expiry)
+        sender_id = sender_record.id
+        recipient_id = recipient_record.id
+
+        # -----------------------------------------------------------------
+        # Mock records for deps — plain MagicMocks with pre-baked values.
+        # deps properties (agent_id, name, config …) read through _agent_record,
+        # so we replace it with a mock that never touches the ORM layer.
+        # -----------------------------------------------------------------
+        def _mock_record(rec_id, name, instructions):
+            r = mocker.MagicMock(spec=AgentRecord)
+            r.id = rec_id
+            r.name = name
+            r.agent_config = SAMPLE_AGENT_CONFIG
+            r.system_instructions = instructions
+            r.compiled_system_prompt = None
+            r.sys_prompt_compiled_at = None
+            r.context_window_start = None
+            r.compaction_warning_fired = False
+            return r
+
+        mock_sender_record = _mock_record(sender_id, "sender-agent", "You are the sender.")
+        self.mock_recipient_record = _mock_record(
+            recipient_id, _SenderTestAgent.RECIPIENT_NAME, "You are the recipient."
+        )
+
+        # Shared registry — keyed by real recipient UUID
+        self.app_state_reg = {recipient_id: AgentAppState()}
+
+        # Sender deps: mock session (DB access in send_message is bypassed via
+        # mocked get_all_agents; session.bind still needed for engine extraction)
+        self.sender_deps = AgentDeps(
+            session=_make_mock_session(),
+            agent_record=mock_sender_record,
+            agent_app_state_reg=self.app_state_reg,
+        )
+        self.sender_app_state = AgentAppState()
+        self.sender_agent = _SenderTestAgent()
+
+        # Recipient deps: mock session + mock record (no ORM access needed during B's run)
+        self.recipient_deps = AgentDeps(
+            session=_make_mock_session(),
+            agent_record=self.mock_recipient_record,
+        )
+        # B runs two loop iterations: iter1 ends at ToolResultEvent (compaction fires),
+        # iter2 produces only the completion text.  With the fix, all 5 expected messages
+        # (UserPrompt, ToolCall+Return, ResumeNotice, Completion) are persisted correctly.
+        # Without the fix, iter2's stale _RunMessages list ends in ToolCallPart which gates
+        # out the AgentRunResultEvent elif branch — items 4+5 are never persisted.
+        recipient_test_agent = FunctionModelTestAgent()
+        recipient_test_agent.set_steps([
+            [FunctionModelTestAgent.TOOL_CALL],       # iter1: tool → ToolResultEvent → compact
+            FunctionModelTestAgent.COMPLETION_TEXT,   # iter2: completion → AgentRunResultEvent
+        ])
+
+        # Mock get_all_agents: return plain-mock records so send_message's name
+        # lookup (a.name == target_name) never hits the ORM layer.
+        lookup_sender = mocker.MagicMock(spec=AgentRecord)
+        lookup_sender.id = sender_id
+        lookup_sender.name = "sender-agent"
+        lookup_recipient = mocker.MagicMock(spec=AgentRecord)
+        lookup_recipient.id = recipient_id
+        lookup_recipient.name = _SenderTestAgent.RECIPIENT_NAME
+        mocker.patch(
+            "agent.tools.get_all_agents",
+            new_callable=mocker.AsyncMock,
+            return_value=[lookup_sender, lookup_recipient],
+        )
+
+        # Mock AgentFactory → yields (recipient's agent, recipient's deps)
+        mock_cm = mocker.AsyncMock()
+        mock_cm.__aenter__.return_value = (recipient_test_agent.agent, self.recipient_deps)
+        mock_cm.__aexit__.return_value = None
+        mock_factory = mocker.MagicMock()
+        mock_factory.build_agent_and_deps.return_value = mock_cm
+        mocker.patch("agent.factory.AgentFactory", return_value=mock_factory)
+
+        # Mock get_session in _deliver_message (engine from session.bind isn't real in tests)
+        mock_sess_cm = mocker.AsyncMock()
+        mock_sess_cm.__aenter__.return_value = mocker.MagicMock()
+        mock_sess_cm.__aexit__.return_value = None
+        mocker.patch("db.connection.get_session", return_value=mock_sess_cm)
+
+        # Use real is_compaction_needed so token values drive compaction, not call ordering.
+        # _real_is_compaction_needed is captured at module import time, before _BaseRouteTest
+        # patches agent.runner.is_compaction_needed, so it still points to the real function.
+        self.mock_needs_compact.side_effect = _real_is_compaction_needed
+
+        # Return a large token count only for B's first persist call; that value propagates
+        # to last_total_tokens_value → real is_compaction_needed returns True → compaction fires.
+        # All other calls (A's persists and B's iter2 persists) return None → no compaction.
+        b_first_persist_done = [False]
+
+        async def _persist_side_effect(deps, messages, tool_schemas):
+            if deps._agent_record is self.mock_recipient_record and not b_first_persist_done[0]:
+                b_first_persist_done[0] = True
+                return 999_999  # > soft_compaction_limit (10 000) → compaction fires
+            return None
+
+        self.mock_persist_messages.side_effect = _persist_side_effect
+
+    async def test_recipient_messages_persisted_after_compaction(self):
+        """
+        A calls send_message → B spawned in background task.
+        B runs 2 loop iterations: compaction fires after iter1's ToolResultEvent,
+        then iter2 resumes and produces only a completion text response.
+
+        With the contextvar fix (context=contextvars.Context()):
+          B's captures list is isolated per-iteration → all 5 messages persisted.
+        Without the fix (surgical _RunMessages only):
+          iter2 reuses the stale iter1 captures list which still ends in ToolCallPart;
+          the AgentRunResultEvent elif guard is blocked → items 4–5 never persisted.
+
+        Expected persisted messages for B:
+          iter1  ① ModelRequest  [UserPromptPart(inter-agent msg)]   ← PartStartEvent elif
+          iter1  ② ModelResponse [DUMMY_TOOL_CALL_PART]              ┐ ToolResultEvent
+          iter1  ③ ModelRequest  [DUMMY_TOOL_RETURN_PART]            ┘  atomic persist
+          iter2  ④ ModelRequest  [UserPromptPart(COMPACTION_RESUME_NOTICE)] ← PartStartEvent elif
+          iter2  ⑤ ModelResponse [TextPart(COMPLETION_TEXT)]         ← AgentRunResultEvent elif
+        """
+        a_events = [event async for event in run_stateful_agent(
+            self.sender_agent.agent,
+            self.sender_deps,
+            self.sender_app_state,
+            "send a message",
+        )]
+        assert isinstance(a_events[-1], AgentRunResultEvent), "Sender should complete normally"
+
+        # Await B's background task
+        from agent.tools import background_tasks
+        await asyncio.gather(*list(background_tasks))
+
+        # Flatten all messages persisted by B across all persist_messages calls.
+        # Use _agent_record identity (not .id) to avoid ORM lazy-load outside async context.
+        b_persisted = [
+            msg
+            for call in self.mock_persist_messages.call_args_list
+            if call.kwargs["deps"]._agent_record is self.mock_recipient_record
+            for msg in call.kwargs["messages"]
+        ]
+
+        expected = [
+            ModelRequest(parts=[UserPromptPart(content=_format_inter_agent_message(
+                "sender-agent", "hello from sender"
+            ))]),
+            ModelResponse(parts=[FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
+            ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
+            ModelRequest(parts=[UserPromptPart(content=COMPACTION_RESUME_NOTICE)]),
+            ModelResponse(parts=[TextPart(content=FunctionModelTestAgent.COMPLETION_TEXT)]),
+        ]
+        self._assert_ModelMessage_list_eq(b_persisted, expected)
 
 
 class TestFormatInterAgentMessage:
