@@ -32,7 +32,7 @@ _BLOCK = MemoryBlockResponse(label="persona", description="desc", content="conte
     pytest.param(AgentMetadataResponse(id="abc", name="test", model="claude-sonnet-4-20250514", created_at=_NOW, updated_at=_NOW), id="AgentMetadataResponse"),
     pytest.param(_BLOCK, id="MemoryBlockResponse"),
     pytest.param(CoreMemoryResponse(blocks=[_BLOCK]), id="CoreMemoryResponse"),
-    pytest.param(MessageItem(id="abc", type="ModelRequest", content="{}", timestamp=_NOW), id="MessageItem"),
+    pytest.param(MessageItem(id="abc", seq_id=0, type="ModelRequest", content="{}", timestamp=_NOW), id="MessageItem"),
     pytest.param(MessagesResponse(messages=[]), id="MessagesResponse"),
     pytest.param(HealthResponse(status="ok"), id="HealthResponse"),
 ])
