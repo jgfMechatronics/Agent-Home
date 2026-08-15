@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 from pydantic_ai import Agent, AgentRunResultEvent
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import DeltaToolCall, DeltaToolCalls, FunctionModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -789,7 +789,7 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
             r.compaction_warning_fired = False
             return r
 
-        mock_sender_record = _mock_record(sender_id, "sender-agent", "You are the sender.")
+        self.mock_sender_record = _mock_record(sender_id, "sender-agent", "You are the sender.")
         self.mock_recipient_record = _mock_record(
             recipient_id, _SenderTestAgent.RECIPIENT_NAME, "You are the recipient."
         )
@@ -801,7 +801,7 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # mocked get_all_agents; session.bind still needed for engine extraction)
         self.sender_deps = AgentDeps(
             session=_make_mock_session(),
-            agent_record=mock_sender_record,
+            agent_record=self.mock_sender_record,
             agent_app_state_reg=self.app_state_reg,
         )
         self.sender_app_state = AgentAppState()
@@ -965,6 +965,30 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
             ModelResponse(parts=[TextPart(content=FunctionModelTestAgent.COMPLETION_TEXT)]),
         ]
         self._assert_ModelMessage_list_eq(b_persisted, expected)
+
+        # A's history must not contain any of B's messages — bleed-through would
+        # add extra messages and/or corrupt A's expected content.
+        a_persisted = [
+            msg
+            for call in self.mock_persist_messages.call_args_list
+            if call.kwargs["deps"]._agent_record is self.mock_sender_record
+            for msg in call.kwargs["messages"]
+        ]
+        a_expected = [
+            ModelRequest(parts=[UserPromptPart(content="send a message")]),
+            ModelResponse(parts=[ToolCallPart(
+                tool_name="send_message",
+                args=_SenderTestAgent.SEND_MSG_ARGS,
+                tool_call_id="sm-tc-1",
+            )]),
+            ModelRequest(parts=[ToolReturnPart(
+                tool_name="send_message",
+                content="Message delivered to 'recipient-agent'.",
+                tool_call_id="sm-tc-1",
+            )]),
+            ModelResponse(parts=[TextPart(content=FunctionModelTestAgent.COMPLETION_TEXT)]),
+        ]
+        self._assert_ModelMessage_list_eq(a_persisted, a_expected)
 
 
 class TestFormatInterAgentMessage:
