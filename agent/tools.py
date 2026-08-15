@@ -7,6 +7,7 @@ TODO: Add a memory_delete which just wraps memory replace with an empty new cont
 and associated tests
 """
 import asyncio
+import contextvars
 import logging
 from typing import Callable
 
@@ -292,7 +293,8 @@ async def send_message(
             engine=engine,
             agent_app_state_reg=deps.agent_app_state_reg,
             delivery_future=future,
-        )
+        ),
+        context=contextvars.Context(),
     )
     background_tasks.add(task)
     task.add_done_callback(background_tasks.discard)
@@ -322,8 +324,6 @@ async def _deliver_message(
     from agent.factory import AgentFactory, AgentLockedError
     from agent.runner import run_stateful_agent
     from db.connection import get_session
-    from pydantic_ai._agent_graph import _messages_ctx_var, _RunMessages  # type: ignore[import]
-
     try:
         async with get_session(engine) as session:
             factory = AgentFactory(agent_id, agent_app_state_reg, session)
@@ -331,18 +331,8 @@ async def _deliver_message(
                 async with factory.build_agent_and_deps(timeout=timeout) as (agent, deps):
                     # Lock is held — signal delivery confirmation
                     delivery_future.set_result(True)
-                    # Break inherited capture_run_messages context: asyncio.create_task copies the
-                    # parent's contextvars, so the background task inherits A's _messages_ctx_var
-                    # (pointing at A's message list). capture_run_messages() reuses an existing
-                    # ContextVar if found, which would cause B to write into A's list and persist
-                    # A's messages under B's agent_id. Setting a fresh _RunMessages here isolates
-                    # B's run completely. See: pydantic_ai._agent_graph.capture_run_messages.
-                    ctx_token = _messages_ctx_var.set(_RunMessages([]))
-                    try:
-                        async for _ in run_stateful_agent(agent, deps, agent_app_state_reg[agent_id], user_prompt):
-                            pass
-                    finally:
-                        _messages_ctx_var.reset(ctx_token)
+                    async for _ in run_stateful_agent(agent, deps, agent_app_state_reg[agent_id], user_prompt):
+                        pass
             except AgentLockedError:
                 if not delivery_future.done():
                     delivery_future.set_result(False)
