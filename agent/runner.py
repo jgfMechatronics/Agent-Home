@@ -6,6 +6,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     ToolResultEvent,
     ModelRequest,
+    ModelResponse,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -51,24 +52,37 @@ async def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent
     return tool_schemas
 
 
-def _count_adjacent_model_request_merges(messages: list) -> int:
-    """Count adjacent ModelRequest pairs that pydantic-ai will merge.
+def _count_adjacent_message_merges(messages: list) -> int:
+    """Count adjacent message pairs that pydantic-ai will merge into one.
 
-    pydantic-ai merges consecutive ModelRequests in message_history, which affects
-    indexing when tracking new messages to persist. Returns the count of merges
-    (i.e., how many messages will "disappear" due to merging).
+    pydantic-ai merges consecutive same-type messages in message_history, which
+    reduces the effective list length and shifts indices in the captured messages
+    list. Returns the total count of merges (i.e., how many messages will
+    "disappear" due to merging).
 
-    Mirrors pydantic-ai's merge condition: requests are only merged when their
-    instructions are compatible (neither has instructions, or they match). Adjacent
-    requests with differing instructions are left separate and must not be counted.
+    ModelRequest merge condition: instructions are compatible (neither has
+    instructions, or they match). Adjacent requests with differing instructions
+    are left separate.
+
+    ModelResponse merge condition: both messages have no provider metadata
+    (provider_response_id, provider_name, model_name all None). Responses from
+    real API calls carry this metadata and are never merged.
     """
-    def _instructions_compatible(a: ModelRequest, b: ModelRequest) -> bool:
-        return not a.instructions or not b.instructions or a.instructions == b.instructions
+    def _request_will_merge(a: ModelRequest, b: ModelRequest) -> bool:
+        return (not a.instructions or not b.instructions or a.instructions == b.instructions)
 
-    return sum(1 for i in range(len(messages) - 1)
-               if isinstance(messages[i], ModelRequest)
-               and isinstance(messages[i + 1], ModelRequest)
-               and _instructions_compatible(messages[i], messages[i + 1]))
+    def _response_will_merge(a: ModelResponse, b: ModelResponse) -> bool:
+        return (a.provider_response_id is None and a.provider_name is None and a.model_name is None
+                and b.provider_response_id is None and b.provider_name is None and b.model_name is None)
+
+    count = 0
+    for i in range(len(messages) - 1):
+        a, b = messages[i], messages[i + 1]
+        if isinstance(a, ModelRequest) and isinstance(b, ModelRequest) and _request_will_merge(a, b):
+            count += 1
+        elif isinstance(a, ModelResponse) and isinstance(b, ModelResponse) and _response_will_merge(a, b):
+            count += 1
+    return count
 
 
 async def _check_and_handle_cancel(
@@ -115,8 +129,8 @@ async def run_stateful_agent(agent: Agent,
         records = await load_messages(deps.session, deps.agent_id, start_seq_id=deps.context_window_start)
         message_history = deserialize_messages(records)
         
-        # pydantic-ai merges adjacent ModelRequests, which shifts indices in the captured messages list
-        merge_adjustment = _count_adjacent_model_request_merges(message_history)
+        # pydantic-ai merges adjacent same-type messages, which shifts indices in the captured messages list
+        merge_adjustment = _count_adjacent_message_merges(message_history)
         # Track where new messages start for persistence; adjust for merges pydantic-ai will perform
         new_message_idx = len(message_history) - merge_adjustment
 
