@@ -713,19 +713,6 @@ class TestDeliverMessage:
 
         assert future.done() and future.result() is lock_acquired
 
-    @pytest.mark.xfail(reason="TODO: Integration test for final architecture — verify A→B delivery works and histories stay isolated")
-    async def test_cross_agent_delivery_and_history_isolation(self):
-        """Integration test: A sends to B, both histories are correct and isolated.
-        
-        Should verify:
-        - Message actually delivered to B
-        - A's history contains only A's messages
-        - B's history contains only B's messages (+ inter-agent message)
-        - No cross-contamination from contextvars or other shared state
-        """
-        pytest.fail("Not implemented — waiting for stable architecture")
-
-
 class _SenderTestAgent(FunctionModelTestAgent):
     """FunctionModelTestAgent subclass: emits a send_message tool call, then completes."""
 
@@ -826,10 +813,10 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
             agent_record=self.mock_recipient_record,
         )
         # B runs two loop iterations: iter1 ends at ToolResultEvent (compaction fires),
-        # iter2 produces only the completion text.  With the fix, all 5 expected messages
-        # (UserPrompt, ToolCall+Return, ResumeNotice, Completion) are persisted correctly.
-        # Without the fix, iter2's stale _RunMessages list ends in ToolCallPart which gates
-        # out the AgentRunResultEvent elif branch — items 4+5 are never persisted.
+        # iter2 runs steps 2–4 (two more tool calls + completion).  With the fix, all 9
+        # expected messages are persisted correctly.  Without the fix, iter2's stale
+        # _RunMessages list triggers re-persist of A's history via the ToolResultEvent
+        # if-branch, producing 15 messages instead of 9.
         recipient_test_agent = FunctionModelTestAgent()
         # THREE_TOOL_CALL_STEPS: compaction fires after step 1 (iter1), then iter2 also has
         # tool calls. Critical: without the fix, iter2's ToolResultEvent fires with stale
@@ -886,20 +873,27 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # then 1 pair on iter2 (post-compaction trim). Without the fix, the stale
         # capture list still reflects the longer iter1 history, so the lower
         # new_message_idx from the short iter2 history causes old messages to be
-        # re-persisted. Agent A gets empty history (only B's history matters here).
+        # re-persisted. Agent A gets its own distinct history — if the contextvar
+        # bug causes A's messages to bleed into B's persist calls, the assertion fails.
+        _A_HISTORY = "__a_history__"
         _B_ITER1 = "__b_iter1__"
         _B_ITER2 = "__b_iter2__"
-        b_history_long = make_alternating_messages(10, "history should not be persist")
-        b_history_short = make_alternating_messages(2, "history should not be persist")
+        a_history = make_alternating_messages(4, "a's history should not bleed into b")
+        b_history_long = make_alternating_messages(10, "b's history should not be persist")
+        b_history_short = make_alternating_messages(2, "b's history should not be persist")
         b_load_call = [0]
 
         async def _load_side_effect(session, agent_id, start_seq_id=0, end_seq_id=None):
+            if agent_id == sender_id:
+                return _A_HISTORY
             if agent_id == recipient_id:
                 b_load_call[0] += 1
                 return _B_ITER1 if b_load_call[0] == 1 else _B_ITER2
             return []
 
         def _deserialize_side_effect(raw):
+            if raw == _A_HISTORY:
+                return a_history
             if raw == _B_ITER1:
                 return b_history_long
             if raw == _B_ITER2:
