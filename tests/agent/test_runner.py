@@ -1161,20 +1161,14 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         set of persisted messages: all newly generated content from both iterations, none of
         the history items.
 
-        NOTE: The contextvar pre-set simulates _deliver_message's setup for send_message.
-        This triggers a known bug (L0/L2 list decoupling) where iteration 2 sees stale
-        iteration 1 content. Remove the contextvar block to test normal compaction behavior.
-        
-        KEY INSIGHT: The bug only manifests when iteration 2 ALSO has a tool call. The
-        ToolResultEvent persist path (Condition 1) REQUIRES last_part to be ToolCallPart,
-        which the stale L0 list provides. Without a tool call in iter2, the general persist
-        path (Condition 2) blocks because it checks `not isinstance(..., ToolCallPart)`.
+        Origin: This test was initially written while investigating a send_message history
+        corruption bug related to state bleed caused by send_message impl. The bug-specific parts were later extracted
+        to a dedicated send_message test; this version covers general compaction+resume
+        persistence behavior.
         """
-        from pydantic_ai._agent_graph import _messages_ctx_var, _RunMessages
-        
         F = FunctionModelTestAgent
-        # Use THREE_TOOL_CALL_STEPS so iteration 2 also has tool calls.
-        # This is critical — the bug only triggers via the ToolResultEvent persist path.
+        # Use THREE_TOOL_CALL_STEPS: multiple tool calls across both iterations exercises
+        # the full persistence flow (PartStartEvent, ToolResultEvent, AgentRunResultEvent paths).
         self.test_agent.set_steps(F.THREE_TOOL_CALL_STEPS)
         
         history_iter1 = [
@@ -1192,15 +1186,7 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         # Compact fires after the first tool return, then stops
         self.mock_needs_compact.side_effect = lambda *_: not self.mock_compact.called
 
-        # Simulate _deliver_message's contextvar setup (send_message path).
-        # This triggers a known bug (L0/L2 list decoupling) - remove this block once
-        # we have a dedicated send_message test that covers this scenario.
-        run_messages_obj = _RunMessages([])
-        ctx_token = _messages_ctx_var.set(run_messages_obj)
-        try:
-            events = await self._run_agent_to_completion()
-        finally:
-            _messages_ctx_var.reset(ctx_token)
+        events = await self._run_agent_to_completion()
 
         # Basic flow assertions
         self.mock_compact.assert_called_once()
@@ -1208,9 +1194,9 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         assert len(self.test_agent.calls) == 4, "agent should be called 4 times across both iterations"
         assert isinstance(events[-1], AgentRunResultEvent)
 
-        # Expected messages without the bug:
+        # Expected: only newly generated messages, not loaded history
         # Iter 1: user prompt + tool call + tool return (persisted before compaction)
-        # Iter 2: resume notice + 2 more tool pairs + completion
+        # Iter 2: resume notice + remaining tool pairs + completion
         expected = [
             # Iter 1 content
             ModelRequest(parts=[UserPromptPart(content="test")]),
