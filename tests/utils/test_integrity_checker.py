@@ -12,11 +12,11 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
    - Out-of-order seq_ids (e.g., 0, 2, 1) indicate corruption
    - Severity: ERROR
 
-2. TIMESTAMPS STRICTLY INCREASING
+2. TIMESTAMPS STRICTLY INCREASING ✓
    - Each MessageRecord timestamp must be > previous (by seq_id order)
    - Duplicate timestamps: likely re-persistence or clock issues
    - Out-of-order timestamps: definitely corruption
-   - Severity: ERROR (major inversion), INFO (< 1s inversion, could be clock jitter)
+   - Severity: ERROR
 
 3. PROVIDER TIMESTAMPS (in serialized ModelMessage content)
    - Same rules as MessageRecord timestamps
@@ -87,6 +87,7 @@ Test loads messages into DB via raw insert, calls top-level function, asserts ex
 from typing import Callable
 
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime
@@ -117,6 +118,17 @@ def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRe
 
 # Type alias for the callable that builds records given an agent_id
 RecordBuilder = Callable[[str], list[MessageRecord]]
+
+
+def make_message_sequence(agent_id: str, overrides_list: list[dict]) -> list[MessageRecord]:
+    """Create messages with auto-assigned consecutive seq_ids (0, 1, 2...).
+    
+    Use for tests where seq_ids should be valid — only specify what you're testing.
+    """
+    return [
+        make_message_record(agent_id, seq_id=i, **overrides)
+        for i, overrides in enumerate(overrides_list)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +219,51 @@ SEQ_ID_TEST_CASES = [
 
 
 # ---------------------------------------------------------------------------
+# Check 2: Timestamp Test Cases
+# ---------------------------------------------------------------------------
+
+TIMESTAMP_TEST_CASES = [
+    pytest.param(
+        lambda aid: make_message_sequence(aid, [
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 0)},
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 1)},
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 2)},
+        ]),
+        [],
+        id="clean_increasing",
+    ),
+    pytest.param(
+        lambda aid: make_message_sequence(aid, [
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 0)},
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 0)},  # duplicate timestamp
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 1)},
+        ]),
+        [IntegrityIssue(
+            check_type="timestamp_duplicate",
+            severity=Severity.ERROR,
+            seq_ids=[0, 1],
+            details="Duplicate timestamp at seq_ids 0 and 1",
+        )],
+        id="duplicate_timestamp",
+    ),
+    pytest.param(
+        lambda aid: make_message_sequence(aid, [
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 0)},
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 2)},
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 1)},  # goes backward
+        ]),
+        [IntegrityIssue(
+            check_type="timestamp_out_of_order",
+            severity=Severity.ERROR,
+            seq_ids=[1, 2],
+            details="Timestamp out of order: seq_id 2 has earlier timestamp than seq_id 1",
+        )],
+        id="timestamp_inversion",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
 # TestCheckAgentIntegrity
 # ---------------------------------------------------------------------------
 
@@ -215,18 +272,24 @@ SEQ_ID_TEST_CASES = [
 class TestCheckAgentIntegrity:
     """Top-down tests for check_agent_integrity(session, agent_id)."""
 
-    @pytest.mark.parametrize("build_records,expected_issues", SEQ_ID_TEST_CASES)
-    async def test_check_agent_integrity(
-        self,
-        session: AsyncSession,
-        agent_record: AgentRecord,
-        build_records: RecordBuilder,
-        expected_issues: list[IntegrityIssue],
-    ):
-        """Parametrized test for check_agent_integrity."""
-        records = build_records(agent_record.id)
-        session.add_all(records)
-        await session.flush()
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
+        self.session = session
+        self.agent = agent_record
 
-        issues = await check_agent_integrity(session, agent_record.id)
+    async def _run_check(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        """Common test body for all check categories."""
+        records = build_records(self.agent.id)
+        self.session.add_all(records)
+        await self.session.commit()
+        issues = await check_agent_integrity(self.session, self.agent.id)
         assert issues == expected_issues
+
+    # The below structure gives us a nice heirerchy in test explorer and isolates failures to particular param lists better
+    @pytest.mark.parametrize("build_records,expected_issues", SEQ_ID_TEST_CASES)
+    async def test_seq_id(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        await self._run_check(build_records, expected_issues)
+
+    @pytest.mark.parametrize("build_records,expected_issues", TIMESTAMP_TEST_CASES)
+    async def test_timestamp(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        await self._run_check(build_records, expected_issues)
