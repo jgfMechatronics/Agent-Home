@@ -83,78 +83,15 @@ Parametrized tests: each case is (poisoned_messages, expected_issues).
 Test loads messages into DB via raw insert, calls top-level function, asserts exact equality.
 """
 
-from datetime import datetime
 from typing import Callable
 
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from conftest import make_request, make_response
-
-from db.models import (
-    AgentRecord,
-    MessageRecord,
-    SystemPromptSnapshot,
-    ToolDefinitionSnapshot,
-    AgentConfigSnapshot,
-)
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from conftest import make_message_record
+from db.models import AgentRecord, MessageRecord
 from utils.integrity_checker import IntegrityIssue, Severity, check_agent_integrity
-
-
-# ---------------------------------------------------------------------------
-# Stub Snapshots (satisfy FK constraints for raw MessageRecord inserts)
-# ---------------------------------------------------------------------------
-
-_STUB_SYS_HASH = "stub-system-prompt-hash"
-_STUB_TOOL_HASH = "stub-tool-definition-hash"
-_STUB_CONFIG_HASH = "stub-agent-config-hash"
-_STUB_CONTEXT_START = "stub-context-start-id"
-
-
-@pytest_asyncio.fixture
-async def stub_snapshots(session: AsyncSession) -> None:
-    """Insert minimal snapshot rows to satisfy MessageRecord FK constraints."""
-    session.add(SystemPromptSnapshot(id=_STUB_SYS_HASH, content=""))
-    session.add(ToolDefinitionSnapshot(id=_STUB_TOOL_HASH, content="[]"))
-    session.add(AgentConfigSnapshot(id=_STUB_CONFIG_HASH, content="{}"))
-    await session.flush()
-
-
-# ---------------------------------------------------------------------------
-# Message Record Factory
-# ---------------------------------------------------------------------------
-
-def make_message_record(
-    agent_id: str,
-    seq_id: int,
-    *,
-    msg_type: str = "ModelRequest",
-    content: str | None = None,
-    timestamp: datetime | None = None,
-) -> MessageRecord:
-    """Construct a MessageRecord with realistic defaults, controllable seq_id.
-    
-    Requires stub_snapshots fixture to be active (for FK satisfaction).
-    content defaults to a serialized make_request() if not provided.
-    """
-    if content is None:
-        msg = make_request(f"msg {seq_id}") if msg_type == "ModelRequest" else make_response(f"msg {seq_id}")
-        content = ModelMessagesTypeAdapter.dump_json([msg]).decode()[1:-1]
-    
-    return MessageRecord(
-        agent_id=agent_id,
-        seq_id=seq_id,
-        type=msg_type,
-        content=content,
-        total_tokens=None,
-        timestamp=timestamp or datetime(2026, 1, 1, 12, 0, seq_id),
-        system_prompt_hash=_STUB_SYS_HASH,
-        tool_definition_hash=_STUB_TOOL_HASH,
-        agent_config_hash=_STUB_CONFIG_HASH,
-        context_window_start_msg_id=_STUB_CONTEXT_START,
-    )
 
 
 # Type alias for the callable that builds records given an agent_id
@@ -225,7 +162,7 @@ SEQ_ID_TEST_CASES = [
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("stub_snapshots")
+@pytest.mark.usefixtures("seed_stub_snapshots")
 class TestCheckAgentIntegrity:
     """Top-down tests for check_agent_integrity(session, agent_id)."""
 
@@ -235,12 +172,12 @@ class TestCheckAgentIntegrity:
         self.agent = agent_record
 
     @pytest.mark.parametrize("build_records,expected_issues", SEQ_ID_TEST_CASES)
-    async def test_seq_id_checks(
+    async def test_check_agent_integrity(
         self,
         build_records: RecordBuilder,
         expected_issues: list[IntegrityIssue],
     ):
-        """Parametrized test for seq_id consecutive checking."""
+        """Parametrized test for check_agent_integrity"""
         records = build_records(self.agent.id)
         self.session.add_all(records)
         await self.session.flush()

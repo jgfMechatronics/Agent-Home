@@ -1,3 +1,4 @@
+import hashlib
 import os
 
 # Must be set before any import of api.app (which reads it at module level).
@@ -22,7 +23,16 @@ from sqlalchemy.pool import StaticPool
 from agent.types import AgentConfig, AgentDeps
 from pydantic import ConfigDict
 from api.fastapi_deps import get_session_dep
-from db.models import AgentRecord, Base, MemoryBlockRecord
+from db.models import (
+    AgentConfigSnapshot,
+    AgentRecord,
+    Base,
+    MemoryBlockRecord,
+    MessageRecord,
+    SystemPromptSnapshot,
+    ToolDefinitionSnapshot,
+    utcnow,
+)
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     ModelMessage,
@@ -70,6 +80,70 @@ class _FrozenAgentConfig(AgentConfig):
 
 
 SAMPLE_AGENT_CONFIG = _FrozenAgentConfig(**SAMPLE_AGENT_CONFIG_DATA)
+
+
+# ---------------------------------------------------------------------------
+# Stub snapshot constants — satisfy MessageRecord FK constraints in tests
+# ---------------------------------------------------------------------------
+
+def _sha256(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+STUB_SYS_PROMPT = ""
+STUB_SYS_HASH = _sha256(STUB_SYS_PROMPT)
+STUB_TOOL_JSON = "[]"
+STUB_TOOL_HASH = _sha256(STUB_TOOL_JSON)
+STUB_CONFIG_JSON = SAMPLE_AGENT_CONFIG.model_dump_json()
+STUB_CONFIG_HASH = _sha256(STUB_CONFIG_JSON)
+STUB_CTX_MSG_ID = "00000000-0000-0000-0000-000000000001"
+
+PARTIAL_MEMORY_BLOCK_FIELDS = {
+    "description": "",
+    "char_limit": 2000,
+    "position": 0,
+}
+
+PARTIAL_MESSAGE_FIELDS = {
+    "type": "ModelRequest",
+    "content": "{}",
+    "total_tokens": None,
+    "system_prompt_hash": STUB_SYS_HASH,
+    "tool_definition_hash": STUB_TOOL_HASH,
+    "agent_config_hash": STUB_CONFIG_HASH,
+    "context_window_start_msg_id": STUB_CTX_MSG_ID,
+}
+
+
+def make_message_record(agent_id: str, seq_id: int, **overrides) -> MessageRecord:
+    """Construct a MessageRecord with realistic defaults, controllable seq_id.
+    
+    Requires seed_stub_snapshots fixture to be active (for FK satisfaction).
+    Use **overrides to set type, content, timestamp, or hash fields.
+    """
+    defaults = {
+        "agent_id": agent_id,
+        "seq_id": seq_id,
+        "timestamp": datetime(2026, 1, 1, 12, 0, seq_id),
+        **PARTIAL_MESSAGE_FIELDS,
+    }
+    return MessageRecord(**{**defaults, **overrides})
+
+
+@pytest_asyncio.fixture
+async def seed_stub_snapshots(session: AsyncSession):
+    """Pre-seed stub snapshot rows so MessageRecord FK constraints are satisfied.
+    
+    Use @pytest.mark.usefixtures("seed_stub_snapshots") on test classes that
+    insert raw MessageRecords, or request it directly in test functions.
+    """
+    session.add_all([
+        SystemPromptSnapshot(id=STUB_SYS_HASH, content=STUB_SYS_PROMPT, created_at=utcnow()),
+        ToolDefinitionSnapshot(id=STUB_TOOL_HASH, content=STUB_TOOL_JSON, created_at=utcnow()),
+        AgentConfigSnapshot(id=STUB_CONFIG_HASH, content=STUB_CONFIG_JSON, created_at=utcnow()),
+    ])
+    await session.flush()
+
 
 def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
     """Construct AgentDeps from a session and agent record.
