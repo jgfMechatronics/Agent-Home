@@ -115,21 +115,6 @@ PARTIAL_MESSAGE_FIELDS = {
 }
 
 
-def make_message_record(agent_id: str, seq_id: int, **overrides) -> MessageRecord:
-    """Construct a MessageRecord with realistic defaults, controllable seq_id.
-    
-    Requires seed_stub_snapshots fixture to be active (for FK satisfaction).
-    Use **overrides to set type, content, timestamp, or hash fields.
-    """
-    defaults = {
-        "agent_id": agent_id,
-        "seq_id": seq_id,
-        "timestamp": datetime(2026, 1, 1, 12, 0, seq_id),
-        **PARTIAL_MESSAGE_FIELDS,
-    }
-    return MessageRecord(**{**defaults, **overrides})
-
-
 @pytest_asyncio.fixture
 async def seed_stub_snapshots(session: AsyncSession):
     """Pre-seed stub snapshot rows so MessageRecord FK constraints are satisfied.

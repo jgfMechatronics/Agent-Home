@@ -86,12 +86,32 @@ Test loads messages into DB via raw insert, calls top-level function, asserts ex
 from typing import Callable
 
 import pytest
-import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from conftest import make_message_record
+from datetime import datetime
+
+from conftest import PARTIAL_MESSAGE_FIELDS
 from db.models import AgentRecord, MessageRecord
 from utils.integrity_checker import IntegrityIssue, Severity, check_agent_integrity
+
+
+# ---------------------------------------------------------------------------
+# Message Record Factory (local to integrity tests)
+# ---------------------------------------------------------------------------
+
+def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRecord:
+    """Construct a MessageRecord with realistic defaults.
+    
+    Requires seed_stub_snapshots fixture to be active (for FK satisfaction).
+    timestamp defaults to datetime(2026, 1, 1, 12, 0, seq_id) if not provided.
+    """
+    defaults = {
+        "agent_id": agent_id,
+        "seq_id": seq_id,
+        "timestamp": datetime(2026, 1, 1, 12, 0, seq_id),
+        **PARTIAL_MESSAGE_FIELDS,
+    }
+    return MessageRecord(**{**defaults, **overrides})
 
 
 # Type alias for the callable that builds records given an agent_id
@@ -107,29 +127,29 @@ RecordBuilder = Callable[[str], list[MessageRecord]]
 
 SEQ_ID_TEST_CASES = [
     pytest.param(
-        lambda aid: [
-            make_message_record(aid, 0),
-            make_message_record(aid, 1),
-            make_message_record(aid, 2),
+        lambda agent_id: [
+            make_message_record(agent_id, seq_id=0),
+            make_message_record(agent_id, seq_id=1),
+            make_message_record(agent_id, seq_id=2),
         ],
         [],
         id="clean_sequence",
     ),
     pytest.param(
-        lambda aid: [],
+        lambda agent_id: [],
         [],
         id="empty_list",
     ),
     pytest.param(
-        lambda aid: [make_message_record(aid, 0)],
+        lambda agent_id: [make_message_record(agent_id, seq_id=0)],
         [],
         id="single_record",
     ),
     pytest.param(
-        lambda aid: [
-            make_message_record(aid, 0),
-            make_message_record(aid, 1),
-            make_message_record(aid, 3),  # gap: missing 2
+        lambda agent_id: [
+            make_message_record(agent_id, seq_id=0),
+            make_message_record(agent_id, seq_id=1),
+            make_message_record(agent_id, seq_id=3),  # gap: missing 2
         ],
         [IntegrityIssue(
             check_type="seq_id_gap",
@@ -140,11 +160,11 @@ SEQ_ID_TEST_CASES = [
         id="seq_id_gap",
     ),
     pytest.param(
-        lambda aid: [
-            make_message_record(aid, 0),
-            make_message_record(aid, 1),
-            make_message_record(aid, 1),  # duplicate
-            make_message_record(aid, 2),
+        lambda agent_id: [
+            make_message_record(agent_id, seq_id=0),
+            make_message_record(agent_id, seq_id=1),
+            make_message_record(agent_id, seq_id=1),  # duplicate
+            make_message_record(agent_id, seq_id=2),
         ],
         [IntegrityIssue(
             check_type="seq_id_duplicate",
@@ -166,21 +186,18 @@ SEQ_ID_TEST_CASES = [
 class TestCheckAgentIntegrity:
     """Top-down tests for check_agent_integrity(session, agent_id)."""
 
-    @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
-        self.session = session
-        self.agent = agent_record
-
     @pytest.mark.parametrize("build_records,expected_issues", SEQ_ID_TEST_CASES)
     async def test_check_agent_integrity(
         self,
+        session: AsyncSession,
+        agent_record: AgentRecord,
         build_records: RecordBuilder,
         expected_issues: list[IntegrityIssue],
     ):
-        """Parametrized test for check_agent_integrity"""
-        records = build_records(self.agent.id)
-        self.session.add_all(records)
-        await self.session.flush()
+        """Parametrized test for check_agent_integrity."""
+        records = build_records(agent_record.id)
+        session.add_all(records)
+        await session.flush()
 
-        issues = await check_agent_integrity(self.session, self.agent.id)
+        issues = await check_agent_integrity(session, agent_record.id)
         assert issues == expected_issues
