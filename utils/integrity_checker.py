@@ -1,11 +1,14 @@
 """Agent Data Integrity Checker.
 
-Pure functions to detect database corruption patterns in agent message history.
-Each check takes a list of MessageRecords and returns a list of IntegrityIssues.
+Detects database corruption patterns in agent message history.
+Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIssue]
 """
 
 from dataclasses import dataclass
 from enum import Enum
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import MessageRecord
 
@@ -61,5 +64,32 @@ def check_seq_id_consecutive(records: list[MessageRecord]) -> list[IntegrityIssu
                 seq_ids=[prev_seq, curr_seq],
                 details=f"Gap in seq_ids: expected {expected}, got {curr_seq} (missing {expected} through {curr_seq - 1})",
             ))
+    
+    return issues
+
+
+async def check_agent_integrity(
+    session: AsyncSession,
+    agent_id: str,
+) -> list[IntegrityIssue]:
+    """Check agent's message history for integrity issues.
+    
+    Args:
+        session: Database session
+        agent_id: Agent to check
+    
+    Returns:
+        List of all IntegrityIssues found across all checks.
+    """
+    # Fetch all messages for this agent, ordered by seq_id
+    stmt = select(MessageRecord).where(MessageRecord.agent_id == agent_id).order_by(MessageRecord.seq_id)
+    result = await session.execute(stmt)
+    records = list(result.scalars().all())
+    
+    issues: list[IntegrityIssue] = []
+    
+    # Run all checks
+    issues.extend(check_seq_id_consecutive(records))
+    # TODO: Add more checks here
     
     return issues

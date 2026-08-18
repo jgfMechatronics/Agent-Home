@@ -1,9 +1,9 @@
 """
 Agent Data Integrity Checker - Test Suite
 
-Planning docstring: captures intended checks. Remove/simplify as tests capture behaviors.
+Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIssue]
 
-=== CHECKS TO IMPLEMENT ===
+=== CHECKS ===
 
 1. SEQ_ID CONSECUTIVE
    - seq_ids must be strictly consecutive integers (1, 2, 3, 4, 5...)
@@ -77,155 +77,173 @@ Planning docstring: captures intended checks. Remove/simplify as tests capture b
     - Wrong part types in wrong message kinds = corruption or serialization bug
     - Severity: ERROR
 
-=== ARCHITECTURE ===
+=== TESTING APPROACH ===
 
-- Pure functions: data in, findings out (list of IntegrityIssue with severity)
-- Each check is independent, can run individually or as suite
-- Thin HTTP wrapper for runtime use (later)
-- Parametrized tests for each check type
-- Snapshot integrity requires DB access (session parameter)
-
-=== SEVERITY LEVELS ===
-
-ERROR: seq_id gap/duplicate, adjacent duplicate content, orphan tool call,
-       context_window_start nonexistent, empty content, snapshot orphan,
-       part-level violations, non-adjacent long duplicate
-WARN:  multiple adjacent ModelResponses, non-adjacent short duplicate (3+ times),
-       context_window_start very recent
-INFO:  multiple adjacent ModelRequests, timestamp inversion < 1s
-
-=== CONSTANTS ===
-
-LENGTH_THRESHOLD = 35  # chars - conservative, "ToolReturnPart should only appear in" is 36
-FREQUENCY_THRESHOLD = 3  # for short non-adjacent duplicates
-
-=== ALGORITHM NOTES ===
-
-Duplicate detection (adjacent-aware):
-```python
-seen_hashes = {}  # hash -> (first_seq_id, count)
-prev_hash = None
-prev_seq_id = None
-
-for msg in messages:
-    content_hash = sha256(canonical_serialize(msg.content))
-    content_len = len(msg.content)
-    
-    # Adjacent check (always error regardless of length)
-    if content_hash == prev_hash and msg.seq_id == prev_seq_id + 1:
-        yield IntegrityIssue(ADJACENT_DUPLICATE, ERROR, original=prev_seq_id, duplicate=msg.seq_id)
-    
-    # Non-adjacent check
-    elif content_hash in seen_hashes:
-        first_seq_id, count = seen_hashes[content_hash]
-        if content_len >= LENGTH_THRESHOLD:
-            yield IntegrityIssue(NON_ADJACENT_DUPLICATE, ERROR, ...)
-        else:
-            new_count = count + 1
-            if new_count >= FREQUENCY_THRESHOLD:
-                yield IntegrityIssue(FREQUENT_SHORT_DUPLICATE, WARN, ...)
-            seen_hashes[content_hash] = (first_seq_id, new_count)
-    else:
-        seen_hashes[content_hash] = (msg.seq_id, 1)
-    
-    prev_hash = content_hash
-    prev_seq_id = msg.seq_id
-```
-
+Parametrized tests: each case is (poisoned_messages, expected_issues).
+Test loads messages into DB via raw insert, calls top-level function, asserts exact equality.
 """
 
 from datetime import datetime
+from typing import Callable
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import MessageRecord
-from utils.integrity_checker import IntegrityIssue, Severity, check_seq_id_consecutive
+from conftest import make_request, make_response
+
+from db.models import (
+    AgentRecord,
+    MessageRecord,
+    SystemPromptSnapshot,
+    ToolDefinitionSnapshot,
+    AgentConfigSnapshot,
+)
+from pydantic_ai.messages import ModelMessagesTypeAdapter
+from utils.integrity_checker import IntegrityIssue, Severity, check_agent_integrity
 
 
 # ---------------------------------------------------------------------------
-# Test Helpers
+# Stub Snapshots (satisfy FK constraints for raw MessageRecord inserts)
 # ---------------------------------------------------------------------------
 
-def _make_record(seq_id: int, content: str = "msg") -> MessageRecord:
-    """Build a minimal MessageRecord for integrity checking tests.
+_STUB_SYS_HASH = "stub-system-prompt-hash"
+_STUB_TOOL_HASH = "stub-tool-definition-hash"
+_STUB_CONFIG_HASH = "stub-agent-config-hash"
+_STUB_CONTEXT_START = "stub-context-start-id"
+
+
+@pytest_asyncio.fixture
+async def stub_snapshots(session: AsyncSession) -> None:
+    """Insert minimal snapshot rows to satisfy MessageRecord FK constraints."""
+    session.add(SystemPromptSnapshot(id=_STUB_SYS_HASH, content=""))
+    session.add(ToolDefinitionSnapshot(id=_STUB_TOOL_HASH, content="[]"))
+    session.add(AgentConfigSnapshot(id=_STUB_CONFIG_HASH, content="{}"))
+    await session.flush()
+
+
+# ---------------------------------------------------------------------------
+# Message Record Factory
+# ---------------------------------------------------------------------------
+
+def make_message_record(
+    agent_id: str,
+    seq_id: int,
+    *,
+    msg_type: str = "ModelRequest",
+    content: str | None = None,
+    timestamp: datetime | None = None,
+) -> MessageRecord:
+    """Construct a MessageRecord with realistic defaults, controllable seq_id.
     
-    Only populates fields relevant to integrity checks. FK fields use dummy values
-    since we're testing pure functions, not DB operations.
+    Requires stub_snapshots fixture to be active (for FK satisfaction).
+    content defaults to a serialized make_request() if not provided.
     """
+    if content is None:
+        msg = make_request(f"msg {seq_id}") if msg_type == "ModelRequest" else make_response(f"msg {seq_id}")
+        content = ModelMessagesTypeAdapter.dump_json([msg]).decode()[1:-1]
+    
     return MessageRecord(
-        agent_id="test-agent",
-        type="ModelRequest",
-        content=f'{{"parts": [{{"type": "user-prompt", "content": "{content} {seq_id}"}}]}}',
-        total_tokens=None,
+        agent_id=agent_id,
         seq_id=seq_id,
-        timestamp=datetime(2026, 1, 1, 12, 0, seq_id),  # increments by 1 second per seq_id
-        system_prompt_hash="fake-hash",
-        tool_definition_hash="fake-hash",
-        agent_config_hash="fake-hash",
-        context_window_start_msg_id="fake-id",
+        type=msg_type,
+        content=content,
+        total_tokens=None,
+        timestamp=timestamp or datetime(2026, 1, 1, 12, 0, seq_id),
+        system_prompt_hash=_STUB_SYS_HASH,
+        tool_definition_hash=_STUB_TOOL_HASH,
+        agent_config_hash=_STUB_CONFIG_HASH,
+        context_window_start_msg_id=_STUB_CONTEXT_START,
     )
 
 
-def _make_records(*seq_ids: int) -> list[MessageRecord]:
-    """Build MessageRecords with the given seq_ids."""
-    return [_make_record(seq_id) for seq_id in seq_ids]
+# Type alias for the callable that builds records given an agent_id
+RecordBuilder = Callable[[str], list[MessageRecord]]
 
 
 # ---------------------------------------------------------------------------
-# TestSeqIdConsecutive
+# Test Cases (parametrized)
 # ---------------------------------------------------------------------------
 
-class TestSeqIdConsecutive:
-    """Tests for check_seq_id_consecutive(records) — pure function."""
+# Each test case: (build_records callable, expected_issues list)
+# build_records takes agent_id and returns list of MessageRecords to insert
 
-    def test_clean_sequence_returns_no_issues(self):
-        """Consecutive seq_ids (1,2,3,4) should pass with no issues."""
-        records = _make_records(1, 2, 3, 4)
-        issues = check_seq_id_consecutive(records)
-        assert issues == []
+SEQ_ID_TEST_CASES = [
+    pytest.param(
+        lambda aid: [
+            make_message_record(aid, 0),
+            make_message_record(aid, 1),
+            make_message_record(aid, 2),
+        ],
+        [],
+        id="clean_sequence",
+    ),
+    pytest.param(
+        lambda aid: [],
+        [],
+        id="empty_list",
+    ),
+    pytest.param(
+        lambda aid: [make_message_record(aid, 0)],
+        [],
+        id="single_record",
+    ),
+    pytest.param(
+        lambda aid: [
+            make_message_record(aid, 0),
+            make_message_record(aid, 1),
+            make_message_record(aid, 3),  # gap: missing 2
+        ],
+        [IntegrityIssue(
+            check_type="seq_id_gap",
+            severity=Severity.ERROR,
+            seq_ids=[1, 3],
+            details="Gap in seq_ids: expected 2, got 3 (missing 2 through 2)",
+        )],
+        id="seq_id_gap",
+    ),
+    pytest.param(
+        lambda aid: [
+            make_message_record(aid, 0),
+            make_message_record(aid, 1),
+            make_message_record(aid, 1),  # duplicate
+            make_message_record(aid, 2),
+        ],
+        [IntegrityIssue(
+            check_type="seq_id_duplicate",
+            severity=Severity.ERROR,
+            seq_ids=[1],
+            details="Duplicate seq_id 1 at positions 1 and 2",
+        )],
+        id="seq_id_duplicate",
+    ),
+]
 
-    def test_empty_list_returns_no_issues(self):
-        """Empty records list is valid (nothing to check)."""
-        issues = check_seq_id_consecutive([])
-        assert issues == []
 
-    def test_single_record_returns_no_issues(self):
-        """Single record is valid (no gaps possible)."""
-        records = _make_records(1)
-        issues = check_seq_id_consecutive(records)
-        assert issues == []
+# ---------------------------------------------------------------------------
+# TestCheckAgentIntegrity
+# ---------------------------------------------------------------------------
 
-    def test_gap_detected(self):
-        """Gap in seq_ids (1,2,4,5) should return an ERROR issue."""
-        records = _make_records(1, 2, 4, 5)
-        issues = check_seq_id_consecutive(records)
-        
-        assert len(issues) == 1
-        issue = issues[0]
-        assert issue.check_type == "seq_id_gap"
-        assert issue.severity == Severity.ERROR
-        assert 2 in issue.seq_ids  # before gap
-        assert 4 in issue.seq_ids  # after gap
-        assert "gap" in issue.details.lower() or "3" in issue.details
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("stub_snapshots")
+class TestCheckAgentIntegrity:
+    """Top-down tests for check_agent_integrity(session, agent_id)."""
 
-    def test_duplicate_detected(self):
-        """Duplicate seq_id (1,2,2,3) should return an ERROR issue."""
-        records = _make_records(1, 2, 2, 3)
-        issues = check_seq_id_consecutive(records)
-        
-        assert len(issues) == 1
-        issue = issues[0]
-        assert issue.check_type == "seq_id_duplicate"
-        assert issue.severity == Severity.ERROR
-        assert 2 in issue.seq_ids
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
+        self.session = session
+        self.agent = agent_record
 
-    def test_multiple_issues_detected(self):
-        """Multiple problems (gap + duplicate) should all be reported."""
-        records = _make_records(1, 2, 2, 5, 6)  # duplicate at 2, gap 3-4
-        issues = check_seq_id_consecutive(records)
-        
-        # Should find both the duplicate and the gap
-        assert len(issues) >= 2
-        check_types = {i.check_type for i in issues}
-        assert "seq_id_duplicate" in check_types
-        assert "seq_id_gap" in check_types
+    @pytest.mark.parametrize("build_records,expected_issues", SEQ_ID_TEST_CASES)
+    async def test_seq_id_checks(
+        self,
+        build_records: RecordBuilder,
+        expected_issues: list[IntegrityIssue],
+    ):
+        """Parametrized test for seq_id consecutive checking."""
+        records = build_records(self.agent.id)
+        self.session.add_all(records)
+        await self.session.flush()
+
+        issues = await check_agent_integrity(self.session, self.agent.id)
+        assert issues == expected_issues
