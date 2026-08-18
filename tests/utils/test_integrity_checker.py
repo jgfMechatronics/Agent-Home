@@ -5,10 +5,11 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
 
 === CHECKS ===
 
-1. SEQ_ID CONSECUTIVE
-   - seq_ids must be strictly consecutive integers (1, 2, 3, 4, 5...)
+1. SEQ_ID CONSECUTIVE ✓
+   - seq_ids must be strictly consecutive integers (0, 1, 2, 3, 4...)
    - Gaps indicate lost messages, duplicate seq_ids indicate re-persistence bugs
-   - First seq_id should be 1 (or agent's known start)
+   - First seq_id should be 0 (per persist_messages logic)
+   - Out-of-order seq_ids (e.g., 0, 2, 1) indicate corruption
    - Severity: ERROR
 
 2. TIMESTAMPS STRICTLY INCREASING
@@ -173,6 +174,34 @@ SEQ_ID_TEST_CASES = [
             details="Duplicate seq_id 1 at positions 1 and 2",
         )],
         id="seq_id_duplicate",
+    ),
+    pytest.param(
+        lambda agent_id: [
+            make_message_record(agent_id, seq_id=1),  # missing 0
+            make_message_record(agent_id, seq_id=2),
+            make_message_record(agent_id, seq_id=3),
+        ],
+        [IntegrityIssue(
+            check_type="seq_id_gap",
+            severity=Severity.ERROR,
+            seq_ids=[None, 1],
+            details="Gap in seq_ids: expected 0, got 1 (missing 0 through 0)",
+        )],
+        id="missing_initial_seq_id",
+    ),
+    pytest.param(
+        lambda agent_id: [
+            make_message_record(agent_id, seq_id=0, timestamp=datetime(2026, 1, 1, 12, 0, 0)),
+            make_message_record(agent_id, seq_id=2, timestamp=datetime(2026, 1, 1, 12, 0, 1)),  # persisted second
+            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 2)),  # persisted third but seq_id=1
+        ],
+        [IntegrityIssue(
+            check_type="seq_id_out_of_order",
+            severity=Severity.ERROR,
+            seq_ids=[2, 1],
+            details="seq_id out of order: 2 followed by 1 (by timestamp order)",
+        )],
+        id="seq_id_out_of_order",
     ),
 ]
 

@@ -30,7 +30,7 @@ class IntegrityIssue:
 
 
 def check_seq_id_consecutive(records: list[MessageRecord]) -> list[IntegrityIssue]:
-    """Check that seq_ids are strictly consecutive (no gaps, no duplicates).
+    """Check that seq_ids are strictly consecutive starting at 0 (no gaps, no duplicates).
     
     Args:
         records: MessageRecords sorted by seq_id (caller's responsibility)
@@ -38,11 +38,22 @@ def check_seq_id_consecutive(records: list[MessageRecord]) -> list[IntegrityIssu
     Returns:
         List of IntegrityIssues for any gaps or duplicates found.
     """
-    if len(records) <= 1:
+    if not records:
         return []
     
     issues: list[IntegrityIssue] = []
     
+    # Check first seq_id is 0
+    if records[0].seq_id != 0:
+        first_seq = records[0].seq_id
+        issues.append(IntegrityIssue(
+            check_type="seq_id_gap",
+            severity=Severity.ERROR,
+            seq_ids=[None, first_seq],
+            details=f"Gap in seq_ids: expected 0, got {first_seq} (missing 0 through {first_seq - 1})",
+        ))
+    
+    # Check consecutive pairs
     for i in range(1, len(records)):
         prev_seq = records[i - 1].seq_id
         curr_seq = records[i].seq_id
@@ -68,6 +79,37 @@ def check_seq_id_consecutive(records: list[MessageRecord]) -> list[IntegrityIssu
     return issues
 
 
+def check_seq_id_order_by_timestamp(records: list[MessageRecord]) -> list[IntegrityIssue]:
+    """Check that seq_ids are monotonically increasing when sorted by timestamp.
+    
+    Detects cases where messages were persisted out of order (e.g., seq_id 2 before seq_id 1).
+    
+    Args:
+        records: MessageRecords sorted by timestamp (caller's responsibility)
+    
+    Returns:
+        List of IntegrityIssues for any out-of-order seq_ids.
+    """
+    if len(records) <= 1:
+        return []
+    
+    issues: list[IntegrityIssue] = []
+    
+    for i in range(1, len(records)):
+        prev_seq = records[i - 1].seq_id
+        curr_seq = records[i].seq_id
+        
+        if curr_seq < prev_seq:
+            issues.append(IntegrityIssue(
+                check_type="seq_id_out_of_order",
+                severity=Severity.ERROR,
+                seq_ids=[prev_seq, curr_seq],
+                details=f"seq_id out of order: {prev_seq} followed by {curr_seq} (by timestamp order)",
+            ))
+    
+    return issues
+
+
 async def check_agent_integrity(
     session: AsyncSession,
     agent_id: str,
@@ -81,15 +123,22 @@ async def check_agent_integrity(
     Returns:
         List of all IntegrityIssues found across all checks.
     """
-    # Fetch all messages for this agent, ordered by seq_id
-    stmt = select(MessageRecord).where(MessageRecord.agent_id == agent_id).order_by(MessageRecord.seq_id)
-    result = await session.execute(stmt)
-    records = list(result.scalars().all())
-    
     issues: list[IntegrityIssue] = []
     
-    # Run all checks
-    issues.extend(check_seq_id_consecutive(records))
+    # Fetch all messages ordered by seq_id (for consecutive check)
+    stmt_by_seq = select(MessageRecord).where(MessageRecord.agent_id == agent_id).order_by(MessageRecord.seq_id)
+    result = await session.execute(stmt_by_seq)
+    records_by_seq = list(result.scalars().all())
+    
+    issues.extend(check_seq_id_consecutive(records_by_seq))
+    
+    # Fetch all messages ordered by timestamp (for order check)
+    stmt_by_ts = select(MessageRecord).where(MessageRecord.agent_id == agent_id).order_by(MessageRecord.timestamp)
+    result = await session.execute(stmt_by_ts)
+    records_by_ts = list(result.scalars().all())
+    
+    issues.extend(check_seq_id_order_by_timestamp(records_by_ts))
+    
     # TODO: Add more checks here
     
     return issues
