@@ -133,3 +133,99 @@ for msg in messages:
 ```
 
 """
+
+from datetime import datetime
+
+import pytest
+
+from db.models import MessageRecord
+from utils.integrity_checker import IntegrityIssue, Severity, check_seq_id_consecutive
+
+
+# ---------------------------------------------------------------------------
+# Test Helpers
+# ---------------------------------------------------------------------------
+
+def _make_record(seq_id: int, content: str = "msg") -> MessageRecord:
+    """Build a minimal MessageRecord for integrity checking tests.
+    
+    Only populates fields relevant to integrity checks. FK fields use dummy values
+    since we're testing pure functions, not DB operations.
+    """
+    return MessageRecord(
+        agent_id="test-agent",
+        type="ModelRequest",
+        content=f'{{"parts": [{{"type": "user-prompt", "content": "{content} {seq_id}"}}]}}',
+        total_tokens=None,
+        seq_id=seq_id,
+        timestamp=datetime(2026, 1, 1, 12, 0, seq_id),  # increments by 1 second per seq_id
+        system_prompt_hash="fake-hash",
+        tool_definition_hash="fake-hash",
+        agent_config_hash="fake-hash",
+        context_window_start_msg_id="fake-id",
+    )
+
+
+def _make_records(*seq_ids: int) -> list[MessageRecord]:
+    """Build MessageRecords with the given seq_ids."""
+    return [_make_record(seq_id) for seq_id in seq_ids]
+
+
+# ---------------------------------------------------------------------------
+# TestSeqIdConsecutive
+# ---------------------------------------------------------------------------
+
+class TestSeqIdConsecutive:
+    """Tests for check_seq_id_consecutive(records) — pure function."""
+
+    def test_clean_sequence_returns_no_issues(self):
+        """Consecutive seq_ids (1,2,3,4) should pass with no issues."""
+        records = _make_records(1, 2, 3, 4)
+        issues = check_seq_id_consecutive(records)
+        assert issues == []
+
+    def test_empty_list_returns_no_issues(self):
+        """Empty records list is valid (nothing to check)."""
+        issues = check_seq_id_consecutive([])
+        assert issues == []
+
+    def test_single_record_returns_no_issues(self):
+        """Single record is valid (no gaps possible)."""
+        records = _make_records(1)
+        issues = check_seq_id_consecutive(records)
+        assert issues == []
+
+    def test_gap_detected(self):
+        """Gap in seq_ids (1,2,4,5) should return an ERROR issue."""
+        records = _make_records(1, 2, 4, 5)
+        issues = check_seq_id_consecutive(records)
+        
+        assert len(issues) == 1
+        issue = issues[0]
+        assert issue.check_type == "seq_id_gap"
+        assert issue.severity == Severity.ERROR
+        assert 2 in issue.seq_ids  # before gap
+        assert 4 in issue.seq_ids  # after gap
+        assert "gap" in issue.details.lower() or "3" in issue.details
+
+    def test_duplicate_detected(self):
+        """Duplicate seq_id (1,2,2,3) should return an ERROR issue."""
+        records = _make_records(1, 2, 2, 3)
+        issues = check_seq_id_consecutive(records)
+        
+        assert len(issues) == 1
+        issue = issues[0]
+        assert issue.check_type == "seq_id_duplicate"
+        assert issue.severity == Severity.ERROR
+        assert 2 in issue.seq_ids
+
+    def test_multiple_issues_detected(self):
+        """Multiple problems (gap + duplicate) should all be reported."""
+        records = _make_records(1, 2, 2, 5, 6)  # duplicate at 2, gap 3-4
+        issues = check_seq_id_consecutive(records)
+        
+        # Should find both the duplicate and the gap
+        assert len(issues) >= 2
+        check_types = {i.check_type for i in issues}
+        assert "seq_id_duplicate" in check_types
+        assert "seq_id_gap" in check_types
