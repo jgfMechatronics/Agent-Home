@@ -138,6 +138,8 @@ def make_message_sequence(agent_id: str, overrides_list: list[dict]) -> list[Mes
 # Each test case: (build_records callable, expected_issues list)
 # build_records takes agent_id and returns list of MessageRecords to insert
 
+# NOTE: No non-adjacent duplicate test for seq_id — after ORDER BY seq_id, duplicates
+# are always adjacent. Non-adjacent duplicates in insertion order become adjacent after load.
 SEQ_ID_TEST_CASES = [
     pytest.param(
         lambda agent_id: [
@@ -185,8 +187,9 @@ SEQ_ID_TEST_CASES = [
             seq_ids=[1],
             details="Duplicate seq_id 1 at positions 1 and 2",
         )],
-        id="seq_id_duplicate",
+        id="seq_id_duplicate_adjacent",
     ),
+
     pytest.param(
         lambda agent_id: [
             make_message_record(agent_id, seq_id=1),  # missing 0
@@ -230,7 +233,24 @@ TIMESTAMP_TEST_CASES = [
             seq_ids=[0, 1],
             details="Duplicate timestamp at seq_ids 0 and 1",
         )],
-        id="duplicate_timestamp",
+        id="duplicate_timestamp_adjacent",
+    ),
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 0)},
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 1)},
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 2)},
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 3)},
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 4)},
+            {"timestamp": datetime(2026, 1, 1, 12, 0, 1)},  # non-adjacent duplicate — caught as out-of-order
+        ]),
+        [IntegrityIssue(
+            check_type="timestamp_out_of_order",
+            severity=Severity.ERROR,
+            seq_ids=[4, 5],
+            details="Timestamp out of order: seq_id 5 has earlier timestamp than seq_id 4 (can also indicate non-adjacent duplicate timestamps)",
+        )],
+        id="duplicate_timestamp_non_adjacent",
     ),
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
@@ -242,7 +262,7 @@ TIMESTAMP_TEST_CASES = [
             check_type="timestamp_out_of_order",
             severity=Severity.ERROR,
             seq_ids=[1, 2],
-            details="Timestamp out of order: seq_id 2 has earlier timestamp than seq_id 1",
+            details="Timestamp out of order: seq_id 2 has earlier timestamp than seq_id 1 (can also indicate non-adjacent duplicate timestamps)",
         )],
         id="timestamp_inversion",
     ),

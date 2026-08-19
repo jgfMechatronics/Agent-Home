@@ -4,13 +4,14 @@ Detects database corruption patterns in agent message history.
 Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIssue]
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import MessageRecord
+from messages.messages import load_messages
 
 
 class Severity(Enum):
@@ -29,11 +30,11 @@ class IntegrityIssue:
     details: str  # human-readable description
 
 
-def check_seq_id_consecutive(records: list[MessageRecord]) -> list[IntegrityIssue]:
+def check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     """Check that seq_ids are strictly consecutive starting at 0 (no gaps, no duplicates).
     
     Args:
-        records: MessageRecords sorted by seq_id (caller's responsibility)
+        records: MessageRecords sorted by seq_id (caller's responsibility. Handled by load_messages typically)
     
     Returns:
         List of IntegrityIssues for any gaps or duplicates found.
@@ -79,16 +80,16 @@ def check_seq_id_consecutive(records: list[MessageRecord]) -> list[IntegrityIssu
     return issues
 
 
-def check_seq_id_order_by_timestamp(records: list[MessageRecord]) -> list[IntegrityIssue]:
-    """Check that seq_ids are monotonically increasing when sorted by timestamp.
+def check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+    """Check that timestamps are monotonically increasing in seq_id order.
     
-    Detects cases where messages were persisted out of order (e.g., seq_id 2 before seq_id 1).
+    Detects clock issues or re-persistence bugs where a later message has an earlier timestamp.
     
     Args:
-        records: MessageRecords sorted by timestamp (caller's responsibility)
+        records: MessageRecords in seq_id order (as returned by load_messages)
     
     Returns:
-        List of IntegrityIssues for any out-of-order seq_ids.
+        List of IntegrityIssues for any timestamp inversions or duplicates.
     """
     if len(records) <= 1:
         return []
@@ -96,15 +97,22 @@ def check_seq_id_order_by_timestamp(records: list[MessageRecord]) -> list[Integr
     issues: list[IntegrityIssue] = []
     
     for i in range(1, len(records)):
-        prev_seq = records[i - 1].seq_id
-        curr_seq = records[i].seq_id
+        prev = records[i - 1]
+        curr = records[i]
         
-        if curr_seq < prev_seq:
+        if curr.timestamp < prev.timestamp:
             issues.append(IntegrityIssue(
-                check_type="seq_id_out_of_order",
+                check_type="timestamp_out_of_order",
                 severity=Severity.ERROR,
-                seq_ids=[prev_seq, curr_seq],
-                details=f"seq_id out of order: {prev_seq} followed by {curr_seq} (by timestamp order)",
+                seq_ids=[prev.seq_id, curr.seq_id],
+                details=f"Timestamp out of order: seq_id {curr.seq_id} has earlier timestamp than seq_id {prev.seq_id} (can also indicate non-adjacent duplicate timestamps)",
+            ))
+        elif curr.timestamp == prev.timestamp:
+            issues.append(IntegrityIssue(
+                check_type="timestamp_duplicate",
+                severity=Severity.ERROR,
+                seq_ids=[prev.seq_id, curr.seq_id],
+                details=f"Duplicate timestamp at seq_ids {prev.seq_id} and {curr.seq_id}",
             ))
     
     return issues
@@ -123,22 +131,12 @@ async def check_agent_integrity(
     Returns:
         List of all IntegrityIssues found across all checks.
     """
+    # Load all messages once (in seq_id order)
+    records = await load_messages(session, agent_id)
+    
     issues: list[IntegrityIssue] = []
-    
-    # Fetch all messages ordered by seq_id (for consecutive check)
-    stmt_by_seq = select(MessageRecord).where(MessageRecord.agent_id == agent_id).order_by(MessageRecord.seq_id)
-    result = await session.execute(stmt_by_seq)
-    records_by_seq = list(result.scalars().all())
-    
-    issues.extend(check_seq_id_consecutive(records_by_seq))
-    
-    # Fetch all messages ordered by timestamp (for order check)
-    stmt_by_ts = select(MessageRecord).where(MessageRecord.agent_id == agent_id).order_by(MessageRecord.timestamp)
-    result = await session.execute(stmt_by_ts)
-    records_by_ts = list(result.scalars().all())
-    
-    issues.extend(check_seq_id_order_by_timestamp(records_by_ts))
-    
+    issues.extend(check_seq_id_consecutive(records))
+    issues.extend(check_timestamps_increasing(records))
     # TODO: Add more checks here
     
     return issues
