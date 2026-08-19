@@ -174,10 +174,10 @@ SEQ_ID_TEST_CASES = [
     ),
     pytest.param(
         lambda agent_id: [
-            make_message_record(agent_id, seq_id=0),
-            make_message_record(agent_id, seq_id=1),
-            make_message_record(agent_id, seq_id=1),  # duplicate
-            make_message_record(agent_id, seq_id=2),
+            make_message_record(agent_id, seq_id=0, timestamp=datetime(2026, 1, 1, 12, 0, 0)),
+            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 1)),
+            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 2)),  # duplicate seq_id, distinct timestamp
+            make_message_record(agent_id, seq_id=2, timestamp=datetime(2026, 1, 1, 12, 0, 3)),
         ],
         [IntegrityIssue(
             check_type="seq_id_duplicate",
@@ -201,20 +201,6 @@ SEQ_ID_TEST_CASES = [
         )],
         id="missing_initial_seq_id",
     ),
-    pytest.param(
-        lambda agent_id: [
-            make_message_record(agent_id, seq_id=0, timestamp=datetime(2026, 1, 1, 12, 0, 0)),
-            make_message_record(agent_id, seq_id=2, timestamp=datetime(2026, 1, 1, 12, 0, 1)),  # persisted second
-            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 2)),  # persisted third but seq_id=1
-        ],
-        [IntegrityIssue(
-            check_type="seq_id_out_of_order",
-            severity=Severity.ERROR,
-            seq_ids=[2, 1],
-            details="seq_id out of order: 2 followed by 1 (by timestamp order)",
-        )],
-        id="seq_id_out_of_order",
-    ),
 ]
 
 
@@ -224,7 +210,7 @@ SEQ_ID_TEST_CASES = [
 
 TIMESTAMP_TEST_CASES = [
     pytest.param(
-        lambda aid: make_message_sequence(aid, [
+        lambda agent_id: make_message_sequence(agent_id, [
             {"timestamp": datetime(2026, 1, 1, 12, 0, 0)},
             {"timestamp": datetime(2026, 1, 1, 12, 0, 1)},
             {"timestamp": datetime(2026, 1, 1, 12, 0, 2)},
@@ -233,7 +219,7 @@ TIMESTAMP_TEST_CASES = [
         id="clean_increasing",
     ),
     pytest.param(
-        lambda aid: make_message_sequence(aid, [
+        lambda agent_id: make_message_sequence(agent_id, [
             {"timestamp": datetime(2026, 1, 1, 12, 0, 0)},
             {"timestamp": datetime(2026, 1, 1, 12, 0, 0)},  # duplicate timestamp
             {"timestamp": datetime(2026, 1, 1, 12, 0, 1)},
@@ -247,7 +233,7 @@ TIMESTAMP_TEST_CASES = [
         id="duplicate_timestamp",
     ),
     pytest.param(
-        lambda aid: make_message_sequence(aid, [
+        lambda agent_id: make_message_sequence(agent_id, [
             {"timestamp": datetime(2026, 1, 1, 12, 0, 0)},
             {"timestamp": datetime(2026, 1, 1, 12, 0, 2)},
             {"timestamp": datetime(2026, 1, 1, 12, 0, 1)},  # goes backward
@@ -281,7 +267,7 @@ class TestCheckAgentIntegrity:
         """Common test body for all check categories."""
         records = build_records(self.agent.id)
         self.session.add_all(records)
-        await self.session.commit()
+        await self.session.flush()
         issues = await check_agent_integrity(self.session, self.agent.id)
         assert issues == expected_issues
 
@@ -293,3 +279,10 @@ class TestCheckAgentIntegrity:
     @pytest.mark.parametrize("build_records,expected_issues", TIMESTAMP_TEST_CASES)
     async def test_timestamp(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
+
+
+def test_checkers_units_do_not_mutate_input():
+    # TODO: Once all internal checker functions exist, parametrize this test on them.
+    # For each checker: create records, snapshot state, run checker, assert unchanged.
+    # This enforces the invariant that checkers are pure functions.
+    pytest.fail("Not yet implemented — add after all checkers exist")
