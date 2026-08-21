@@ -118,6 +118,10 @@ def check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[Integr
     return issues
 
 
+def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+    raise NotImplementedError
+
+
 async def check_agent_integrity(
     session: AsyncSession,
     agent_id: str,
@@ -137,6 +141,7 @@ async def check_agent_integrity(
     issues: list[IntegrityIssue] = []
     issues.extend(check_seq_id_consecutive(records))
     issues.extend(check_timestamps_increasing(records))
-    # TODO: Add more checks here
+    issues.extend(check_for_duplicate_content(records))
+    
     
     return issues

@@ -85,6 +85,7 @@ Test loads messages into DB via raw insert, calls top-level function, asserts ex
 """
 
 from typing import Callable
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -106,12 +107,15 @@ def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRe
     
     Requires seed_stub_snapshots fixture to be active (for FK satisfaction).
     timestamp defaults to datetime(2026, 1, 1, 12, 0, seq_id) if not provided.
+    content defaults to a random UUID string to avoid spurious duplicate content issues
+    in tests that aren't testing content duplication.
     """
     defaults = {
         "agent_id": agent_id,
         "seq_id": seq_id,
         "timestamp": datetime(2026, 1, 1, 12, 0, seq_id),
         **PARTIAL_MESSAGE_FIELDS,
+        "content": str(uuid4()),  # random default — avoids spurious duplicate content issues in non-content tests
     }
     return MessageRecord(**{**defaults, **overrides})
 
@@ -270,6 +274,96 @@ TIMESTAMP_TEST_CASES = [
 
 
 # ---------------------------------------------------------------------------
+# Check 3: Content Duplicate Test Cases
+# ---------------------------------------------------------------------------
+
+_CONTENT_LENGTH_THRESHOLD = 35  # must match the threshold in the impl
+
+# Content fixtures: clearly above/below threshold so the intent is obvious
+SHORT_CONTENT = "short"          # 5 chars — well under threshold
+LONG_CONTENT = "x" * (_CONTENT_LENGTH_THRESHOLD + 1)  # one char over threshold
+
+
+CONTENT_DUPLICATE_TEST_CASES = [
+    # Adjacent duplicate — always ERROR, regardless of content length
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {"content": LONG_CONTENT},
+            {"content": LONG_CONTENT},  # adjacent duplicate
+            {},
+        ]),
+        [IntegrityIssue(
+            check_type="adjacent_content_duplicate",
+            severity=Severity.ERROR,
+            seq_ids=[0, 1],
+            details="Adjacent messages at seq_ids 0 and 1 have identical content",
+        )],
+        id="adjacent_duplicate_long",
+    ),
+    # Adjacent duplicate, short content — still ERROR (regardless of length)
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {"content": SHORT_CONTENT},
+            {"content": SHORT_CONTENT},  # adjacent duplicate
+            {},
+        ]),
+        [IntegrityIssue(
+            check_type="adjacent_content_duplicate",
+            severity=Severity.ERROR,
+            seq_ids=[0, 1],
+            details="Adjacent messages at seq_ids 0 and 1 have identical content",
+        )],
+        id="adjacent_duplicate_short",
+    ),
+    # Non-adjacent, long content — ERROR
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {"content": LONG_CONTENT},
+            {},  # unique x4
+            {},
+            {},
+            {},
+            {"content": LONG_CONTENT},  # non-adjacent duplicate
+        ]),
+        [IntegrityIssue(
+            check_type="content_duplicate",
+            severity=Severity.ERROR,
+            seq_ids=[0, 5],
+            details="Non-adjacent duplicate content at seq_ids [0, 5]",
+        )],
+        id="non_adjacent_duplicate_long",
+    ),
+    # Non-adjacent, short content, 2 occurrences — no issue (threshold is 3+)
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {"content": SHORT_CONTENT},
+            {},                          # unique middle
+            {"content": SHORT_CONTENT},  # 2nd occurrence — below frequency threshold
+        ]),
+        [],
+        id="non_adjacent_duplicate_short_2x_no_issue",
+    ),
+    # Non-adjacent, short content, 3 occurrences — WARN
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {"content": SHORT_CONTENT},
+            {},                          # unique
+            {"content": SHORT_CONTENT},  # 2nd
+            {},                          # unique
+            {"content": SHORT_CONTENT},  # 3rd — crosses frequency threshold
+        ]),
+        [IntegrityIssue(
+            check_type="content_duplicate",
+            severity=Severity.WARN,
+            seq_ids=[0, 2, 4],
+            details="Short content repeated 3 times at seq_ids [0, 2, 4]",
+        )],
+        id="non_adjacent_duplicate_short_3x_warn",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
 # TestCheckAgentIntegrity
 # ---------------------------------------------------------------------------
 
@@ -298,6 +392,10 @@ class TestCheckAgentIntegrity:
 
     @pytest.mark.parametrize("build_records,expected_issues", TIMESTAMP_TEST_CASES)
     async def test_timestamp(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        await self._run_check(build_records, expected_issues)
+
+    @pytest.mark.parametrize("build_records,expected_issues", CONTENT_DUPLICATE_TEST_CASES)
+    async def test_content_duplicate(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
 
 
