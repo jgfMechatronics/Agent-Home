@@ -359,6 +359,15 @@ async def load_messages(
     return list(result.scalars().all())
 
 
+def deserialize_single_message(record: MessageRecord) -> ModelMessage | None:
+    # Content is single-message JSON; wrap in array for TypeAdapter
+    message = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
+    if message:
+        return message[0]
+    else:
+        return None
+
+
 def deserialize_messages(records: list[MessageRecord]) -> list[ModelMessage]:
     """Convert MessageRecords to Pydantic AI ModelMessages.
 
@@ -368,10 +377,10 @@ def deserialize_messages(records: list[MessageRecord]) -> list[ModelMessage]:
     result: list[ModelMessage] = []
     for record in records:
         try:
-            # Content is single-message JSON; wrap in array for TypeAdapter
-            messages = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
-            if messages:
-                result.append(messages[0])
+            message = deserialize_single_message(record)
+
+            if message:
+                result.append(message)
         except Exception as e:
             raise ValueError(f"[Deserialization error for record {record.id}]: {e}") from e
     return result

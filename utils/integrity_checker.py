@@ -7,12 +7,12 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+import hashlib
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import MessageRecord
-from messages.messages import load_messages
-
+from messages.messages import load_messages, deserialize_single_message
 
 class Severity(Enum):
     """Severity levels for integrity issues."""
@@ -119,7 +119,12 @@ def check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[Integr
 
 
 def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
-    raise NotImplementedError
+    # mapping part content hash to the seq id which the part occured at
+    part_content_hash_table: dict[str: list[int]] = {}
+
+    for record in records:
+        message_content = 
+        for part in record.co
 
 
 async def check_agent_integrity(
