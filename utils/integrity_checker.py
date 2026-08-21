@@ -10,15 +10,19 @@ from enum import Enum
 import hashlib
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequestPart, ModelResponsePart
 
 from db.models import MessageRecord
-from messages.messages import load_messages, deserialize_single_message
+from messages.messages import load_messages, deserialize_messages
 
 class Severity(Enum):
     """Severity levels for integrity issues."""
     ERROR = "error"
     WARN = "warn"
     INFO = "info"
+    NO_ERROR = "no error"
+
+ERROR, WARN, INFO, NO_ERROR = Severity.ERROR, Severity.WARN, Severity.INFO, Severity.NO_ERROR
 
 
 @dataclass
@@ -49,7 +53,7 @@ def check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[Integrity
         first_seq = records[0].seq_id
         issues.append(IntegrityIssue(
             check_type="seq_id_gap",
-            severity=Severity.ERROR,
+            severity=ERROR,
             seq_ids=[None, first_seq],
             details=f"Gap in seq_ids: expected 0, got {first_seq} (missing 0 through {first_seq - 1})",
         ))
@@ -63,7 +67,7 @@ def check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[Integrity
             # Duplicate seq_id
             issues.append(IntegrityIssue(
                 check_type="seq_id_duplicate",
-                severity=Severity.ERROR,
+                severity=ERROR,
                 seq_ids=[curr_seq],
                 details=f"Duplicate seq_id {curr_seq} at positions {i-1} and {i}",
             ))
@@ -72,7 +76,7 @@ def check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[Integrity
             expected = prev_seq + 1
             issues.append(IntegrityIssue(
                 check_type="seq_id_gap",
-                severity=Severity.ERROR,
+                severity=ERROR,
                 seq_ids=[prev_seq, curr_seq],
                 details=f"Gap in seq_ids: expected {expected}, got {curr_seq} (missing {expected} through {curr_seq - 1})",
             ))
@@ -103,14 +107,14 @@ def check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[Integr
         if curr.timestamp < prev.timestamp:
             issues.append(IntegrityIssue(
                 check_type="timestamp_out_of_order",
-                severity=Severity.ERROR,
+                severity=ERROR,
                 seq_ids=[prev.seq_id, curr.seq_id],
                 details=f"Timestamp out of order: seq_id {curr.seq_id} has earlier timestamp than seq_id {prev.seq_id} (can also indicate non-adjacent duplicate timestamps)",
             ))
         elif curr.timestamp == prev.timestamp:
             issues.append(IntegrityIssue(
                 check_type="timestamp_duplicate",
-                severity=Severity.ERROR,
+                severity=ERROR,
                 seq_ids=[prev.seq_id, curr.seq_id],
                 details=f"Duplicate timestamp at seq_ids {prev.seq_id} and {curr.seq_id}",
             ))
@@ -118,13 +122,83 @@ def check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[Integr
     return issues
 
 
+@dataclass
+class PartAndMetadata:
+    # TODO: double check all these fields requried
+    part: ModelRequestPart | ModelResponsePart 
+    idx: int # index of the msg where this part originated
+    seq_id: int # seq_id of the msg where this part originated
+
+
 def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     # mapping part content hash to the seq id which the part occured at
-    part_content_hash_table: dict[str: list[int]] = {}
+    CONTENT_LENGTH_THRESHOLD = 35
+    integrity_issues = []
 
-    for record in records:
-        message_content = 
-        for part in record.co
+    try:
+        messages = deserialize_messages(records)
+    except ValueError:
+        return [IntegrityIssue(
+            check_type="deserialization",
+            severity=ERROR,
+            seq_ids=[],
+            details="Deserialization error while attempting to perform duplication check. Manual intervention required!"
+        )]
+
+    part_hash_table: dict[str, list[PartAndMetadata]] = {}
+    part_hashes_suspected_of_duplication: list[str] = []
+
+    for i, message in enumerate(messages):
+        for part in message.parts:
+            # These situations too ripe for "valid" duplication. Short circuiting should narrow type of part
+            # enough that len comparison is valid
+            if isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) or (len(part.content) == 0):
+                continue
+
+            # Avoid declaring duplicate across part type
+            part_type_and_content = str(part.content) + part.part_kind 
+            part_hash = hashlib.sha256(part_type_and_content.encode("utf-8")).hexdigest()
+            part_and_metadata = PartAndMetadata(part, i, records[i].seq_id)
+
+            if part_hash in part_hash_table:
+                if len(part_hash_table[part_hash]) == 1:
+                    # first time we've suspected this hash, record it as such
+                    # We have further checks later to determine if its truly bad 
+                    part_hashes_suspected_of_duplication.append(part_hash)
+                part_hash_table[part_hash].append(part_and_metadata)
+            else:
+                part_hash_table[part_hash] = [part_and_metadata]
+                # since this is new its not suspect...yet
+
+    for suspect_hash in part_hashes_suspected_of_duplication:
+        suspect_part_list = part_hash_table[suspect_hash]
+        suspect_part = suspect_part_list[0]
+
+        # we already know these parts have identical type and content, now determine how much we care
+        if len(suspect_part.content) > CONTENT_LENGTH_THRESHOLD:
+            # content is long enough that legit repetition by chance is very unlikely
+            severity = ERROR
+            detail_preamble = "High length duplicate content detected. Higher length content is less likely to naturally recur."
+        elif len(suspect_part_list) >= 3:
+            # Even though its short, this much repetition is suspicious
+            # NOTE: we may find we need an intermediate threshold or regex for stuff like "ok"
+            severity = WARN
+            detail_preamble = "Short length duplicate content detected with suspect frequency."
+        else:
+            # Short content that didn't occur many times. Not that sus
+            severity = NO_ERROR
+
+        if severity != NO_ERROR:
+            bad_seq_ids = [p.seq_id for p in suspect_part_list]
+            integrity_issue = IntegrityIssue(
+                check_type="content_duplicate",
+                severity=severity,
+                seq_ids=bad_seq_ids,
+                details=detail_preamble + f"Duplication occured at seq_ids: {bad_seq_ids}",
+                )
+            integrity_issues.append(integrity_issue)
+            
+            
 
 
 async def check_agent_integrity(

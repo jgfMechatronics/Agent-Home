@@ -98,7 +98,7 @@ from pydantic_ai.messages import ModelResponse, ThinkingPart
 from conftest import PARTIAL_MESSAGE_FIELDS, make_request, make_response
 from messages.messages import dump_msg_json
 from db.models import AgentRecord, MessageRecord
-from utils.integrity_checker import IntegrityIssue, Severity, check_agent_integrity
+from utils.integrity_checker import ERROR, WARN, IntegrityIssue, Severity, check_agent_integrity
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +155,16 @@ CLEAN_TEST_CASES = [
         [],
         id="clean_no_issues",
     ),
+    # Empty part content should never be flagged as a duplicate regardless of frequency
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {**_EMPTY_DUP},
+            {**_EMPTY_DUP},  # adjacent "duplicate" — empty content, never flag
+            {**_EMPTY_DUP},  # third occurrence — still never flag
+        ]),
+        [],
+        id="empty_part_content_not_flagged",
+    ),
 ]
 
 # NOTE: No non-adjacent duplicate test for seq_id — after ORDER BY seq_id, duplicates
@@ -178,7 +188,7 @@ SEQ_ID_TEST_CASES = [
         ],
         [IntegrityIssue(
             check_type="seq_id_gap",
-            severity=Severity.ERROR,
+            severity=ERROR,
             seq_ids=[1, 3],
             details="Gap in seq_ids: expected 2, got 3 (missing 2 through 2)",
         )],
@@ -193,7 +203,7 @@ SEQ_ID_TEST_CASES = [
         ],
         [IntegrityIssue(
             check_type="seq_id_duplicate",
-            severity=Severity.ERROR,
+            severity=ERROR,
             seq_ids=[1],
             details="Duplicate seq_id 1 at positions 1 and 2",
         )],
@@ -208,7 +218,7 @@ SEQ_ID_TEST_CASES = [
         ],
         [IntegrityIssue(
             check_type="seq_id_gap",
-            severity=Severity.ERROR,
+            severity=ERROR,
             seq_ids=[None, 1],
             details="Gap in seq_ids: expected 0, got 1 (missing 0 through 0)",
         )],
@@ -230,7 +240,7 @@ TIMESTAMP_TEST_CASES = [
         ]),
         [IntegrityIssue(
             check_type="timestamp_duplicate",
-            severity=Severity.ERROR,
+            severity=ERROR,
             seq_ids=[0, 1],
             details="Duplicate timestamp at seq_ids 0 and 1",
         )],
@@ -247,7 +257,7 @@ TIMESTAMP_TEST_CASES = [
         ]),
         [IntegrityIssue(
             check_type="timestamp_out_of_order",
-            severity=Severity.ERROR,
+            severity=ERROR,
             seq_ids=[4, 5],
             details="Timestamp out of order: seq_id 5 has earlier timestamp than seq_id 4 (can also indicate non-adjacent duplicate timestamps)",
         )],
@@ -261,7 +271,7 @@ TIMESTAMP_TEST_CASES = [
         ]),
         [IntegrityIssue(
             check_type="timestamp_out_of_order",
-            severity=Severity.ERROR,
+            severity=ERROR,
             seq_ids=[1, 2],
             details="Timestamp out of order: seq_id 2 has earlier timestamp than seq_id 1 (can also indicate non-adjacent duplicate timestamps)",
         )],
@@ -279,6 +289,7 @@ _CONTENT_LENGTH_THRESHOLD = 35  # must match the threshold in the impl
 # Pre-baked overrides dicts for use in make_message_sequence.
 # Each is computed once so both records get identical serialized content (simulating re-persistence).
 # UserPromptPart duplicates (ModelRequest)
+_EMPTY_DUP = {"type": "ModelRequest", "content": dump_msg_json(make_request(""))}
 _SHORT_DUP = {"type": "ModelRequest", "content": dump_msg_json(make_request("ok"))}
 _LONG_DUP  = {"type": "ModelRequest", "content": dump_msg_json(make_request("x" * (_CONTENT_LENGTH_THRESHOLD + 1)))}
 
@@ -299,7 +310,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
         ]),
         [IntegrityIssue(
             check_type="adjacent_content_duplicate",
-            severity=Severity.ERROR,
+            severity=ERROR,
             seq_ids=[0, 1],
             details="Adjacent messages at seq_ids 0 and 1 have identical content",
         )],
@@ -314,7 +325,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
         ]),
         [IntegrityIssue(
             check_type="adjacent_content_duplicate",
-            severity=Severity.ERROR,
+            severity=ERROR,
             seq_ids=[0, 1],
             details="Adjacent messages at seq_ids 0 and 1 have identical content",
         )],
@@ -332,7 +343,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
         ]),
         [IntegrityIssue(
             check_type="content_duplicate",
-            severity=Severity.ERROR,
+            severity=ERROR,
             seq_ids=[0, 5],
             details="Non-adjacent duplicate content at seq_ids [0, 5]",
         )],
@@ -359,7 +370,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
         ]),
         [IntegrityIssue(
             check_type="content_duplicate",
-            severity=Severity.WARN,
+            severity=WARN,
             seq_ids=[0, 2, 4],
             details="Short content repeated 3 times at seq_ids [0, 2, 4]",
         )],
@@ -374,7 +385,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
         ]),
         [IntegrityIssue(
             check_type="adjacent_content_duplicate",
-            severity=Severity.ERROR,
+            severity=ERROR,
             seq_ids=[0, 1],
             details="Adjacent messages at seq_ids 0 and 1 have identical content",
         )],
