@@ -52,7 +52,7 @@ def check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[Integrity
         issues.append(IntegrityIssue(
             check_type="seq_id_gap",
             severity=ERROR,
-            seq_ids=[None, first_seq],
+            seq_ids=[first_seq],
             details=f"Gap in seq_ids: expected 0, got {first_seq} (missing 0 through {first_seq - 1})",
         ))
     
@@ -107,7 +107,11 @@ def check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[Integr
                 check_type="timestamp_out_of_order",
                 severity=ERROR,
                 seq_ids=[prev.seq_id, curr.seq_id],
-                details=f"Timestamp out of order: seq_id {curr.seq_id} has earlier timestamp than seq_id {prev.seq_id} (can also indicate non-adjacent duplicate timestamps)",
+                details=(
+                    f"Timestamp out of order at seq_ids {prev.seq_id} → {curr.seq_id}: "
+                    f"{prev.timestamp} → {curr.timestamp}. "
+                    "Possible causes: insertion order bug, clock skew, or re-persisted duplicate."
+                ),
             ))
         elif curr.timestamp == prev.timestamp:
             issues.append(IntegrityIssue(
@@ -122,7 +126,6 @@ def check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[Integr
 
 @dataclass
 class PartAndMetadata:
-    # TODO: double check all these fields requried
     part: ModelRequestPart | ModelResponsePart 
     idx: int # index of the msg where this part originated
     seq_id: int # seq_id of the msg where this part originated
@@ -171,7 +174,6 @@ def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[Integr
 
     for suspect_hash in part_hashes_suspected_of_duplication:
         suspect_part_and_meta_list = part_hash_table[suspect_hash]
-        suspect_part_and_meta = suspect_part_and_meta_list[0]
 
         suspect_msgs_adjacent = False
         for i in range(1, len(suspect_part_and_meta_list)):
@@ -184,7 +186,7 @@ def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[Integr
         if suspect_msgs_adjacent:
             severity = ERROR
             detail_preamble = "Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur."
-        elif len(suspect_part_and_meta.part.content) > CONTENT_LENGTH_THRESHOLD:
+        elif len(suspect_part_and_meta_list[0].part.content) > CONTENT_LENGTH_THRESHOLD:
             # content is long enough that legit repetition by chance is very unlikely
             severity = ERROR
             detail_preamble = "High length duplicate content detected. Higher length content is less likely to naturally recur."
@@ -203,8 +205,8 @@ def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[Integr
                 check_type="content_duplicate",
                 severity=severity,
                 seq_ids=bad_seq_ids,
-                details=detail_preamble + f" Duplication occured at seq_ids: {bad_seq_ids}",
-                )
+                details=detail_preamble + f" Duplication occurred at seq_ids: {bad_seq_ids}",
+            )
             integrity_issues.append(integrity_issue)
 
     return integrity_issues

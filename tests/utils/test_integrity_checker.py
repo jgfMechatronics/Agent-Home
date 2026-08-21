@@ -219,7 +219,7 @@ SEQ_ID_TEST_CASES = [
         [IntegrityIssue(
             check_type="seq_id_gap",
             severity=ERROR,
-            seq_ids=[None, 1],
+            seq_ids=[1],
             details="Gap in seq_ids: expected 0, got 1 (missing 0 through 0)",
         )],
         id="missing_initial_seq_id",
@@ -259,7 +259,11 @@ TIMESTAMP_TEST_CASES = [
             check_type="timestamp_out_of_order",
             severity=ERROR,
             seq_ids=[4, 5],
-            details="Timestamp out of order: seq_id 5 has earlier timestamp than seq_id 4 (can also indicate non-adjacent duplicate timestamps)",
+            details=(
+                "Timestamp out of order at seq_ids 4 → 5: "
+                "2026-01-01 12:00:04 → 2026-01-01 12:00:01. "
+                "Possible causes: insertion order bug, clock skew, or re-persisted duplicate."
+            ),
         )],
         id="duplicate_timestamp_non_adjacent",
     ),
@@ -273,7 +277,11 @@ TIMESTAMP_TEST_CASES = [
             check_type="timestamp_out_of_order",
             severity=ERROR,
             seq_ids=[1, 2],
-            details="Timestamp out of order: seq_id 2 has earlier timestamp than seq_id 1 (can also indicate non-adjacent duplicate timestamps)",
+            details=(
+                "Timestamp out of order at seq_ids 1 → 2: "
+                "2026-01-01 12:00:02 → 2026-01-01 12:00:01. "
+                "Possible causes: insertion order bug, clock skew, or re-persisted duplicate."
+            ),
         )],
         id="timestamp_inversion",
     ),
@@ -315,7 +323,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
             details=(
                 "Duplicate content found in adjacent messages. "
                 "Adjacent duplication is unlikely to naturally occur. "
-                "Duplication occured at seq_ids: [0, 1]"
+                "Duplication occurred at seq_ids: [0, 1]"
             ),
         )],
         id="adjacent_duplicate_long",
@@ -334,7 +342,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
             details=(
                 "Duplicate content found in adjacent messages. "
                 "Adjacent duplication is unlikely to naturally occur. "
-                "Duplication occured at seq_ids: [0, 1]"
+                "Duplication occurred at seq_ids: [0, 1]"
             ),
         )],
         id="adjacent_duplicate_short",
@@ -356,7 +364,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
             details=(
                 "High length duplicate content detected. "
                 "Higher length content is less likely to naturally recur. "
-                "Duplication occured at seq_ids: [0, 5]"
+                "Duplication occurred at seq_ids: [0, 5]"
             ),
         )],
         id="non_adjacent_duplicate_long",
@@ -386,7 +394,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
             seq_ids=[0, 2, 4],
             details=(
                 "Short length duplicate content detected with suspect frequency. "
-                "Duplication occured at seq_ids: [0, 2, 4]"
+                "Duplication occurred at seq_ids: [0, 2, 4]"
             ),
         )],
         id="non_adjacent_duplicate_short_3x_warn",
@@ -405,7 +413,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
             details=(
                 "Duplicate content found in adjacent messages. "
                 "Adjacent duplication is unlikely to naturally occur. "
-                "Duplication occured at seq_ids: [0, 1]"
+                "Duplication occurred at seq_ids: [0, 1]"
             ),
         )],
         id="adjacent_duplicate_thinking",
