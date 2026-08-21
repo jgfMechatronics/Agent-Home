@@ -43,8 +43,6 @@ def check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[Integrity
     Returns:
         List of IntegrityIssues for any gaps or duplicates found.
     """
-    if not records:
-        return []
     
     issues: list[IntegrityIssue] = []
     
@@ -171,15 +169,15 @@ def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[Integr
                 # since this is new its not suspect...yet
 
     for suspect_hash in part_hashes_suspected_of_duplication:
-        suspect_part_list = part_hash_table[suspect_hash]
-        suspect_part = suspect_part_list[0]
+        suspect_part_and_meta_list = part_hash_table[suspect_hash]
+        suspect_part_and_meta = suspect_part_and_meta_list[0]
 
         # we already know these parts have identical type and content, now determine how much we care
-        if len(suspect_part.content) > CONTENT_LENGTH_THRESHOLD:
+        if len(suspect_part_and_meta.part.content) > CONTENT_LENGTH_THRESHOLD:
             # content is long enough that legit repetition by chance is very unlikely
             severity = ERROR
             detail_preamble = "High length duplicate content detected. Higher length content is less likely to naturally recur."
-        elif len(suspect_part_list) >= 3:
+        elif len(suspect_part_and_meta_list) >= 3:
             # Even though its short, this much repetition is suspicious
             # NOTE: we may find we need an intermediate threshold or regex for stuff like "ok"
             severity = WARN
@@ -189,7 +187,7 @@ def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[Integr
             severity = NO_ERROR
 
         if severity != NO_ERROR:
-            bad_seq_ids = [p.seq_id for p in suspect_part_list]
+            bad_seq_ids = [p.seq_id for p in suspect_part_and_meta_list]
             integrity_issue = IntegrityIssue(
                 check_type="content_duplicate",
                 severity=severity,
@@ -197,8 +195,8 @@ def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[Integr
                 details=detail_preamble + f"Duplication occured at seq_ids: {bad_seq_ids}",
                 )
             integrity_issues.append(integrity_issue)
-            
-            
+
+    return integrity_issues
 
 
 async def check_agent_integrity(
@@ -216,7 +214,10 @@ async def check_agent_integrity(
     """
     # Load all messages once (in seq_id order)
     records = await load_messages(session, agent_id)
-    
+
+    if not records:
+        return []
+
     issues: list[IntegrityIssue] = []
     issues.extend(check_seq_id_consecutive(records))
     issues.extend(check_timestamps_increasing(records))
