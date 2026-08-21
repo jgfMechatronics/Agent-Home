@@ -120,7 +120,7 @@ def _replace_orphaned_tool_messages(
     return sanitized_msgs, errors
 
 
-def _dump_msg_json(msg: ModelMessage) -> str:
+def dump_msg_json(msg: ModelMessage) -> str:
     """Serialize a single ModelMessage to a JSON string (without outer array brackets)."""
     return ModelMessagesTypeAdapter.dump_json([msg]).decode()[1:-1]
 
@@ -165,7 +165,7 @@ def _handle_serialization_error(
     )
     error_text = f"[persist_messages serialization error]: {type(e).__name__}: {e}"
     error_msg = ModelResponse(parts=[TextPart(content=error_text)])
-    content = _dump_msg_json(error_msg)
+    content = dump_msg_json(error_msg)
     error_to_append = (original_ts, error_text) # return this for caller to append to avoid sneakily mutating list
     return content, "ModelResponse", error_msg, error_to_append
 
@@ -292,7 +292,7 @@ async def persist_messages(
             # NOTE: The per msg serialization allows us to eliminate specific messages which have serialization failures,
             # but likely costs us some performance. This is an optimization opportunity: could have happy path try serializing the whole
             # list then on failure go message by message
-            content = _dump_msg_json(msg)
+            content = dump_msg_json(msg)
             msg_type = type(msg).__name__
         except Exception as e:
             content, msg_type, msg, error_to_append = _handle_serialization_error(msg, e, deps.agent_id)

@@ -93,7 +93,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime
 
-from conftest import PARTIAL_MESSAGE_FIELDS
+from pydantic_ai.messages import ModelResponse, ThinkingPart
+
+from conftest import PARTIAL_MESSAGE_FIELDS, make_request, make_response
+from messages.messages import dump_msg_json
 from db.models import AgentRecord, MessageRecord
 from utils.integrity_checker import IntegrityIssue, Severity, check_agent_integrity
 
@@ -104,18 +107,20 @@ from utils.integrity_checker import IntegrityIssue, Severity, check_agent_integr
 
 def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRecord:
     """Construct a MessageRecord with realistic defaults.
-    
+
     Requires seed_stub_snapshots fixture to be active (for FK satisfaction).
-    timestamp defaults to datetime(2026, 1, 1, 12, 0, seq_id) if not provided.
-    content defaults to a random UUID string to avoid spurious duplicate content issues
-    in tests that aren't testing content duplication.
+    - type alternates ModelRequest/ModelResponse by seq_id (even=request, odd=response)
+    - content is a properly serialized ModelMessage with random UUID text to ensure uniqueness in default case
+    - timestamp defaults to datetime(2026, 1, 1, 12, 0, seq_id)
     """
+    msg = make_request(str(uuid4())) if seq_id % 2 == 0 else make_response(str(uuid4()))
     defaults = {
         "agent_id": agent_id,
         "seq_id": seq_id,
         "timestamp": datetime(2026, 1, 1, 12, 0, seq_id),
         **PARTIAL_MESSAGE_FIELDS,
-        "content": str(uuid4()),  # random default — avoids spurious duplicate content issues in non-content tests
+        "type": type(msg).__name__,
+        "content": dump_msg_json(msg),
     }
     return MessageRecord(**{**defaults, **overrides})
 
@@ -279,17 +284,25 @@ TIMESTAMP_TEST_CASES = [
 
 _CONTENT_LENGTH_THRESHOLD = 35  # must match the threshold in the impl
 
-# Content fixtures: clearly above/below threshold so the intent is obvious
-SHORT_CONTENT = "short"          # 5 chars — well under threshold
-LONG_CONTENT = "x" * (_CONTENT_LENGTH_THRESHOLD + 1)  # one char over threshold
+# Pre-baked overrides dicts for use in make_message_sequence.
+# Each is computed once so both records get identical serialized content (simulating re-persistence).
+# UserPromptPart duplicates (ModelRequest)
+_SHORT_DUP = {"type": "ModelRequest", "content": dump_msg_json(make_request("ok"))}
+_LONG_DUP  = {"type": "ModelRequest", "content": dump_msg_json(make_request("x" * (_CONTENT_LENGTH_THRESHOLD + 1)))}
+
+# ThinkingPart duplicates (ModelResponse with a thinking block)
+def _make_thinking_response(thinking: str) -> ModelResponse:
+    return ModelResponse(parts=[ThinkingPart(content=thinking)])
+
+_LONG_THINKING_DUP = {"type": "ModelResponse", "content": dump_msg_json(_make_thinking_response("x" * (_CONTENT_LENGTH_THRESHOLD + 1)))}
 
 
 CONTENT_DUPLICATE_TEST_CASES = [
     # Adjacent duplicate — always ERROR, regardless of content length
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
-            {"content": LONG_CONTENT},
-            {"content": LONG_CONTENT},  # adjacent duplicate
+            {**_LONG_DUP},
+            {**_LONG_DUP},  # adjacent duplicate
             {},
         ]),
         [IntegrityIssue(
@@ -303,8 +316,8 @@ CONTENT_DUPLICATE_TEST_CASES = [
     # Adjacent duplicate, short content — still ERROR (regardless of length)
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
-            {"content": SHORT_CONTENT},
-            {"content": SHORT_CONTENT},  # adjacent duplicate
+            {**_SHORT_DUP},
+            {**_SHORT_DUP},  # adjacent duplicate
             {},
         ]),
         [IntegrityIssue(
@@ -318,12 +331,12 @@ CONTENT_DUPLICATE_TEST_CASES = [
     # Non-adjacent, long content — ERROR
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
-            {"content": LONG_CONTENT},
+            {**_LONG_DUP},
             {},  # unique x4
             {},
             {},
             {},
-            {"content": LONG_CONTENT},  # non-adjacent duplicate
+            {**_LONG_DUP},  # non-adjacent duplicate
         ]),
         [IntegrityIssue(
             check_type="content_duplicate",
@@ -336,9 +349,9 @@ CONTENT_DUPLICATE_TEST_CASES = [
     # Non-adjacent, short content, 2 occurrences — no issue (threshold is 3+)
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
-            {"content": SHORT_CONTENT},
-            {},                          # unique middle
-            {"content": SHORT_CONTENT},  # 2nd occurrence — below frequency threshold
+            {**_SHORT_DUP},
+            {},              # unique middle
+            {**_SHORT_DUP},  # 2nd occurrence — below frequency threshold
         ]),
         [],
         id="non_adjacent_duplicate_short_2x_no_issue",
@@ -346,11 +359,11 @@ CONTENT_DUPLICATE_TEST_CASES = [
     # Non-adjacent, short content, 3 occurrences — WARN
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
-            {"content": SHORT_CONTENT},
-            {},                          # unique
-            {"content": SHORT_CONTENT},  # 2nd
-            {},                          # unique
-            {"content": SHORT_CONTENT},  # 3rd — crosses frequency threshold
+            {**_SHORT_DUP},
+            {},              # unique
+            {**_SHORT_DUP},  # 2nd
+            {},              # unique
+            {**_SHORT_DUP},  # 3rd — crosses frequency threshold
         ]),
         [IntegrityIssue(
             check_type="content_duplicate",
@@ -359,6 +372,21 @@ CONTENT_DUPLICATE_TEST_CASES = [
             details="Short content repeated 3 times at seq_ids [0, 2, 4]",
         )],
         id="non_adjacent_duplicate_short_3x_warn",
+    ),
+    # ThinkingPart: adjacent duplicate — verifies thinking block content is inspected at all
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {**_LONG_THINKING_DUP},
+            {**_LONG_THINKING_DUP},  # adjacent duplicate
+            {},
+        ]),
+        [IntegrityIssue(
+            check_type="adjacent_content_duplicate",
+            severity=Severity.ERROR,
+            seq_ids=[0, 1],
+            details="Adjacent messages at seq_ids 0 and 1 have identical content",
+        )],
+        id="adjacent_duplicate_thinking",
     ),
 ]
 
