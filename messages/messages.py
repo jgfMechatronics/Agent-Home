@@ -1,5 +1,8 @@
 """
 Message persistence, retrieval, and formatting utilities.
+
+TODO: convert any functions that take a list but are read only to use sequence typehint.
+Here and **across codebase**
 """
 import dataclasses
 import hashlib
@@ -7,6 +10,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
+from collections.abc import Sequence
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -359,16 +363,7 @@ async def load_messages(
     return list(result.scalars().all())
 
 
-def deserialize_single_message(record: MessageRecord) -> ModelMessage | None:
-    # Content is single-message JSON; wrap in array for TypeAdapter
-    message = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
-    if message:
-        return message[0]
-    else:
-        return None
-
-
-def deserialize_messages(records: list[MessageRecord]) -> list[ModelMessage]:
+def deserialize_messages(records: Sequence[MessageRecord]) -> list[ModelMessage]:
     """Convert MessageRecords to Pydantic AI ModelMessages.
 
     Pure function — no database access. Handles all message types including summaries.
@@ -377,10 +372,10 @@ def deserialize_messages(records: list[MessageRecord]) -> list[ModelMessage]:
     result: list[ModelMessage] = []
     for record in records:
         try:
-            message = deserialize_single_message(record)
-
-            if message:
-                result.append(message)
+            # Content is single-message JSON; wrap in array for TypeAdapter
+            messages = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
+            if messages:
+                result.append(messages[0])
         except Exception as e:
             raise ValueError(f"[Deserialization error for record {record.id}]: {e}") from e
     return result
