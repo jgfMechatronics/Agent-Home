@@ -147,18 +147,19 @@ def make_message_sequence(agent_id: str, overrides_list: list[dict]) -> list[Mes
 # Each test case: (build_records callable, expected_issues list)
 # build_records takes agent_id and returns list of MessageRecords to insert
 
+# Universal happy path — shared across all check categories via CLEAN_TEST_CASES below.
+# Verifies that a well-formed sequence produces no issues regardless of which check runs.
+CLEAN_TEST_CASES = [
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [{}, {}, {}, {}]),
+        [],
+        id="clean_no_issues",
+    ),
+]
+
 # NOTE: No non-adjacent duplicate test for seq_id — after ORDER BY seq_id, duplicates
 # are always adjacent. Non-adjacent duplicates in insertion order become adjacent after load.
 SEQ_ID_TEST_CASES = [
-    pytest.param(
-        lambda agent_id: [
-            make_message_record(agent_id, seq_id=0),
-            make_message_record(agent_id, seq_id=1),
-            make_message_record(agent_id, seq_id=2),
-        ],
-        [],
-        id="clean_sequence",
-    ),
     pytest.param(
         lambda agent_id: [],
         [],
@@ -221,15 +222,6 @@ SEQ_ID_TEST_CASES = [
 # ---------------------------------------------------------------------------
 
 TIMESTAMP_TEST_CASES = [
-    pytest.param(
-        lambda agent_id: make_message_sequence(agent_id, [
-            {"timestamp": datetime(2026, 1, 1, 12, 0, 0)},
-            {"timestamp": datetime(2026, 1, 1, 12, 0, 1)},
-            {"timestamp": datetime(2026, 1, 1, 12, 0, 2)},
-        ]),
-        [],
-        id="clean_increasing",
-    ),
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
             {"timestamp": datetime(2026, 1, 1, 12, 0, 0)},
@@ -414,6 +406,10 @@ class TestCheckAgentIntegrity:
         assert issues == expected_issues
 
     # The below structure gives us a nice heirerchy in test explorer and isolates failures to particular param lists better
+    @pytest.mark.parametrize("build_records,expected_issues", CLEAN_TEST_CASES)
+    async def test_clean(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        await self._run_check(build_records, expected_issues)
+
     @pytest.mark.parametrize("build_records,expected_issues", SEQ_ID_TEST_CASES)
     async def test_seq_id(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
