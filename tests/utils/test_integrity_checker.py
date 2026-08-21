@@ -309,10 +309,14 @@ CONTENT_DUPLICATE_TEST_CASES = [
             {},
         ]),
         [IntegrityIssue(
-            check_type="adjacent_content_duplicate",
+            check_type="content_duplicate",
             severity=ERROR,
             seq_ids=[0, 1],
-            details="Adjacent messages at seq_ids 0 and 1 have identical content",
+            details=(
+                "Duplicate content found in adjacent messages. "
+                "Adjacent duplication is unlikely to naturally occur. "
+                "Duplication occured at seq_ids: [0, 1]"
+            ),
         )],
         id="adjacent_duplicate_long",
     ),
@@ -324,10 +328,14 @@ CONTENT_DUPLICATE_TEST_CASES = [
             {},
         ]),
         [IntegrityIssue(
-            check_type="adjacent_content_duplicate",
+            check_type="content_duplicate",
             severity=ERROR,
             seq_ids=[0, 1],
-            details="Adjacent messages at seq_ids 0 and 1 have identical content",
+            details=(
+                "Duplicate content found in adjacent messages. "
+                "Adjacent duplication is unlikely to naturally occur. "
+                "Duplication occured at seq_ids: [0, 1]"
+            ),
         )],
         id="adjacent_duplicate_short",
     ),
@@ -345,7 +353,11 @@ CONTENT_DUPLICATE_TEST_CASES = [
             check_type="content_duplicate",
             severity=ERROR,
             seq_ids=[0, 5],
-            details="Non-adjacent duplicate content at seq_ids [0, 5]",
+            details=(
+                "High length duplicate content detected. "
+                "Higher length content is less likely to naturally recur. "
+                "Duplication occured at seq_ids: [0, 5]"
+            ),
         )],
         id="non_adjacent_duplicate_long",
     ),
@@ -372,7 +384,10 @@ CONTENT_DUPLICATE_TEST_CASES = [
             check_type="content_duplicate",
             severity=WARN,
             seq_ids=[0, 2, 4],
-            details="Short content repeated 3 times at seq_ids [0, 2, 4]",
+            details=(
+                "Short length duplicate content detected with suspect frequency. "
+                "Duplication occured at seq_ids: [0, 2, 4]"
+            ),
         )],
         id="non_adjacent_duplicate_short_3x_warn",
     ),
@@ -384,10 +399,14 @@ CONTENT_DUPLICATE_TEST_CASES = [
             {},
         ]),
         [IntegrityIssue(
-            check_type="adjacent_content_duplicate",
+            check_type="content_duplicate",
             severity=ERROR,
             seq_ids=[0, 1],
-            details="Adjacent messages at seq_ids 0 and 1 have identical content",
+            details=(
+                "Duplicate content found in adjacent messages. "
+                "Adjacent duplication is unlikely to naturally occur. "
+                "Duplication occured at seq_ids: [0, 1]"
+            ),
         )],
         id="adjacent_duplicate_thinking",
     ),

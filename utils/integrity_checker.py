@@ -131,6 +131,7 @@ class PartAndMetadata:
 def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     # mapping part content hash to the seq id which the part occured at
     CONTENT_LENGTH_THRESHOLD = 35
+    SHORT_CONTENT_FREQ_THRESHOLD = 3
     integrity_issues = []
 
     try:
@@ -172,18 +173,28 @@ def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[Integr
         suspect_part_and_meta_list = part_hash_table[suspect_hash]
         suspect_part_and_meta = suspect_part_and_meta_list[0]
 
+        suspect_msgs_adjacent = False
+        for i in range(1, len(suspect_part_and_meta_list)):
+            # looking for ANY adjacent sus messages
+            if (suspect_part_and_meta_list[i - 1].idx + 1) == suspect_part_and_meta_list[i].idx:
+                suspect_msgs_adjacent = True
+                break
+
         # we already know these parts have identical type and content, now determine how much we care
-        if len(suspect_part_and_meta.part.content) > CONTENT_LENGTH_THRESHOLD:
+        if suspect_msgs_adjacent:
+            severity = ERROR
+            detail_preamble = "Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur."
+        elif len(suspect_part_and_meta.part.content) > CONTENT_LENGTH_THRESHOLD:
             # content is long enough that legit repetition by chance is very unlikely
             severity = ERROR
             detail_preamble = "High length duplicate content detected. Higher length content is less likely to naturally recur."
-        elif len(suspect_part_and_meta_list) >= 3:
+        elif len(suspect_part_and_meta_list) >= SHORT_CONTENT_FREQ_THRESHOLD:
             # Even though its short, this much repetition is suspicious
             # NOTE: we may find we need an intermediate threshold or regex for stuff like "ok"
             severity = WARN
             detail_preamble = "Short length duplicate content detected with suspect frequency."
         else:
-            # Short content that didn't occur many times. Not that sus
+            # Short content that didn't occur many times or adjacently. Not that sus
             severity = NO_ERROR
 
         if severity != NO_ERROR:
@@ -192,7 +203,7 @@ def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[Integr
                 check_type="content_duplicate",
                 severity=severity,
                 seq_ids=bad_seq_ids,
-                details=detail_preamble + f"Duplication occured at seq_ids: {bad_seq_ids}",
+                details=detail_preamble + f" Duplication occured at seq_ids: {bad_seq_ids}",
                 )
             integrity_issues.append(integrity_issue)
 
