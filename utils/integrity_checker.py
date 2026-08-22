@@ -124,6 +124,136 @@ def check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[Integr
     return issues
 
 
+_CONTENT_LENGTH_THRESHOLD = 35
+
+
+def _extract_content_length(record: MessageRecord) -> int:
+    """Extract total text content length from a MessageRecord.
+    
+    Sums text from UserPromptPart, TextPart, ThinkingPart, etc.
+    Used to determine if duplicate content is "long" (suspicious) or "short" (possibly benign).
+    """
+    from pydantic_ai.messages import (
+        UserPromptPart, TextPart, ThinkingPart, SystemPromptPart,
+    )
+    
+    messages = deserialize_messages([record])
+    if not messages:
+        return 0
+    
+    msg = messages[0]
+    total_length = 0
+    
+    for part in msg.parts:
+        if isinstance(part, (UserPromptPart, TextPart, SystemPromptPart)):
+            if isinstance(part.content, str):
+                total_length += len(part.content)
+        elif isinstance(part, ThinkingPart):
+            if part.content:
+                total_length += len(part.content)
+    
+    return total_length
+
+
+def _compute_content_hash(record: MessageRecord) -> str:
+    """Compute stable SHA256 hash of MessageRecord content."""
+    return hashlib.sha256(record.content.encode()).hexdigest()
+
+
+def check_content_duplicates(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+    """Check for duplicate content in message history.
+    
+    Uses SHA256 hashing for O(n) detection. Differentiates:
+    - Adjacent duplicates (consecutive seq_ids): always ERROR
+    - Non-adjacent duplicates, long content (>35 chars): ERROR  
+    - Non-adjacent duplicates, short content, 3+ occurrences: WARN
+    - Empty content: never flagged
+    
+    Args:
+        records: MessageRecords in seq_id order
+    
+    Returns:
+        List of IntegrityIssues for detected duplicates.
+    """
+    if len(records) <= 1:
+        return []
+    
+    # Track: hash -> list of (seq_id, content_length)
+    seen: dict[str, list[tuple[int, int]]] = {}
+    
+    for record in records:
+        content_length = _extract_content_length(record)
+        
+        # Skip empty content entirely
+        if content_length == 0:
+            continue
+        
+        content_hash = _compute_content_hash(record)
+        
+        if content_hash not in seen:
+            seen[content_hash] = []
+        seen[content_hash].append((record.seq_id, content_length))
+    
+    issues: list[IntegrityIssue] = []
+    
+    for content_hash, occurrences in seen.items():
+        if len(occurrences) < 2:
+            continue
+        
+        seq_ids = [seq_id for seq_id, _ in occurrences]
+        content_length = occurrences[0][1]  # All occurrences have same content, so same length
+        
+        # Check for adjacency: any two consecutive occurrences where seq_ids differ by 1
+        has_adjacent = any(
+            seq_ids[i+1] - seq_ids[i] == 1 
+            for i in range(len(seq_ids) - 1)
+        )
+        
+        if has_adjacent:
+            # Find the adjacent pair(s) - report first adjacent pair
+            for i in range(len(seq_ids) - 1):
+                if seq_ids[i+1] - seq_ids[i] == 1:
+                    issues.append(IntegrityIssue(
+                        check_type="content_duplicate",
+                        severity=ERROR,
+                        seq_ids=[seq_ids[i], seq_ids[i+1]],
+                        details=(
+                            "Duplicate content found in adjacent messages. "
+                            "Adjacent duplication is unlikely to naturally occur. "
+                            f"Duplication occurred at seq_ids: {[seq_ids[i], seq_ids[i+1]]}"
+                        ),
+                    ))
+                    break  # Only report first adjacent pair
+        else:
+            # Non-adjacent duplicate
+            if content_length > _CONTENT_LENGTH_THRESHOLD:
+                # Long content: always ERROR
+                issues.append(IntegrityIssue(
+                    check_type="content_duplicate",
+                    severity=ERROR,
+                    seq_ids=seq_ids,
+                    details=(
+                        "High length duplicate content detected. "
+                        "Higher length content is less likely to naturally recur. "
+                        f"Duplication occurred at seq_ids: {seq_ids}"
+                    ),
+                ))
+            elif len(occurrences) >= 3:
+                # Short content, 3+ occurrences: WARN
+                issues.append(IntegrityIssue(
+                    check_type="content_duplicate",
+                    severity=WARN,
+                    seq_ids=seq_ids,
+                    details=(
+                        "Short length duplicate content detected with suspect frequency. "
+                        f"Duplication occurred at seq_ids: {seq_ids}"
+                    ),
+                ))
+            # else: short content, <3 occurrences: no issue
+    
+    return issues
+
+
 async def check_agent_integrity(
     session: AsyncSession,
     agent_id: str,
@@ -146,5 +276,6 @@ async def check_agent_integrity(
     issues: list[IntegrityIssue] = []
     issues.extend(check_seq_id_consecutive(records))
     issues.extend(check_timestamps_increasing(records))
+    issues.extend(check_content_duplicates(records))
     
     return issues
