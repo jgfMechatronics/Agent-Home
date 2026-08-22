@@ -126,44 +126,39 @@ def check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[Integr
 
 _CONTENT_LENGTH_THRESHOLD = 35
 
+# Part types to check for duplicates (skip tool-related parts - too prone to natural duplication)
+_CHECKABLE_PART_TYPES = ("UserPromptPart", "TextPart", "ThinkingPart", "SystemPromptPart")
 
-def _extract_content_length(record: MessageRecord) -> int:
-    """Extract total text content length from a MessageRecord.
+
+def _extract_part_content(part: ModelRequestPart | ModelResponsePart) -> str | None:
+    """Extract text content from a part, or None if not a checkable type or empty.
     
-    Sums text from UserPromptPart, TextPart, ThinkingPart, etc.
-    Used to determine if duplicate content is "long" (suspicious) or "short" (possibly benign).
+    Only checks UserPromptPart, TextPart, ThinkingPart, SystemPromptPart.
+    Skips ToolCallPart, ToolReturnPart, RetryPromptPart (too prone to natural duplication).
     """
-    from pydantic_ai.messages import (
-        UserPromptPart, TextPart, ThinkingPart, SystemPromptPart,
-    )
+    from pydantic_ai.messages import UserPromptPart, TextPart, ThinkingPart, SystemPromptPart
     
-    messages = deserialize_messages([record])
-    if not messages:
-        return 0
-    
-    msg = messages[0]
-    total_length = 0
-    
-    for part in msg.parts:
-        if isinstance(part, (UserPromptPart, TextPart, SystemPromptPart)):
-            if isinstance(part.content, str):
-                total_length += len(part.content)
-        elif isinstance(part, ThinkingPart):
-            if part.content:
-                total_length += len(part.content)
-    
-    return total_length
+    if isinstance(part, (UserPromptPart, TextPart, SystemPromptPart)):
+        if isinstance(part.content, str) and part.content:
+            return part.content
+    elif isinstance(part, ThinkingPart):
+        if part.content:
+            return part.content
+    return None
 
 
-def _compute_content_hash(record: MessageRecord) -> str:
-    """Compute stable SHA256 hash of MessageRecord content."""
-    return hashlib.sha256(record.content.encode()).hexdigest()
+def _hash_content(content: str) -> str:
+    """Compute stable SHA256 hash of content string."""
+    return hashlib.sha256(content.encode()).hexdigest()
 
 
 def check_content_duplicates(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
-    """Check for duplicate content in message history.
+    """Check for duplicate part content in message history.
     
-    Uses SHA256 hashing for O(n) detection. Differentiates:
+    Hashes individual parts (not whole messages) using SHA256 for O(n) detection.
+    Only checks UserPromptPart, TextPart, ThinkingPart, SystemPromptPart.
+    
+    Differentiates:
     - Adjacent duplicates (consecutive seq_ids): always ERROR
     - Non-adjacent duplicates, long content (>35 chars): ERROR  
     - Non-adjacent duplicates, short content, 3+ occurrences: WARN
@@ -182,17 +177,22 @@ def check_content_duplicates(records: Sequence[MessageRecord]) -> list[Integrity
     seen: dict[str, list[tuple[int, int]]] = {}
     
     for record in records:
-        content_length = _extract_content_length(record)
-        
-        # Skip empty content entirely
-        if content_length == 0:
+        messages = deserialize_messages([record])
+        if not messages:
             continue
         
-        content_hash = _compute_content_hash(record)
-        
-        if content_hash not in seen:
-            seen[content_hash] = []
-        seen[content_hash].append((record.seq_id, content_length))
+        msg = messages[0]
+        for part in msg.parts:
+            content = _extract_part_content(part)
+            if content is None:
+                continue
+            
+            content_hash = _hash_content(content)
+            content_length = len(content)
+            
+            if content_hash not in seen:
+                seen[content_hash] = []
+            seen[content_hash].append((record.seq_id, content_length))
     
     issues: list[IntegrityIssue] = []
     
