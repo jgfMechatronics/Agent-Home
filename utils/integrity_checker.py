@@ -124,6 +124,10 @@ def check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[Integr
     return issues
 
 
+# ---------------------------------------------------------------------------
+# Duplicate Content Detection
+# ---------------------------------------------------------------------------
+
 @dataclass
 class PartAndMetadata:
     part: ModelRequestPart | ModelResponsePart 
@@ -131,22 +135,10 @@ class PartAndMetadata:
     seq_id: int # seq_id of the msg where this part originated
 
 
-def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
-    # mapping part content hash to the seq id which the part occured at
-    CONTENT_LENGTH_THRESHOLD = 35
-    SHORT_CONTENT_FREQ_THRESHOLD = 3
-    integrity_issues = []
-
-    try:
-        messages = deserialize_messages(records)
-    except ValueError:
-        return [IntegrityIssue(
-            check_type="deserialization",
-            severity=ERROR,
-            seq_ids=[],
-            details="Deserialization error while attempting to perform duplication check. Manual intervention required!"
-        )]
-
+def _build_part_hash_table(
+    messages: list,
+    records: Sequence[MessageRecord],
+) -> tuple[dict[str, list[PartAndMetadata]], list[str]]:
     part_hash_table: dict[str, list[PartAndMetadata]] = {}
     part_hashes_suspected_of_duplication: list[str] = []
 
@@ -158,29 +150,39 @@ def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[Integr
                 continue
 
             # Avoid declaring duplicate across part type
-            part_type_and_content = str(part.content) + part.part_kind 
+            part_type_and_content = str(part.content) + part.part_kind
             part_hash = hashlib.sha256(part_type_and_content.encode("utf-8")).hexdigest()
             part_and_metadata = PartAndMetadata(part, i, records[i].seq_id)
 
             if part_hash in part_hash_table:
                 if len(part_hash_table[part_hash]) == 1:
                     # first time we've suspected this hash, record it as such
-                    # We have further checks later to determine if its truly bad 
+                    # We have further checks later to determine if its truly bad
                     part_hashes_suspected_of_duplication.append(part_hash)
                 part_hash_table[part_hash].append(part_and_metadata)
             else:
                 part_hash_table[part_hash] = [part_and_metadata]
                 # since this is new its not suspect...yet
 
+    return part_hash_table, part_hashes_suspected_of_duplication
+
+
+def _find_issues_in_suspect_parts(
+    part_hashes_suspected_of_duplication: list[str],
+    part_hash_table: dict[str, list[PartAndMetadata]],
+) -> list[IntegrityIssue]:
+    CONTENT_LENGTH_THRESHOLD = 35
+    SHORT_CONTENT_FREQ_THRESHOLD = 3
+    integrity_issues = []
+
     for suspect_hash in part_hashes_suspected_of_duplication:
         suspect_part_and_meta_list = part_hash_table[suspect_hash]
 
-        suspect_msgs_adjacent = False
-        for i in range(1, len(suspect_part_and_meta_list)):
-            # looking for ANY adjacent sus messages
-            if (suspect_part_and_meta_list[i - 1].idx + 1) == suspect_part_and_meta_list[i].idx:
-                suspect_msgs_adjacent = True
-                break
+        # looking for ANY adjacent suspect messages
+        suspect_msgs_adjacent = any(
+            a.idx + 1 == b.idx
+            for a, b in zip(suspect_part_and_meta_list, suspect_part_and_meta_list[1:])
+        )
 
         # we already know these parts have identical type and content, now determine how much we care
         if suspect_msgs_adjacent:
@@ -201,15 +203,29 @@ def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[Integr
 
         if severity != NO_ERROR:
             bad_seq_ids = [p.seq_id for p in suspect_part_and_meta_list]
-            integrity_issue = IntegrityIssue(
+            integrity_issues.append(IntegrityIssue(
                 check_type="content_duplicate",
                 severity=severity,
                 seq_ids=bad_seq_ids,
                 details=detail_preamble + f" Duplication occurred at seq_ids: {bad_seq_ids}",
-            )
-            integrity_issues.append(integrity_issue)
+            ))
 
     return integrity_issues
+
+
+def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+    try:
+        messages = deserialize_messages(records)
+    except ValueError:
+        return [IntegrityIssue(
+            check_type="deserialization",
+            severity=ERROR,
+            seq_ids=[],
+            details="Deserialization error while attempting to perform duplication check. Manual intervention required!"
+        )]
+
+    part_hash_table, part_hashes_suspected_of_duplication = _build_part_hash_table(messages, records)
+    return _find_issues_in_suspect_parts(part_hashes_suspected_of_duplication, part_hash_table)
 
 
 async def check_agent_integrity(
