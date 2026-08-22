@@ -93,7 +93,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime
 
-from pydantic_ai.messages import ModelResponse, ThinkingPart
+from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart
 
 from conftest import PARTIAL_MESSAGE_FIELDS, make_request, make_response
 from messages.messages import dump_msg_json
@@ -305,6 +305,10 @@ _LONG_DUP  = {"type": "ModelRequest", "content": dump_msg_json(make_request("x" 
 def _make_thinking_response(thinking: str) -> ModelResponse:
     return ModelResponse(parts=[ThinkingPart(content=thinking)])
 
+
+def _make_thinking_and_text_response(thinking: str, text: str) -> ModelResponse:
+    return ModelResponse(parts=[ThinkingPart(content=thinking), TextPart(content=text)])
+
 _LONG_THINKING_DUP = {"type": "ModelResponse", "content": dump_msg_json(_make_thinking_response("x" * (_CONTENT_LENGTH_THRESHOLD + 1)))}
 
 
@@ -417,6 +421,36 @@ CONTENT_DUPLICATE_TEST_CASES = [
             ),
         )],
         id="adjacent_duplicate_thinking",
+    ),
+    # Duplicate thinking part across messages that also have unique text parts.
+    # A full-message hash would see two different messages and miss this entirely —
+    # verifies that part-by-part inspection is what's actually running.
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {
+                "type": "ModelResponse",
+                "content": dump_msg_json(_make_thinking_and_text_response(
+                    "x" * (_CONTENT_LENGTH_THRESHOLD + 1), str(uuid4()),
+                )),
+            },
+            {
+                "type": "ModelResponse",
+                "content": dump_msg_json(_make_thinking_and_text_response(
+                    "x" * (_CONTENT_LENGTH_THRESHOLD + 1), str(uuid4()),
+                )),
+            },
+        ]),
+        [IntegrityIssue(
+            check_type="content_duplicate",
+            severity=ERROR,
+            seq_ids=[0, 1],
+            details=(
+                "Duplicate content found in adjacent messages. "
+                "Adjacent duplication is unlikely to naturally occur. "
+                "Duplication occurred at seq_ids: [0, 1]"
+            ),
+        )],
+        id="adjacent_duplicate_thinking_with_unique_text",
     ),
 ]
 
