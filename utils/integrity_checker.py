@@ -11,7 +11,7 @@ import hashlib
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequestPart, ModelResponsePart
-from pydantic_ai.messages import ModelRequest, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 from sqlalchemy import select
 
@@ -20,12 +20,13 @@ from messages.messages import load_messages, deserialize_messages
 
 class Severity(Enum):
     """Severity levels for integrity issues."""
+    CRITICAL = "critical"  # Blocks further checks — must be resolved before re-running
     ERROR = "error"
     WARN = "warn"
     INFO = "info"
     NO_ERROR = "no error"
 
-ERROR, WARN, INFO, NO_ERROR = Severity.ERROR, Severity.WARN, Severity.INFO, Severity.NO_ERROR
+CRITICAL, ERROR, WARN, INFO, NO_ERROR = Severity.CRITICAL, Severity.ERROR, Severity.WARN, Severity.INFO, Severity.NO_ERROR
 
 
 @dataclass
@@ -253,45 +254,30 @@ def check_context_window_start_validity(records: Sequence[MessageRecord]) -> lis
 
 
 def check_for_empty_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
-    """Check for MessageRecords with empty/null content blobs or undeserializable content.
+    """Check for MessageRecords with empty/null content blobs.
 
     NOTE: A ModelMessage with no parts (including ModelResponse) is a known valid case.
-    This check is about the MessageRecord.content field being empty or unparseable — not
-    about the message having zero parts.
+    This check is about the MessageRecord.content field being empty — not about the message
+    having zero parts. Undeserializable content is handled separately in check_agent_integrity.
     """
-    issues: list[IntegrityIssue] = []
-
-    for record in records:
-        if not record.content:
-            issues.append(IntegrityIssue(
-                check_type="empty_content",
-                severity=ERROR,
-                seq_ids=[record.seq_id],
-                details=f"MessageRecord at seq_id {record.seq_id} has empty or null content",
-            ))
-            continue
-
-        try:
-            deserialize_messages([record])
-        except ValueError as e:
-            issues.append(IntegrityIssue(
-                check_type="undeserializable_content",
-                severity=ERROR,
-                seq_ids=[record.seq_id],
-                details=f"MessageRecord at seq_id {record.seq_id} has undeserializable content: {e}",
-            ))
-
-    return issues
+    return [
+        IntegrityIssue(
+            check_type="empty_content",
+            severity=ERROR,
+            seq_ids=[record.seq_id],
+            details=f"MessageRecord at seq_id {record.seq_id} has empty or null content",
+        )
+        for record in records
+        if not record.content
+    ]
 
 
-def check_tool_call_return_pairing(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+def check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: Sequence[ModelMessage]) -> list[IntegrityIssue]:
     """Check that every ToolCallPart has a matching ToolReturnPart or RetryPromptPart, and vice versa.
 
     Matches by tool_call_id. Orphaned calls or returns indicate incomplete turns — a persistence
     bug, cancellation mid-turn, or history truncation error.
     """
-    messages = deserialize_messages(records)
-
     # Collect all tool_call_ids from ToolCallParts, with the seq_id they appeared in
     calls: dict[str, int] = {}  # tool_call_id -> seq_id
     for record, message in zip(records, messages):
@@ -339,8 +325,7 @@ def check_tool_call_return_pairing(records: Sequence[MessageRecord]) -> list[Int
     return issues
 
 
-def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
-    messages = deserialize_messages(records)
+def check_for_duplicate_content(records: Sequence[MessageRecord], messages: Sequence[ModelMessage]) -> list[IntegrityIssue]:
     part_hash_table, part_hashes_suspected_of_duplication = _build_part_hash_table(messages, records)
     return _find_issues_in_suspect_parts(part_hashes_suspected_of_duplication, part_hash_table)
 
@@ -407,19 +392,36 @@ async def check_agent_integrity(
         return []
 
     issues: list[IntegrityIssue] = []
+
+    # Non-deserializing checks — always run
     issues.extend(check_seq_id_consecutive(records))
     issues.extend(check_timestamps_increasing(records))
     issues.extend(check_context_window_start_validity(records))
-
-    empty_content_issues = check_for_empty_content(records)
-    issues.extend(empty_content_issues)
-
-    # Skip records already flagged as empty/undeserializable for checks that require deserialization
-    bad_seq_ids = {sid for issue in empty_content_issues for sid in issue.seq_ids}
-    good_records = [r for r in records if r.seq_id not in bad_seq_ids]
-
-    issues.extend(check_tool_call_return_pairing(good_records))
-    issues.extend(check_for_duplicate_content(good_records))
     issues.extend(await check_snapshot_references(session, records))
+    issues.extend(check_for_empty_content(records))
+
+    # Gating deserialization step — on failure, report CRITICAL and skip remaining checks
+    id_to_seq = {r.id: r.seq_id for r in records}
+    try:
+        messages = deserialize_messages(records)
+    except ValueError as e:
+        failed_id = str(e).removeprefix("[Deserialization error for record ").split("]")[0]
+        seq_id = id_to_seq.get(failed_id)
+        issues.append(IntegrityIssue(
+            check_type="deserialization_failure",
+            severity=CRITICAL,
+            seq_ids=[seq_id] if seq_id is not None else [],
+            details=(
+                f"Failed to deserialize message at seq_id {seq_id} (id: {failed_id}). "
+                f"This is the first failure encountered — there may be more. "
+                f"Checks requiring deserialization have been skipped. "
+                f"Fix or remove record with undeserializable content and re-run."
+            ),
+        ))
+        return issues
+
+    # Deserialization-dependent checks
+    issues.extend(check_tool_call_return_pairing(records, messages))
+    issues.extend(check_for_duplicate_content(records, messages))
 
     return issues

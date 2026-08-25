@@ -103,7 +103,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, T
 from conftest import PARTIAL_MESSAGE_FIELDS, make_request, make_response, make_retry_pair, make_tool_pair
 from messages.messages import dump_msg_json
 from db.models import AgentRecord, MessageRecord
-from utils.integrity_checker import ERROR, WARN, IntegrityIssue, Severity, check_agent_integrity
+from utils.integrity_checker import CRITICAL, ERROR, WARN, IntegrityIssue, Severity, check_agent_integrity
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +495,36 @@ EMPTY_CONTENT_TEST_CASES = [
         )],
         id="empty_content",
     ),
+]
 
+
+# ---------------------------------------------------------------------------
+# Deserialization Failure (gating step in check_agent_integrity)
+# ---------------------------------------------------------------------------
+
+_UNDESERIALIZABLE_RECORD_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+DESERIALIZATION_FAILURE_TEST_CASES = [
+    # Content present but not valid JSON — ID fixed so details string is deterministic
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},
+            {"content": "this is not valid json", "id": _UNDESERIALIZABLE_RECORD_ID},
+            {},
+        ]),
+        [IntegrityIssue(
+            check_type="deserialization_failure",
+            severity=CRITICAL,
+            seq_ids=[1],
+            details=(
+                f"Failed to deserialize message at seq_id 1 (id: {_UNDESERIALIZABLE_RECORD_ID}). "
+                f"This is the first failure encountered — there may be more. "
+                f"Checks requiring deserialization have been skipped. "
+                f"Fix or remove record with undeserializable content and re-run."
+            ),
+        )],
+        id="deserialization_failure",
+    ),
 ]
 
 
@@ -646,6 +675,10 @@ class TestCheckAgentIntegrity:
     async def test_empty_content(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
 
+    @pytest.mark.parametrize("build_records,expected_issues", DESERIALIZATION_FAILURE_TEST_CASES)
+    async def test_deserialization_failure(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        await self._run_check(build_records, expected_issues)
+
     @pytest.mark.parametrize("build_records,expected_issues", TOOL_PAIRING_TEST_CASES)
     async def test_tool_pairing(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
@@ -664,24 +697,6 @@ class TestCheckAgentIntegrity:
     @pytest.mark.parametrize("build_records,expected_issues", CTX_WINDOW_START_TEST_CASES)
     async def test_ctx_window_start(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
-
-    async def test_undeserializable_content(self):
-        # Details contains the record UUID (non-deterministic), so can't use parametrized equality.
-        # Verify structure and details prefix instead.
-        records = make_message_sequence(self.agent.id, [
-            {},
-            {"content": "this is not valid json"},
-            {},
-        ])
-        self.session.add_all(records)
-        await self.session.flush()
-        issues = await check_agent_integrity(self.session, self.agent.id)
-        assert len(issues) == 1
-        issue = issues[0]
-        assert issue.check_type == "undeserializable_content"
-        assert issue.severity == ERROR
-        assert issue.seq_ids == [1]
-        assert issue.details.startswith("MessageRecord at seq_id 1 has undeserializable content:")
 
 
 def test_checkers_units_do_not_mutate_input():
