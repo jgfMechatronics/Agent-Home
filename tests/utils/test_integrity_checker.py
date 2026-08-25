@@ -107,7 +107,13 @@ def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRe
       it to the first record's id for realistic multi-record sequences.
     """
     record_id = overrides.get("id", str(uuid4()))
-    msg = make_request(str(uuid4())) if seq_id % 2 == 0 else make_response(str(uuid4()))
+    override_type = overrides.get("type")
+    if override_type == "ModelRequest":
+        msg = make_request(str(uuid4()))
+    elif override_type == "ModelResponse":
+        msg = make_response(str(uuid4()))
+    else:
+        msg = make_request(str(uuid4())) if seq_id % 2 == 0 else make_response(str(uuid4()))
     defaults = {
         "id": record_id,
         "agent_id": agent_id,
@@ -181,7 +187,7 @@ SEQ_ID_TEST_CASES = [
         lambda agent_id: [
             make_message_record(agent_id, seq_id=0),
             make_message_record(agent_id, seq_id=1),
-            make_message_record(agent_id, seq_id=3, type="ModelRequest", content=dump_msg_json(make_request(str(uuid4())))),  # gap: missing 2; type forced to avoid accidental adjacent responses
+            make_message_record(agent_id, seq_id=3, type="ModelRequest"),  # gap: missing 2; type forced to avoid accidental adjacent responses
         ],
         [IntegrityIssue(
             check_type="seq_id_gap",
@@ -194,8 +200,8 @@ SEQ_ID_TEST_CASES = [
     pytest.param(
         lambda agent_id: [
             make_message_record(agent_id, seq_id=0, timestamp=datetime(2026, 1, 1, 12, 0, 0)),
-            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 1), type="ModelRequest", content=dump_msg_json(make_request(str(uuid4())))),
-            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 2), type="ModelRequest", content=dump_msg_json(make_request(str(uuid4())))),  # duplicate seq_id, distinct timestamp; types forced to avoid accidental adjacent responses
+            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 1), type="ModelRequest"),
+            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 2), type="ModelRequest"),  # duplicate seq_id, distinct timestamp; types forced to avoid accidental adjacent responses
             make_message_record(agent_id, seq_id=2, timestamp=datetime(2026, 1, 1, 12, 0, 3)),
         ],
         [IntegrityIssue(
