@@ -216,6 +216,10 @@ def _find_issues_in_suspect_parts(
 
     return integrity_issues
 
+def check_for_duplicate_content(records: Sequence[MessageRecord], messages: Sequence[ModelMessage]) -> list[IntegrityIssue]:
+    part_hash_table, part_hashes_suspected_of_duplication = _build_part_hash_table(messages, records)
+    return _find_issues_in_suspect_parts(part_hashes_suspected_of_duplication, part_hash_table)
+
 
 def check_context_window_start_validity(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     """Check that each context_window_start_msg_id points to an existing, non-forward message.
@@ -325,9 +329,7 @@ def check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: S
     return issues
 
 
-def check_for_duplicate_content(records: Sequence[MessageRecord], messages: Sequence[ModelMessage]) -> list[IntegrityIssue]:
-    part_hash_table, part_hashes_suspected_of_duplication = _build_part_hash_table(messages, records)
-    return _find_issues_in_suspect_parts(part_hashes_suspected_of_duplication, part_hash_table)
+
 
 
 async def check_snapshot_references(session: AsyncSession, records: Sequence[MessageRecord]) -> list[IntegrityIssue]:

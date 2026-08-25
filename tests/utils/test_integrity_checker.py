@@ -66,6 +66,7 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
    - Must point to same seq_id or earlier (not forward references)
    - Severity: ERROR
 
+(Removed check 9)
 
 10. PART-LEVEL SANITY ✗ (skipped — redundant with check 5)
     - ToolReturnPart should only appear in ModelRequest (user returning tool results)
