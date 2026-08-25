@@ -213,17 +213,40 @@ def _find_issues_in_suspect_parts(
     return integrity_issues
 
 
-def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
-    try:
-        messages = deserialize_messages(records)
-    except ValueError:
-        return [IntegrityIssue(
-            check_type="deserialization",
-            severity=ERROR,
-            seq_ids=[],
-            details="Deserialization error while attempting to perform duplication check. Manual intervention required!"
-        )]
+def check_for_empty_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+    """Check for MessageRecords with empty/null content blobs or undeserializable content.
 
+    NOTE: A ModelMessage with no parts (including ModelResponse) is a known valid case.
+    This check is about the MessageRecord.content field being empty or unparseable — not
+    about the message having zero parts.
+    """
+    issues: list[IntegrityIssue] = []
+
+    for record in records:
+        if not record.content:
+            issues.append(IntegrityIssue(
+                check_type="empty_content",
+                severity=ERROR,
+                seq_ids=[record.seq_id],
+                details=f"MessageRecord at seq_id {record.seq_id} has empty or null content",
+            ))
+            continue
+
+        try:
+            deserialize_messages([record])
+        except ValueError as e:
+            issues.append(IntegrityIssue(
+                check_type="undeserializable_content",
+                severity=ERROR,
+                seq_ids=[record.seq_id],
+                details=f"MessageRecord at seq_id {record.seq_id} has undeserializable content: {e}",
+            ))
+
+    return issues
+
+
+def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+    messages = deserialize_messages(records)
     part_hash_table, part_hashes_suspected_of_duplication = _build_part_hash_table(messages, records)
     return _find_issues_in_suspect_parts(part_hashes_suspected_of_duplication, part_hash_table)
 
@@ -250,7 +273,15 @@ async def check_agent_integrity(
     issues: list[IntegrityIssue] = []
     issues.extend(check_seq_id_consecutive(records))
     issues.extend(check_timestamps_increasing(records))
-    issues.extend(check_for_duplicate_content(records))
+
+    empty_content_issues = check_for_empty_content(records)
+    issues.extend(empty_content_issues)
+
+    # Skip records already flagged as empty/undeserializable for checks that require deserialization
+    bad_seq_ids = {sid for issue in empty_content_issues for sid in issue.seq_ids}
+    good_records = [r for r in records if r.seq_id not in bad_seq_ids]
+
+    issues.extend(check_for_duplicate_content(good_records))
     
     
     return issues

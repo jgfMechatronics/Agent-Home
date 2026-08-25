@@ -458,6 +458,30 @@ CONTENT_DUPLICATE_TEST_CASES = [
 
 
 # ---------------------------------------------------------------------------
+# Check 5: Empty / Null Content
+# ---------------------------------------------------------------------------
+
+EMPTY_CONTENT_TEST_CASES = [
+    # Empty string content — always suspicious, regardless of position
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},
+            {"content": ""},  # empty content blob
+            {},
+        ]),
+        [IntegrityIssue(
+            check_type="empty_content",
+            severity=ERROR,
+            seq_ids=[1],
+            details="MessageRecord at seq_id 1 has empty or null content",
+        )],
+        id="empty_content",
+    ),
+
+]
+
+
+# ---------------------------------------------------------------------------
 # TestCheckAgentIntegrity
 # ---------------------------------------------------------------------------
 
@@ -495,6 +519,28 @@ class TestCheckAgentIntegrity:
     @pytest.mark.parametrize("build_records,expected_issues", CONTENT_DUPLICATE_TEST_CASES)
     async def test_content_duplicate(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
+
+    @pytest.mark.parametrize("build_records,expected_issues", EMPTY_CONTENT_TEST_CASES)
+    async def test_empty_content(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        await self._run_check(build_records, expected_issues)
+
+    async def test_undeserializable_content(self):
+        # Details contains the record UUID (non-deterministic), so can't use parametrized equality.
+        # Verify structure and details prefix instead.
+        records = make_message_sequence(self.agent.id, [
+            {},
+            {"content": "this is not valid json"},
+            {},
+        ])
+        self.session.add_all(records)
+        await self.session.flush()
+        issues = await check_agent_integrity(self.session, self.agent.id)
+        assert len(issues) == 1
+        issue = issues[0]
+        assert issue.check_type == "undeserializable_content"
+        assert issue.severity == ERROR
+        assert issue.seq_ids == [1]
+        assert issue.details.startswith("MessageRecord at seq_id 1 has undeserializable content:")
 
 
 def test_checkers_units_do_not_mutate_input():
