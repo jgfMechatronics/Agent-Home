@@ -255,6 +255,28 @@ def check_context_window_start_validity(records: Sequence[MessageRecord]) -> lis
     return issues
 
 
+def check_message_ordering(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+    """Check for adjacent ModelResponse records, which should never occur.
+
+    Consecutive ModelRequests are legitimate (compaction resume notices, cancel notices,
+    tool returns adjacent to user prompts). Consecutive ModelResponses are not — there is
+    no code path that produces them in normal operation.
+    """
+    return [
+        IntegrityIssue(
+            check_type="adjacent_model_responses",
+            severity=ERROR,
+            seq_ids=[records[i - 1].seq_id, records[i].seq_id],
+            details=(
+                f"Adjacent ModelResponses at seq_ids {records[i - 1].seq_id} and {records[i].seq_id}"
+                f" — consecutive responses should not occur"
+            ),
+        )
+        for i in range(1, len(records))
+        if records[i].type == "ModelResponse" and records[i - 1].type == "ModelResponse"
+    ]
+
+
 def check_for_empty_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     """Check for MessageRecords with empty/null content blobs.
 
@@ -329,6 +351,7 @@ async def check_agent_integrity(
     issues.extend(check_seq_id_consecutive(records))
     issues.extend(check_timestamps_increasing(records))
     issues.extend(check_context_window_start_validity(records))
+    issues.extend(check_message_ordering(records))
     issues.extend(check_for_empty_content(records))
 
     # Gating deserialization step — on failure, report CRITICAL and skip remaining checks

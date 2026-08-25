@@ -181,7 +181,7 @@ SEQ_ID_TEST_CASES = [
         lambda agent_id: [
             make_message_record(agent_id, seq_id=0),
             make_message_record(agent_id, seq_id=1),
-            make_message_record(agent_id, seq_id=3),  # gap: missing 2
+            make_message_record(agent_id, seq_id=3, type="ModelRequest", content=dump_msg_json(make_request(str(uuid4())))),  # gap: missing 2; type forced to avoid accidental adjacent responses
         ],
         [IntegrityIssue(
             check_type="seq_id_gap",
@@ -194,8 +194,8 @@ SEQ_ID_TEST_CASES = [
     pytest.param(
         lambda agent_id: [
             make_message_record(agent_id, seq_id=0, timestamp=datetime(2026, 1, 1, 12, 0, 0)),
-            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 1)),
-            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 2)),  # duplicate seq_id, distinct timestamp
+            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 1), type="ModelRequest", content=dump_msg_json(make_request(str(uuid4())))),
+            make_message_record(agent_id, seq_id=1, timestamp=datetime(2026, 1, 1, 12, 0, 2), type="ModelRequest", content=dump_msg_json(make_request(str(uuid4())))),  # duplicate seq_id, distinct timestamp; types forced to avoid accidental adjacent responses
             make_message_record(agent_id, seq_id=2, timestamp=datetime(2026, 1, 1, 12, 0, 3)),
         ],
         [IntegrityIssue(
@@ -407,16 +407,24 @@ CONTENT_DUPLICATE_TEST_CASES = [
             {**_LONG_THINKING_DUP},  # adjacent duplicate
             {},
         ]),
-        [IntegrityIssue(
-            check_type="content_duplicate",
-            severity=ERROR,
-            seq_ids=[0, 1],
-            details=(
-                "Duplicate content found in adjacent messages. "
-                "Adjacent duplication is unlikely to naturally occur. "
-                "Duplication occurred at seq_ids: [0, 1]"
+        [
+            IntegrityIssue(
+                check_type="adjacent_model_responses",
+                severity=ERROR,
+                seq_ids=[0, 1],
+                details="Adjacent ModelResponses at seq_ids 0 and 1 — consecutive responses should not occur",
             ),
-        )],
+            IntegrityIssue(
+                check_type="content_duplicate",
+                severity=ERROR,
+                seq_ids=[0, 1],
+                details=(
+                    "Duplicate content found in adjacent messages. "
+                    "Adjacent duplication is unlikely to naturally occur. "
+                    "Duplication occurred at seq_ids: [0, 1]"
+                ),
+            ),
+        ],
         id="adjacent_duplicate_thinking",
     ),
     # Duplicate thinking part across messages that also have unique text parts.
@@ -437,16 +445,24 @@ CONTENT_DUPLICATE_TEST_CASES = [
                 )),
             },
         ]),
-        [IntegrityIssue(
-            check_type="content_duplicate",
-            severity=ERROR,
-            seq_ids=[0, 1],
-            details=(
-                "Duplicate content found in adjacent messages. "
-                "Adjacent duplication is unlikely to naturally occur. "
-                "Duplication occurred at seq_ids: [0, 1]"
+        [
+            IntegrityIssue(
+                check_type="adjacent_model_responses",
+                severity=ERROR,
+                seq_ids=[0, 1],
+                details="Adjacent ModelResponses at seq_ids 0 and 1 — consecutive responses should not occur",
             ),
-        )],
+            IntegrityIssue(
+                check_type="content_duplicate",
+                severity=ERROR,
+                seq_ids=[0, 1],
+                details=(
+                    "Duplicate content found in adjacent messages. "
+                    "Adjacent duplication is unlikely to naturally occur. "
+                    "Duplication occurred at seq_ids: [0, 1]"
+                ),
+            ),
+        ],
         id="adjacent_duplicate_thinking_with_unique_text",
     ),
 ]
@@ -566,6 +582,39 @@ TOOL_PAIRING_TEST_CASES = [
 
 
 # ---------------------------------------------------------------------------
+# Check 7: Message Ordering
+# ---------------------------------------------------------------------------
+
+MESSAGE_ORDERING_TEST_CASES = [
+    # Adjacent ModelResponses — never legitimate
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {"type": "ModelResponse", "content": dump_msg_json(make_response(str(uuid4())))},
+            {"type": "ModelResponse", "content": dump_msg_json(make_response(str(uuid4())))},
+            {},
+        ]),
+        [IntegrityIssue(
+            check_type="adjacent_model_responses",
+            severity=ERROR,
+            seq_ids=[0, 1],
+            details="Adjacent ModelResponses at seq_ids 0 and 1 — consecutive responses should not occur",
+        )],
+        id="adjacent_model_responses",
+    ),
+    # Consecutive ModelRequests — legitimate (compaction resume, cancel notice, etc.)
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},
+            {"type": "ModelRequest", "content": dump_msg_json(make_request(str(uuid4())))},
+            {},
+        ]),
+        [],
+        id="consecutive_model_requests_clean",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
 # Check 8: context_window_start_msg_id Validity
 # ---------------------------------------------------------------------------
 
@@ -658,6 +707,10 @@ class TestCheckAgentIntegrity:
 
     @pytest.mark.parametrize("build_records,expected_issues", TOOL_PAIRING_TEST_CASES)
     async def test_tool_pairing(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        await self._run_check(build_records, expected_issues)
+
+    @pytest.mark.parametrize("build_records,expected_issues", MESSAGE_ORDERING_TEST_CASES)
+    async def test_message_ordering(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
 
     @pytest.mark.parametrize("build_records,expected_issues", CTX_WINDOW_START_TEST_CASES)
