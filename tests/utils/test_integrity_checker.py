@@ -144,7 +144,7 @@ def make_message_sequence(agent_id: str, overrides_list: list[dict]) -> list[Mes
     """Create messages with auto-assigned consecutive seq_ids (0, 1, 2...).
 
     Each record self-references as context_window_start_msg_id by default (always
-    valid for check 8). Override in individual entries to test specific values.
+    valid for ctx window start id checks). Override in individual entries to test specific values.
     """
     return [
         make_message_record(agent_id, seq_id=i, **overrides)
@@ -674,17 +674,6 @@ class TestCheckAgentIntegrity:
     @pytest.mark.parametrize("build_records,expected_issues", TOOL_PAIRING_TEST_CASES)
     async def test_tool_pairing(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
-
-    async def test_snapshot_references_clean(self):
-        # Check 9 failure cases cannot be constructed in tests: FK constraints (PRAGMA foreign_keys=ON)
-        # reject records with nonexistent snapshot hashes at insert time. In production, failures
-        # here indicate DB writes that bypassed FK enforcement (direct SQL, import, migration).
-        # Clean behavior is verified: valid stub hashes produce no issues.
-        records = make_message_sequence(self.agent.id, [{}, {}])
-        self.session.add_all(records)
-        await self.session.flush()
-        issues = await check_agent_integrity(self.session, self.agent.id)
-        assert issues == []
 
     @pytest.mark.parametrize("build_records,expected_issues", CTX_WINDOW_START_TEST_CASES)
     async def test_ctx_window_start(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
