@@ -69,7 +69,7 @@ def _make_orphan_replacement(
     return (_message_timestamp(msg), error_text), ModelResponse(parts=[TextPart(content=error_text)])
 
 
-def _is_valid_tool_pair(call_msg: ModelMessage | None, return_msg: ModelMessage | None) -> bool:
+def is_valid_tool_pair(call_msg: ModelMessage | None, return_msg: ModelMessage | None) -> bool:
     """True if call_msg/return_msg form a matched tool call/return pair.
 
     Requires call_msg to be a ModelResponse with ToolCallPart(s) and return_msg to be a
@@ -107,14 +107,14 @@ def _replace_orphaned_tool_messages(
     for i, msg in enumerate(messages):
         if isinstance(msg, ModelResponse) and any(isinstance(p, ToolCallPart) for p in msg.parts):
             next_msg = messages[i + 1] if i + 1 < len(messages) else None
-            if not _is_valid_tool_pair(msg, next_msg):
+            if not is_valid_tool_pair(msg, next_msg):
                 error_entry, error_response = _make_orphan_replacement(msg, ToolCallPart)
                 errors.append(error_entry)
                 sanitized_msgs.append(error_response)
                 continue # Skips below append of original msg
         elif isinstance(msg, ModelRequest) and any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in msg.parts):
             prev_msg = sanitized_msgs[-1] if sanitized_msgs else None
-            if not _is_valid_tool_pair(prev_msg, msg):
+            if not is_valid_tool_pair(prev_msg, msg):
                 part_type = ToolReturnPart if any(isinstance(p, ToolReturnPart) for p in msg.parts) else RetryPromptPart
                 error_entry, error_response = _make_orphan_replacement(msg, part_type)
                 errors.append(error_entry)

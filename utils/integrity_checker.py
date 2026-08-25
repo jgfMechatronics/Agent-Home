@@ -14,7 +14,7 @@ from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequ
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 from db.models import MessageRecord
-from messages.messages import load_messages, deserialize_messages
+from messages.messages import load_messages, deserialize_messages, is_valid_tool_pair
 
 class Severity(Enum):
     """Severity levels for integrity issues."""
@@ -277,53 +277,30 @@ def check_for_empty_content(records: Sequence[MessageRecord]) -> list[IntegrityI
 def check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: Sequence[ModelMessage]) -> list[IntegrityIssue]:
     """Check that every ToolCallPart has a matching ToolReturnPart or RetryPromptPart, and vice versa.
 
-    Matches by tool_call_id. Orphaned calls or returns may indicate issues with persistence or erroneous re-persistence.
-
+    Uses adjacency-based pairing: a tool call must be immediately followed by its return, and
+    a tool return must be immediately preceded by its call. Mirrors the sanitization logic in
+    persist_messages._replace_orphaned_tool_messages.
     """
-    # Collect all tool_call_ids from ToolCallParts, with the seq_id they appeared in
-    calls: dict[str, int] = {}  # tool_call_id -> seq_id
-    for record, message in zip(records, messages):
-        if isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, ToolCallPart):
-                    calls[part.tool_call_id] = record.seq_id
-
-    # Collect all tool_call_ids that have been returned (ToolReturnPart or RetryPromptPart)
-    returns: set[str] = set()
-    return_orphans: dict[str, int] = {}  # tool_call_id -> seq_id (for ToolReturnParts with no matching call)
-    for record, message in zip(records, messages):
-        if isinstance(message, ModelRequest):
-            for part in message.parts:
-                if isinstance(part, (ToolReturnPart, RetryPromptPart)):
-                    returns.add(part.tool_call_id)
-                    if part.tool_call_id not in calls:
-                        return_orphans[part.tool_call_id] = record.seq_id
-
     issues: list[IntegrityIssue] = []
-
-    for tool_call_id, seq_id in calls.items():
-        if tool_call_id not in returns:
-            issues.append(IntegrityIssue(
-                check_type="orphaned_tool_call",
-                severity=ERROR,
-                seq_ids=[seq_id],
-                details=(
-                    f"ToolCallPart with tool_call_id {tool_call_id!r} at seq_id {seq_id} "
-                    f"has no matching ToolReturnPart or RetryPromptPart"
-                ),
-            ))
-
-    for tool_call_id, seq_id in return_orphans.items():
-        issues.append(IntegrityIssue(
-            check_type="orphaned_tool_return",
-            severity=ERROR,
-            seq_ids=[seq_id],
-            details=(
-                f"ToolReturnPart with tool_call_id {tool_call_id!r} at seq_id {seq_id} "
-                f"has no matching ToolCallPart"
-            ),
-        ))
-
+    for i, (record, msg) in enumerate(zip(records, messages)):
+        if isinstance(msg, ModelResponse) and any(isinstance(p, ToolCallPart) for p in msg.parts):
+            next_msg = messages[i + 1] if i + 1 < len(messages) else None
+            if not is_valid_tool_pair(msg, next_msg):
+                issues.append(IntegrityIssue(
+                    check_type="orphaned_tool_call",
+                    severity=ERROR,
+                    seq_ids=[record.seq_id],
+                    details=f"ModelResponse at seq_id {record.seq_id} has ToolCallPart(s) with no matching return in the following message",
+                ))
+        elif isinstance(msg, ModelRequest) and any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in msg.parts):
+            prev_msg = messages[i - 1] if i > 0 else None
+            if not is_valid_tool_pair(prev_msg, msg):
+                issues.append(IntegrityIssue(
+                    check_type="orphaned_tool_return",
+                    severity=ERROR,
+                    seq_ids=[record.seq_id],
+                    details=f"ModelRequest at seq_id {record.seq_id} has ToolReturnPart(s) with no matching call in the preceding message",
+                ))
     return issues
 
 
