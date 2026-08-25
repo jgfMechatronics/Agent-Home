@@ -11,6 +11,7 @@ import hashlib
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequestPart, ModelResponsePart
+from pydantic_ai.messages import ModelRequest, ModelResponse
 
 from db.models import MessageRecord
 from messages.messages import load_messages, deserialize_messages
@@ -245,6 +246,61 @@ def check_for_empty_content(records: Sequence[MessageRecord]) -> list[IntegrityI
     return issues
 
 
+def check_tool_call_return_pairing(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+    """Check that every ToolCallPart has a matching ToolReturnPart or RetryPromptPart, and vice versa.
+
+    Matches by tool_call_id. Orphaned calls or returns indicate incomplete turns — a persistence
+    bug, cancellation mid-turn, or history truncation error.
+    """
+    messages = deserialize_messages(records)
+
+    # Collect all tool_call_ids from ToolCallParts, with the seq_id they appeared in
+    calls: dict[str, int] = {}  # tool_call_id -> seq_id
+    for record, message in zip(records, messages):
+        if isinstance(message, ModelResponse):
+            for part in message.parts:
+                if isinstance(part, ToolCallPart):
+                    calls[part.tool_call_id] = record.seq_id
+
+    # Collect all tool_call_ids that have been returned (ToolReturnPart or RetryPromptPart)
+    returns: set[str] = set()
+    return_orphans: dict[str, int] = {}  # tool_call_id -> seq_id (for ToolReturnParts with no matching call)
+    for record, message in zip(records, messages):
+        if isinstance(message, ModelRequest):
+            for part in message.parts:
+                if isinstance(part, (ToolReturnPart, RetryPromptPart)):
+                    returns.add(part.tool_call_id)
+                    if part.tool_call_id not in calls:
+                        return_orphans[part.tool_call_id] = record.seq_id
+
+    issues: list[IntegrityIssue] = []
+
+    for tool_call_id, seq_id in calls.items():
+        if tool_call_id not in returns:
+            issues.append(IntegrityIssue(
+                check_type="orphaned_tool_call",
+                severity=ERROR,
+                seq_ids=[seq_id],
+                details=(
+                    f"ToolCallPart with tool_call_id {tool_call_id!r} at seq_id {seq_id} "
+                    f"has no matching ToolReturnPart or RetryPromptPart"
+                ),
+            ))
+
+    for tool_call_id, seq_id in return_orphans.items():
+        issues.append(IntegrityIssue(
+            check_type="orphaned_tool_return",
+            severity=ERROR,
+            seq_ids=[seq_id],
+            details=(
+                f"ToolReturnPart with tool_call_id {tool_call_id!r} at seq_id {seq_id} "
+                f"has no matching ToolCallPart"
+            ),
+        ))
+
+    return issues
+
+
 def check_for_duplicate_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     messages = deserialize_messages(records)
     part_hash_table, part_hashes_suspected_of_duplication = _build_part_hash_table(messages, records)
@@ -281,6 +337,7 @@ async def check_agent_integrity(
     bad_seq_ids = {sid for issue in empty_content_issues for sid in issue.seq_ids}
     good_records = [r for r in records if r.seq_id not in bad_seq_ids]
 
+    issues.extend(check_tool_call_return_pairing(good_records))
     issues.extend(check_for_duplicate_content(good_records))
     
     

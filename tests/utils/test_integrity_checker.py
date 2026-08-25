@@ -74,11 +74,14 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
    - Severity: ERROR
    - Impl note: look for any useful existing stuff in the ctx reconstructor. Avoid duplication.
 
-10. PART-LEVEL SANITY
+10. PART-LEVEL SANITY ✗ (skipped — redundant with check 5)
     - ToolReturnPart should only appear in ModelRequest (user returning tool results)
     - ToolCallPart should only appear in ModelResponse (model calling tools)
     - Wrong part types in wrong message kinds = corruption or serialization bug
     - Severity: ERROR
+    - SKIP REASON: pydantic-ai enforces this at deserialization time via tagged-union validation.
+      Any record with wrong part types in the wrong message kind will fail JSON deserialization
+      and be caught as "undeserializable_content" by check 5 first. Check 10 can never fire.
 
 === TESTING APPROACH ===
 
@@ -95,9 +98,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime
 
-from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
 
-from conftest import PARTIAL_MESSAGE_FIELDS, make_request, make_response
+from conftest import PARTIAL_MESSAGE_FIELDS, make_request, make_response, make_retry_pair, make_tool_pair
 from messages.messages import dump_msg_json
 from db.models import AgentRecord, MessageRecord
 from utils.integrity_checker import ERROR, WARN, IntegrityIssue, Severity, check_agent_integrity
@@ -482,6 +485,66 @@ EMPTY_CONTENT_TEST_CASES = [
 
 
 # ---------------------------------------------------------------------------
+# Check 6: Tool Call / Return Pairing
+# ---------------------------------------------------------------------------
+
+TOOL_PAIRING_TEST_CASES = [
+    # Orphaned ToolCallPart — call made, no matching return in history
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},
+            {"type": "ModelResponse", "content": dump_msg_json(make_tool_pair()[0])},
+            {},  # plain UserPromptPart, not a ToolReturnPart
+        ]),
+        [IntegrityIssue(
+            check_type="orphaned_tool_call",
+            severity=ERROR,
+            seq_ids=[1],
+            details="ToolCallPart with tool_call_id 'tc1' at seq_id 1 has no matching ToolReturnPart or RetryPromptPart",
+        )],
+        id="orphaned_tool_call",
+    ),
+    # Orphaned ToolReturnPart — return present but no matching call in history
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},
+            {"type": "ModelRequest", "content": dump_msg_json(make_tool_pair()[1])},
+            {},
+        ]),
+        [IntegrityIssue(
+            check_type="orphaned_tool_return",
+            severity=ERROR,
+            seq_ids=[1],
+            details="ToolReturnPart with tool_call_id 'tc1' at seq_id 1 has no matching ToolCallPart",
+        )],
+        id="orphaned_tool_return",
+    ),
+    # Clean: matched tool call / return pair
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},
+            {"type": "ModelResponse", "content": dump_msg_json(make_tool_pair()[0])},
+            {"type": "ModelRequest", "content": dump_msg_json(make_tool_pair()[1])},
+            {},
+        ]),
+        [],
+        id="matched_tool_pair",
+    ),
+    # Clean: retry pair (RetryPromptPart counts as a valid match for a ToolCallPart)
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},
+            {"type": "ModelResponse", "content": dump_msg_json(make_retry_pair()[0])},
+            {"type": "ModelRequest", "content": dump_msg_json(make_retry_pair()[1])},
+            {},
+        ]),
+        [],
+        id="matched_retry_pair",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
 # TestCheckAgentIntegrity
 # ---------------------------------------------------------------------------
 
@@ -522,6 +585,10 @@ class TestCheckAgentIntegrity:
 
     @pytest.mark.parametrize("build_records,expected_issues", EMPTY_CONTENT_TEST_CASES)
     async def test_empty_content(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        await self._run_check(build_records, expected_issues)
+
+    @pytest.mark.parametrize("build_records,expected_issues", TOOL_PAIRING_TEST_CASES)
+    async def test_tool_pairing(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
 
     async def test_undeserializable_content(self):
