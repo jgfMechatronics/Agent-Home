@@ -36,7 +36,7 @@ class IntegrityIssue:
     details: str  # human-readable description
 
 
-def check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+def _check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     """Check that seq_ids are strictly consecutive starting at 0 (no gaps, no duplicates).
     
     Args:
@@ -84,7 +84,7 @@ def check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[Integrity
     return issues
 
 
-def check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+def _check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     """Check that timestamps are monotonically increasing in seq_id order.
     
     Detects clock issues or re-persistence bugs where a later message has an earlier timestamp.
@@ -214,12 +214,12 @@ def _find_issues_in_suspect_parts(
 
     return integrity_issues
 
-def check_for_duplicate_content(records: Sequence[MessageRecord], messages: Sequence[ModelMessage]) -> list[IntegrityIssue]:
+def _check_for_duplicate_content(records: Sequence[MessageRecord], messages: Sequence[ModelMessage]) -> list[IntegrityIssue]:
     part_hash_table, part_hashes_suspected_of_duplication = _build_part_hash_table(messages, records)
     return _find_issues_in_suspect_parts(part_hashes_suspected_of_duplication, part_hash_table)
 
 
-def check_context_window_start_validity(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+def _check_context_window_start_validity(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     """Check that each context_window_start_msg_id points to an existing, non-forward message.
 
     A valid context_window_start_msg_id must:
@@ -255,7 +255,7 @@ def check_context_window_start_validity(records: Sequence[MessageRecord]) -> lis
     return issues
 
 
-def check_message_ordering(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+def _check_message_ordering(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     """Check for adjacent ModelResponse records, which should never occur.
 
     Consecutive ModelRequests are legitimate (compaction resume notices, cancel notices,
@@ -277,7 +277,7 @@ def check_message_ordering(records: Sequence[MessageRecord]) -> list[IntegrityIs
     ]
 
 
-def check_for_empty_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+def _check_for_empty_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     """Check for MessageRecords with empty/null content blobs.
 
     NOTE: A ModelMessage with no parts (including ModelResponse) is a known valid case.
@@ -296,7 +296,7 @@ def check_for_empty_content(records: Sequence[MessageRecord]) -> list[IntegrityI
     ]
 
 
-def check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: Sequence[ModelMessage]) -> list[IntegrityIssue]:
+def _check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: Sequence[ModelMessage]) -> list[IntegrityIssue]:
     """Check that every ToolCallPart has a matching ToolReturnPart or RetryPromptPart, and vice versa.
 
     Uses adjacency-based pairing: a tool call must be immediately followed by its return, and
@@ -348,11 +348,11 @@ async def check_agent_integrity(
     issues: list[IntegrityIssue] = []
 
     # Non-deserializing checks — always run
-    issues.extend(check_seq_id_consecutive(records))
-    issues.extend(check_timestamps_increasing(records))
-    issues.extend(check_context_window_start_validity(records))
-    issues.extend(check_message_ordering(records))
-    issues.extend(check_for_empty_content(records))
+    issues.extend(_check_seq_id_consecutive(records))
+    issues.extend(_check_timestamps_increasing(records))
+    issues.extend(_check_context_window_start_validity(records))
+    issues.extend(_check_message_ordering(records))
+    issues.extend(_check_for_empty_content(records))
 
     # Gating deserialization step — on failure, report CRITICAL and skip remaining checks
     id_to_seq = {r.id: r.seq_id for r in records}
@@ -375,7 +375,7 @@ async def check_agent_integrity(
         return issues
 
     # Deserialization-dependent checks
-    issues.extend(check_tool_call_return_pairing(records, messages))
-    issues.extend(check_for_duplicate_content(records, messages))
+    issues.extend(_check_tool_call_return_pairing(records, messages))
+    issues.extend(_check_for_duplicate_content(records, messages))
 
     return issues

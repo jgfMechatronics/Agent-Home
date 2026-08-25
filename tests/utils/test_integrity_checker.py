@@ -92,9 +92,9 @@ from db.models import AgentRecord, MessageRecord
 from messages.messages import deserialize_messages
 from utils.integrity_checker import (
     CRITICAL, ERROR, WARN, IntegrityIssue, Severity, check_agent_integrity,
-    check_seq_id_consecutive, check_timestamps_increasing, check_context_window_start_validity,
-    check_message_ordering, check_for_empty_content,
-    check_tool_call_return_pairing, check_for_duplicate_content,
+    _check_seq_id_consecutive, _check_timestamps_increasing, _check_context_window_start_validity,
+    _check_message_ordering, _check_for_empty_content,
+    _check_tool_call_return_pairing, _check_for_duplicate_content,
 )
 
 
@@ -335,6 +335,10 @@ def _make_thinking_and_text_response(thinking: str, text: str) -> ModelResponse:
     return ModelResponse(parts=[ThinkingPart(content=thinking), TextPart(content=text)])
 
 _LONG_THINKING_DUP = {"type": "ModelResponse", "content": dump_msg_json(_make_thinking_response("x" * (_CONTENT_LENGTH_THRESHOLD + 1)))}
+
+# Pre-built matched pairs — computed once so call and return share the same tool_call_id
+_MATCHED_TOOL_CALL, _MATCHED_TOOL_RETURN = make_tool_pair()
+_MATCHED_RETRY_CALL, _MATCHED_RETRY_RETURN = make_retry_pair()
 
 
 CONTENT_DUPLICATE_TEST_CASES = [
@@ -589,8 +593,8 @@ TOOL_PAIRING_TEST_CASES = [
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
             {},
-            {"type": "ModelResponse", "content": dump_msg_json(make_tool_pair()[0])},
-            {"type": "ModelRequest", "content": dump_msg_json(make_tool_pair()[1])},
+            {"type": "ModelResponse", "content": dump_msg_json(_MATCHED_TOOL_CALL)},
+            {"type": "ModelRequest", "content": dump_msg_json(_MATCHED_TOOL_RETURN)},
             {},
         ]),
         [],
@@ -600,8 +604,8 @@ TOOL_PAIRING_TEST_CASES = [
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
             {},
-            {"type": "ModelResponse", "content": dump_msg_json(make_retry_pair()[0])},
-            {"type": "ModelRequest", "content": dump_msg_json(make_retry_pair()[1])},
+            {"type": "ModelResponse", "content": dump_msg_json(_MATCHED_RETRY_CALL)},
+            {"type": "ModelRequest", "content": dump_msg_json(_MATCHED_RETRY_RETURN)},
             {},
         ]),
         [],
@@ -692,16 +696,16 @@ CTX_WINDOW_START_TEST_CASES = [
 # ---------------------------------------------------------------------------
 
 _RECORD_ONLY_CHECKERS = [
-    pytest.param(check_seq_id_consecutive, id="check_seq_id_consecutive"),
-    pytest.param(check_timestamps_increasing, id="check_timestamps_increasing"),
-    pytest.param(check_context_window_start_validity, id="check_context_window_start_validity"),
-    pytest.param(check_message_ordering, id="check_message_ordering"),
-    pytest.param(check_for_empty_content, id="check_for_empty_content"),
+    pytest.param(_check_seq_id_consecutive, id="check_seq_id_consecutive"),
+    pytest.param(_check_timestamps_increasing, id="check_timestamps_increasing"),
+    pytest.param(_check_context_window_start_validity, id="check_context_window_start_validity"),
+    pytest.param(_check_message_ordering, id="check_message_ordering"),
+    pytest.param(_check_for_empty_content, id="check_for_empty_content"),
 ]
 
 _RECORD_AND_MESSAGE_CHECKERS = [
-    pytest.param(check_tool_call_return_pairing, id="check_tool_call_return_pairing"),
-    pytest.param(check_for_duplicate_content, id="check_for_duplicate_content"),
+    pytest.param(_check_tool_call_return_pairing, id="check_tool_call_return_pairing"),
+    pytest.param(_check_for_duplicate_content, id="check_for_duplicate_content"),
 ]
 
 
@@ -723,7 +727,7 @@ class TestCheckAgentIntegrity:
         issues = await check_agent_integrity(self.session, self.agent.id)
         assert issues == expected_issues
 
-    # The below structure gives us a nice heirerchy in test explorer and isolates failures to particular param lists better
+    # The below structure gives us a nice hierarchy in test explorer and isolates failures to particular param lists better
     @pytest.mark.parametrize("build_records,expected_issues", CLEAN_TEST_CASES)
     async def test_clean(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
