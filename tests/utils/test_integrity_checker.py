@@ -143,21 +143,13 @@ RecordBuilder = Callable[[str], list[MessageRecord]]
 def make_message_sequence(agent_id: str, overrides_list: list[dict]) -> list[MessageRecord]:
     """Create messages with auto-assigned consecutive seq_ids (0, 1, 2...).
 
-    The first record points to itself as context_window_start_msg_id; subsequent records
-    inherit that ID (simulating a single uninterrupted context window). Override
-    context_window_start_msg_id in individual entries to test bad/nonsensical values
+    Each record self-references as context_window_start_msg_id by default (always
+    valid for check 8). Override in individual entries to test specific values.
     """
-    # Pre-allocate the first record's ID so all records can reference it as context_window_start
-    first_id = str(uuid4())
-    records = []
-    for i, overrides in enumerate(overrides_list):
-        resolved = overrides.copy()
-        if "context_window_start_msg_id" not in resolved:
-            resolved["context_window_start_msg_id"] = first_id
-        if i == 0 and "id" not in resolved:
-            resolved["id"] = first_id
-        records.append(make_message_record(agent_id, seq_id=i, **resolved))
-    return records
+    return [
+        make_message_record(agent_id, seq_id=i, **overrides)
+        for i, overrides in enumerate(overrides_list)
+    ]
 
 
 # ---------------------------------------------------------------------------
