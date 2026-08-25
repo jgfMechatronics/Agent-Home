@@ -38,7 +38,7 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
    
    Note: Haiku experienced BOTH modes - first non-adjacent, then adjacent due to compounding bug
 
-5. EMPTY/NULL CONTENT
+5. EMPTY/NULL CONTENT ✓
    - MessageRecord with null or empty content blob is always suspicious
    - Cheap to catch
    - Severity: ERROR
@@ -46,7 +46,7 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
    - NOTE: A ModelMessage with no parts, especially a ModelResopnse with no parts, is a known valid case. The concern here is a
    *MessageRecord* with empty or undeserializable content.
 
-6. TOOL CALL/RETURN PAIRING
+6. TOOL CALL/RETURN PAIRING ✓
    - ToolCallPart in ModelResponse should have matching ToolReturnPart by tool_call_id
    - Orphaned tool calls = incomplete turn
    - Matching on tool_call_id is more precise than just counting
@@ -61,21 +61,12 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
    - Severity: WARN for unusual patterns, INFO for multiple ModelRequests
    - James and Sonnet to do this one together after others are done, may be fraught with peril
 
-8. CONTEXT_WINDOW_START_MSG_ID VALIDITY
+8. CONTEXT_WINDOW_START_MSG_ID VALIDITY ✓
    - Must point to a message that exists
    - Must point to same seq_id or earlier (not forward references)
    - Severity: ERROR
 
-(Removed check 9)
-
-10. PART-LEVEL SANITY ✗ (skipped — redundant with check 5)
-    - ToolReturnPart should only appear in ModelRequest (user returning tool results)
-    - ToolCallPart should only appear in ModelResponse (model calling tools)
-    - Wrong part types in wrong message kinds = corruption or serialization bug
-    - Severity: ERROR
-    - SKIP REASON: pydantic-ai enforces this at deserialization time via tagged-union validation.
-      Any record with wrong part types in the wrong message kind will fail JSON deserialization
-      and be caught as "undeserializable_content" by check 5 first. Check 10 can never fire.
+(Removed check 9, 10)
 
 === TESTING APPROACH ===
 
