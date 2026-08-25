@@ -304,7 +304,6 @@ def check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: S
     return issues
 
 
-
 async def check_agent_integrity(
     session: AsyncSession,
     agent_id: str,
