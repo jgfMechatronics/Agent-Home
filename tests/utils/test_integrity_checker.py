@@ -108,12 +108,14 @@ def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRe
     """
     record_id = overrides.get("id", str(uuid4()))
     override_type = overrides.get("type")
+
     if override_type == "ModelRequest":
         msg = make_request(str(uuid4()))
     elif override_type == "ModelResponse":
         msg = make_response(str(uuid4()))
     else:
         msg = make_request(str(uuid4())) if seq_id % 2 == 0 else make_response(str(uuid4()))
+
     defaults = {
         "id": record_id,
         "agent_id": agent_id,
@@ -124,6 +126,7 @@ def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRe
         "type": type(msg).__name__,
         "content": dump_msg_json(msg),
     }
+    
     return MessageRecord(**{**defaults, **overrides})
 
 
@@ -187,7 +190,8 @@ SEQ_ID_TEST_CASES = [
         lambda agent_id: [
             make_message_record(agent_id, seq_id=0),
             make_message_record(agent_id, seq_id=1),
-            make_message_record(agent_id, seq_id=3, type="ModelRequest"),  # gap: missing 2; type forced to avoid accidental adjacent responses
+            # gap: missing 2; type forced to avoid accidental adjacent responses
+            make_message_record(agent_id, seq_id=3, type="ModelRequest"),
         ],
         [IntegrityIssue(
             check_type="seq_id_gap",
@@ -414,6 +418,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
             {},
         ]),
         [
+            # Hard to avoid tripping this one while testing the adjacent dupe detection
             IntegrityIssue(
                 check_type="adjacent_model_responses",
                 severity=ERROR,
@@ -595,8 +600,8 @@ MESSAGE_ORDERING_TEST_CASES = [
     # Adjacent ModelResponses — never legitimate
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
-            {"type": "ModelResponse", "content": dump_msg_json(make_response(str(uuid4())))},
-            {"type": "ModelResponse", "content": dump_msg_json(make_response(str(uuid4())))},
+            {"type": "ModelResponse"},
+            {"type": "ModelResponse"},
             {},
         ]),
         [IntegrityIssue(
