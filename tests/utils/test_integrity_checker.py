@@ -171,7 +171,18 @@ CLEAN_TEST_CASES = [
         [],
         id="empty_part_content_not_flagged",
     ),
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [{}]),
+        [],
+        id="clean_single_msg",
+    ),
+    pytest.param(
+        lambda agent_id: [],
+        [],
+        id="clean_no_msg"
+    )
 ]
+
 
 # NOTE: No non-adjacent duplicate test for seq_id — after ORDER BY seq_id, duplicates
 # are always adjacent. Non-adjacent duplicates in insertion order become adjacent after load.
