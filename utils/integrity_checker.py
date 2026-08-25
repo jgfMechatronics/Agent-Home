@@ -214,6 +214,42 @@ def _find_issues_in_suspect_parts(
     return integrity_issues
 
 
+def check_context_window_start_validity(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
+    """Check that each context_window_start_msg_id points to an existing, non-forward message.
+
+    A valid context_window_start_msg_id must:
+    - Correspond to a MessageRecord that exists in the agent's history
+    - Have a seq_id <= the record that references it (no forward references)
+    """
+    id_to_seq: dict[str, int] = {r.id: r.seq_id for r in records}
+
+    issues: list[IntegrityIssue] = []
+    for record in records:
+        ctx_id = record.context_window_start_msg_id
+        if ctx_id not in id_to_seq:
+            issues.append(IntegrityIssue(
+                check_type="invalid_context_window_start",
+                severity=ERROR,
+                seq_ids=[record.seq_id],
+                details=(
+                    f"MessageRecord at seq_id {record.seq_id} has "
+                    f"context_window_start_msg_id pointing to a nonexistent message"
+                ),
+            ))
+        elif id_to_seq[ctx_id] > record.seq_id:
+            issues.append(IntegrityIssue(
+                check_type="invalid_context_window_start",
+                severity=ERROR,
+                seq_ids=[record.seq_id],
+                details=(
+                    f"MessageRecord at seq_id {record.seq_id} has "
+                    f"context_window_start_msg_id pointing to a future message at seq_id {id_to_seq[ctx_id]}"
+                ),
+            ))
+
+    return issues
+
+
 def check_for_empty_content(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     """Check for MessageRecords with empty/null content blobs or undeserializable content.
 
@@ -329,6 +365,7 @@ async def check_agent_integrity(
     issues: list[IntegrityIssue] = []
     issues.extend(check_seq_id_consecutive(records))
     issues.extend(check_timestamps_increasing(records))
+    issues.extend(check_context_window_start_validity(records))
 
     empty_content_issues = check_for_empty_content(records)
     issues.extend(empty_content_issues)

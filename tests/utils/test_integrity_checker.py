@@ -117,13 +117,19 @@ def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRe
     - type alternates ModelRequest/ModelResponse by seq_id (even=request, odd=response)
     - content is a properly serialized ModelMessage with random UUID text to ensure uniqueness in default case
     - timestamp defaults to datetime(2026, 1, 1, 12, 0, seq_id)
+    - context_window_start_msg_id defaults to the record's own id (self-reference, always valid
+      for check 8). Override to test specific good/bad values; make_message_sequence overrides
+      it to the first record's id for realistic multi-record sequences.
     """
+    record_id = overrides.get("id", str(uuid4()))
     msg = make_request(str(uuid4())) if seq_id % 2 == 0 else make_response(str(uuid4()))
     defaults = {
+        "id": record_id,
         "agent_id": agent_id,
         "seq_id": seq_id,
         "timestamp": datetime(2026, 1, 1, 12, 0, seq_id),
         **PARTIAL_MESSAGE_FIELDS,
+        "context_window_start_msg_id": record_id,  # self-reference; overrides STUB_CTX_MSG_ID above
         "type": type(msg).__name__,
         "content": dump_msg_json(msg),
     }
@@ -136,13 +142,22 @@ RecordBuilder = Callable[[str], list[MessageRecord]]
 
 def make_message_sequence(agent_id: str, overrides_list: list[dict]) -> list[MessageRecord]:
     """Create messages with auto-assigned consecutive seq_ids (0, 1, 2...).
-    
-    Use for tests where seq_ids should be valid — only specify what you're testing.
+
+    The first record points to itself as context_window_start_msg_id; subsequent records
+    inherit that ID (simulating a single uninterrupted context window). Override
+    context_window_start_msg_id in individual entries to test bad values for check 8.
     """
-    return [
-        make_message_record(agent_id, seq_id=i, **overrides)
-        for i, overrides in enumerate(overrides_list)
-    ]
+    # Pre-allocate the first record's ID so all records can reference it as context_window_start
+    first_id = str(uuid4())
+    records = []
+    for i, overrides in enumerate(overrides_list):
+        resolved = overrides.copy()
+        if "context_window_start_msg_id" not in resolved:
+            resolved["context_window_start_msg_id"] = first_id
+        if i == 0 and "id" not in resolved:
+            resolved["id"] = first_id
+        records.append(make_message_record(agent_id, seq_id=i, **resolved))
+    return records
 
 
 # ---------------------------------------------------------------------------
@@ -545,6 +560,50 @@ TOOL_PAIRING_TEST_CASES = [
 
 
 # ---------------------------------------------------------------------------
+# Check 8: context_window_start_msg_id Validity
+# ---------------------------------------------------------------------------
+
+def _forward_ctx_ref_sequence(agent_id: str) -> list[MessageRecord]:
+    """Seq_id 0 pointing to the ID of seq_id 1 — a forward reference."""
+    later_id = str(uuid4())
+    return make_message_sequence(agent_id, [
+        {"context_window_start_msg_id": later_id},  # forward reference to seq_id 1
+        {"id": later_id},
+        {},
+    ])
+
+
+CTX_WINDOW_START_TEST_CASES = [
+    # Nonexistent ID — points to a message that isn't in the agent's history
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},
+            {"context_window_start_msg_id": str(uuid4())},  # random UUID, not in records
+            {},
+        ]),
+        [IntegrityIssue(
+            check_type="invalid_context_window_start",
+            severity=ERROR,
+            seq_ids=[1],
+            details="MessageRecord at seq_id 1 has context_window_start_msg_id pointing to a nonexistent message",
+        )],
+        id="nonexistent_context_window_start",
+    ),
+    # Forward reference — context_window_start points to a later message (seq_id 0 → seq_id 1)
+    pytest.param(
+        _forward_ctx_ref_sequence,
+        [IntegrityIssue(
+            check_type="invalid_context_window_start",
+            severity=ERROR,
+            seq_ids=[0],
+            details="MessageRecord at seq_id 0 has context_window_start_msg_id pointing to a future message at seq_id 1",
+        )],
+        id="forward_context_window_start",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
 # TestCheckAgentIntegrity
 # ---------------------------------------------------------------------------
 
@@ -589,6 +648,10 @@ class TestCheckAgentIntegrity:
 
     @pytest.mark.parametrize("build_records,expected_issues", TOOL_PAIRING_TEST_CASES)
     async def test_tool_pairing(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        await self._run_check(build_records, expected_issues)
+
+    @pytest.mark.parametrize("build_records,expected_issues", CTX_WINDOW_START_TEST_CASES)
+    async def test_ctx_window_start(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
 
     async def test_undeserializable_content(self):
