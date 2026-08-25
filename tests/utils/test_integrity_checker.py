@@ -616,7 +616,7 @@ MESSAGE_ORDERING_TEST_CASES = [
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
             {},
-            {"type": "ModelRequest", "content": dump_msg_json(make_request(str(uuid4())))},
+            {"type": "ModelRequest"},
             {},
         ]),
         [],
