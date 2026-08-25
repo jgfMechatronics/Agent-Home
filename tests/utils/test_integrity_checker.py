@@ -107,7 +107,7 @@ from utils.integrity_checker import CRITICAL, ERROR, WARN, IntegrityIssue, Sever
 def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRecord:
     """Construct a MessageRecord with realistic defaults.
 
-    Requires seed_stub_snapshots fixture to be active (for FK satisfaction).
+    Requires seed_stub_snapshots fixture to be active (for FK satisfaction on snapshot hash fields).
     - type alternates ModelRequest/ModelResponse by seq_id (even=request, odd=response)
     - content is a properly serialized ModelMessage with random UUID text to ensure uniqueness in default case
     - timestamp defaults to datetime(2026, 1, 1, 12, 0, seq_id)

@@ -13,9 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequestPart, ModelResponsePart
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
-from sqlalchemy import select
-
-from db.models import AgentConfigSnapshot, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot
+from db.models import MessageRecord
 from messages.messages import load_messages, deserialize_messages
 
 class Severity(Enum):
@@ -330,50 +328,6 @@ def check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: S
 
 
 
-
-
-async def check_snapshot_references(session: AsyncSession, records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
-    """Check that every snapshot hash referenced by a MessageRecord exists in its snapshot table.
-
-    This is a belt-and-suspenders check: FK constraints normally prevent orphaned references.
-    Failure here indicates the DB was written outside normal ORM paths (import, migration,
-    direct SQL) with FK enforcement disabled.
-    """
-    sys_hashes = {r.system_prompt_hash for r in records}
-    tool_hashes = {r.tool_definition_hash for r in records}
-    config_hashes = {r.agent_config_hash for r in records}
-
-    existing_sys = {row for (row,) in (await session.execute(
-        select(SystemPromptSnapshot.id).where(SystemPromptSnapshot.id.in_(sys_hashes))
-    ))}
-    existing_tool = {row for (row,) in (await session.execute(
-        select(ToolDefinitionSnapshot.id).where(ToolDefinitionSnapshot.id.in_(tool_hashes))
-    ))}
-    existing_config = {row for (row,) in (await session.execute(
-        select(AgentConfigSnapshot.id).where(AgentConfigSnapshot.id.in_(config_hashes))
-    ))}
-
-    issues: list[IntegrityIssue] = []
-    for record in records:
-        for hash_val, existing, field_name in [
-            (record.system_prompt_hash, existing_sys, "system_prompt_hash"),
-            (record.tool_definition_hash, existing_tool, "tool_definition_hash"),
-            (record.agent_config_hash, existing_config, "agent_config_hash"),
-        ]:
-            if hash_val not in existing:
-                issues.append(IntegrityIssue(
-                    check_type="missing_snapshot",
-                    severity=ERROR,
-                    seq_ids=[record.seq_id],
-                    details=(
-                        f"MessageRecord at seq_id {record.seq_id} references "
-                        f"{field_name} {hash_val!r} which has no corresponding snapshot row"
-                    ),
-                ))
-
-    return issues
-
-
 async def check_agent_integrity(
     session: AsyncSession,
     agent_id: str,
@@ -399,7 +353,6 @@ async def check_agent_integrity(
     issues.extend(check_seq_id_consecutive(records))
     issues.extend(check_timestamps_increasing(records))
     issues.extend(check_context_window_start_validity(records))
-    issues.extend(await check_snapshot_references(session, records))
     issues.extend(check_for_empty_content(records))
 
     # Gating deserialization step — on failure, report CRITICAL and skip remaining checks
