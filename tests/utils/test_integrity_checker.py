@@ -42,9 +42,12 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
    - MessageRecord with null or empty content blob is always suspicious
    - Cheap to catch
    - Severity: ERROR
+   - Include a deserializability check just for fun. Use our existing deserializer function which is....somewhere
+   - NOTE: A ModelMessage with no parts, especially a ModelResopnse with no parts, is a known valid case. The concern here is a
+   *MessageRecord* with empty or undeserializable content.
 
 6. TOOL CALL/RETURN PAIRING
-   - ToolCallPart in ModelResponse should eventually have matching ToolReturnPart by tool_call_id
+   - ToolCallPart in ModelResponse should have matching ToolReturnPart by tool_call_id
    - Orphaned tool calls = incomplete turn
    - Matching on tool_call_id is more precise than just counting
    - Severity: ERROR for orphaned calls
@@ -56,12 +59,12 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
    - Special cases: cancellation markers, compaction
    - May abandon if too noisy - part-level checks (tool pairing) may be more valuable
    - Severity: WARN for unusual patterns, INFO for multiple ModelRequests
+   - James and Sonnet to do this one together after others are done, may be fraught with peril
 
 8. CONTEXT_WINDOW_START_MSG_ID VALIDITY
    - Must point to a message that exists
    - Must point to same seq_id or earlier (not forward references)
-   - Flag if pointing to very recent messages (compaction misfire signal)
-   - Severity: ERROR (nonexistent), WARN (too recent)
+   - Severity: ERROR
 
 9. SNAPSHOT REFERENCE INTEGRITY
    - system_prompt_hash -> must exist in SystemPromptSnapshot table
@@ -69,6 +72,7 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
    - agent_config_hash -> must exist in AgentConfigSnapshot table
    - Orphan references indicate incomplete persistence
    - Severity: ERROR
+   - Impl note: look for any useful existing stuff in the ctx reconstructor. Avoid duplication.
 
 10. PART-LEVEL SANITY
     - ToolReturnPart should only appear in ModelRequest (user returning tool results)
