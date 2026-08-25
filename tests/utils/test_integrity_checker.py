@@ -129,7 +129,7 @@ def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRe
         "seq_id": seq_id,
         "timestamp": datetime(2026, 1, 1, 12, 0, seq_id),
         **PARTIAL_MESSAGE_FIELDS,
-        "context_window_start_msg_id": record_id,  # self-reference; overrides STUB_CTX_MSG_ID above
+        "context_window_start_msg_id": record_id,  # self-reference; overrides STUB_CTX_MSG_ID in PARTIAL_MESSAGE_FIELDS
         "type": type(msg).__name__,
         "content": dump_msg_json(msg),
     }
@@ -145,7 +145,7 @@ def make_message_sequence(agent_id: str, overrides_list: list[dict]) -> list[Mes
 
     The first record points to itself as context_window_start_msg_id; subsequent records
     inherit that ID (simulating a single uninterrupted context window). Override
-    context_window_start_msg_id in individual entries to test bad values for check 8.
+    context_window_start_msg_id in individual entries to test bad/nonsensical values
     """
     # Pre-allocate the first record's ID so all records can reference it as context_window_start
     first_id = str(uuid4())
