@@ -66,13 +66,6 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
    - Must point to same seq_id or earlier (not forward references)
    - Severity: ERROR
 
-9. SNAPSHOT REFERENCE INTEGRITY
-   - system_prompt_hash -> must exist in SystemPromptSnapshot table
-   - tool_schema_hash -> must exist in ToolSchemaSnapshot table  
-   - agent_config_hash -> must exist in AgentConfigSnapshot table
-   - Orphan references indicate incomplete persistence
-   - Severity: ERROR
-   - Impl note: look for any useful existing stuff in the ctx reconstructor. Avoid duplication.
 
 10. PART-LEVEL SANITY ✗ (skipped — redundant with check 5)
     - ToolReturnPart should only appear in ModelRequest (user returning tool results)
