@@ -88,7 +88,13 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, T
 from conftest import PARTIAL_MESSAGE_FIELDS, make_request, make_response, make_retry_pair, make_tool_pair
 from messages.messages import dump_msg_json
 from db.models import AgentRecord, MessageRecord
-from utils.integrity_checker import CRITICAL, ERROR, WARN, IntegrityIssue, Severity, check_agent_integrity
+from messages.messages import deserialize_messages
+from utils.integrity_checker import (
+    CRITICAL, ERROR, WARN, IntegrityIssue, Severity, check_agent_integrity,
+    check_seq_id_consecutive, check_timestamps_increasing, check_context_window_start_validity,
+    check_message_ordering, check_for_empty_content,
+    check_tool_call_return_pairing, check_for_duplicate_content,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -684,6 +690,20 @@ CTX_WINDOW_START_TEST_CASES = [
 # TestCheckAgentIntegrity
 # ---------------------------------------------------------------------------
 
+_RECORD_ONLY_CHECKERS = [
+    pytest.param(check_seq_id_consecutive, id="check_seq_id_consecutive"),
+    pytest.param(check_timestamps_increasing, id="check_timestamps_increasing"),
+    pytest.param(check_context_window_start_validity, id="check_context_window_start_validity"),
+    pytest.param(check_message_ordering, id="check_message_ordering"),
+    pytest.param(check_for_empty_content, id="check_for_empty_content"),
+]
+
+_RECORD_AND_MESSAGE_CHECKERS = [
+    pytest.param(check_tool_call_return_pairing, id="check_tool_call_return_pairing"),
+    pytest.param(check_for_duplicate_content, id="check_for_duplicate_content"),
+]
+
+
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("seed_stub_snapshots")
 class TestCheckAgentIntegrity:
@@ -739,9 +759,18 @@ class TestCheckAgentIntegrity:
     async def test_ctx_window_start(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
         await self._run_check(build_records, expected_issues)
 
+    @pytest.mark.parametrize("checker", _RECORD_ONLY_CHECKERS)
+    async def test_record_only_checkers_do_not_mutate_input(self, checker):
+        records = make_message_sequence(self.agent.id, [{}, {}, {}, {}])
+        snapshot = list(records)
+        checker(records)
+        assert list(records) == snapshot
 
-def test_checkers_units_do_not_mutate_input():
-    # TODO: Once all internal checker functions exist, parametrize this test on them.
-    # For each checker: create records, snapshot state, run checker, assert unchanged.
-    # This enforces the invariant that checkers are pure functions.
-    pytest.fail("Not yet implemented — add after all checkers exist")
+    @pytest.mark.parametrize("checker", _RECORD_AND_MESSAGE_CHECKERS)
+    async def test_record_and_message_checkers_do_not_mutate_input(self, checker):
+        records = make_message_sequence(self.agent.id, [{}, {}, {}, {}])
+        messages = deserialize_messages(records)
+        records_snapshot, messages_snapshot = list(records), list(messages)
+        checker(records, messages)
+        assert list(records) == records_snapshot
+        assert list(messages) == messages_snapshot
