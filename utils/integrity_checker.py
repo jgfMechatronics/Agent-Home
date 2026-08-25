@@ -279,8 +279,8 @@ def check_for_empty_content(records: Sequence[MessageRecord]) -> list[IntegrityI
 def check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: Sequence[ModelMessage]) -> list[IntegrityIssue]:
     """Check that every ToolCallPart has a matching ToolReturnPart or RetryPromptPart, and vice versa.
 
-    Matches by tool_call_id. Orphaned calls or returns indicate incomplete turns — a persistence
-    bug, cancellation mid-turn, or history truncation error.
+    Matches by tool_call_id. Orphaned calls or returns may indicate issues with persistence or erroneous re-persistence.
+
     """
     # Collect all tool_call_ids from ToolCallParts, with the seq_id they appeared in
     calls: dict[str, int] = {}  # tool_call_id -> seq_id
