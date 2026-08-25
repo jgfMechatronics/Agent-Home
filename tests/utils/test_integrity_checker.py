@@ -77,6 +77,7 @@ Test loads messages into DB via raw insert, calls top-level function, asserts ex
 from typing import Callable
 from uuid import uuid4
 
+import copy
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -762,15 +763,21 @@ class TestCheckAgentIntegrity:
     @pytest.mark.parametrize("checker", _RECORD_ONLY_CHECKERS)
     async def test_record_only_checkers_do_not_mutate_input(self, checker):
         records = make_message_sequence(self.agent.id, [{}, {}, {}, {}])
-        snapshot = list(records)
+        snapshot = copy.deepcopy(records)
         checker(records)
-        assert list(records) == snapshot
+
+        # No native __eq__ for Sqlalchemy ORM, have to do some funny stuff
+        for r, s in zip(records, snapshot):
+            s._sa_instance_state = r._sa_instance_state
+        assert [vars(r) for r in records] == [vars(s) for s in snapshot]
 
     @pytest.mark.parametrize("checker", _RECORD_AND_MESSAGE_CHECKERS)
     async def test_record_and_message_checkers_do_not_mutate_input(self, checker):
         records = make_message_sequence(self.agent.id, [{}, {}, {}, {}])
         messages = deserialize_messages(records)
-        records_snapshot, messages_snapshot = list(records), list(messages)
+        records_snapshot, messages_snapshot = copy.deepcopy(records), copy.deepcopy(messages)
         checker(records, messages)
-        assert list(records) == records_snapshot
-        assert list(messages) == messages_snapshot
+        for r, s in zip(records, records_snapshot):
+            s._sa_instance_state = r._sa_instance_state
+        assert [vars(r) for r in records] == [vars(s) for s in records_snapshot]
+        assert messages == messages_snapshot
