@@ -1,5 +1,6 @@
 import hashlib
 import os
+import uuid
 
 # Must be set before any import of api.app (which reads it at module level).
 # Conftest is imported first by pytest, making this the right place for it.
@@ -186,8 +187,9 @@ def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
     FunctionModel is useful for valid sequences; orphan tests still need hand-crafted invalid
     sequences (deliberately incomplete pairs) which could be produced by mutating the results of FunctionModel
     """
-    call_part = ToolCallPart(tool_name="mem_replace", args='{"label":"x"}', tool_call_id="tc1")
-    return_part = ToolReturnPart(tool_name="mem_replace", content="ok", tool_call_id="tc1")
+    tool_call_id = str(uuid.uuid4())
+    call_part = ToolCallPart(tool_name="mem_replace", args='{"label":"x"}', tool_call_id=tool_call_id)
+    return_part = ToolReturnPart(tool_name="mem_replace", content="ok", tool_call_id=tool_call_id)
     return (
         ModelResponse(parts=[call_part]),
         ModelRequest(parts=[return_part], timestamp=_TOOL_PAIR_REQUEST_TS),
@@ -204,7 +206,7 @@ def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
     retry_part = RetryPromptPart(
         content="block 'x' not found",
         tool_name="mem_replace",
-        tool_call_id="tc1",
+        tool_call_id=call_response.parts[0].tool_call_id,
     )
     return (
         call_response,

@@ -611,6 +611,31 @@ TOOL_PAIRING_TEST_CASES = [
         [],
         id="matched_retry_pair",
     ),
+    # Structurally valid but mismatched tool_call_ids — call and return are from different pairs.
+    # is_valid_tool_pair currently only checks structure, not IDs, so this slips through.
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},
+            {"type": "ModelResponse", "content": dump_msg_json(make_tool_pair()[0])},  # call id A
+            {"type": "ModelRequest", "content": dump_msg_json(make_tool_pair()[1])},   # return id B — mismatch
+            {},
+        ]),
+        [
+            IntegrityIssue(
+                check_type="orphaned_tool_call",
+                severity=ERROR,
+                seq_ids=[1],
+                details="ModelResponse at seq_id 1 has ToolCallPart(s) with no matching return in the following message",
+            ),
+            IntegrityIssue(
+                check_type="orphaned_tool_return",
+                severity=ERROR,
+                seq_ids=[2],
+                details="ModelRequest at seq_id 2 has ToolReturnPart(s) with no matching call in the preceding message",
+            ),
+        ],
+        id="mismatched_tool_call_ids",
+    ),
 ]
 
 
