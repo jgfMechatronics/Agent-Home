@@ -22,7 +22,7 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
    - Same rules as MessageRecord timestamps
    - These come from the provider response, separate from our persistence timestamp
 
-4. DUPLICATE CONTENT DETECTION (hash-based, O(n))
+4. DUPLICATE CONTENT DETECTION (hash-based, O(n)) ✓
    - Use hashlib.sha256 for stable canonical hashing (NOT hash(), which is process-unstable)
    - Track seen hashes with their seq_ids (don't overwrite after detection - keep original)
    
