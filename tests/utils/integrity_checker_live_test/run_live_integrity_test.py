@@ -46,7 +46,7 @@ async def _check_db(db_path: Path) -> str:
             for record in records:
                 lines.append(f"\n  Agent: {record.name}  ({record.id})")
                 issues = await check_agent_integrity(session, record.id)
-                dismissals = load_dismissals(_DISMISSALS_FILE)
+                dismissals = load_dismissals(_DISMISSALS_FILE, record.id)
                 issues = filter_dismissed_issues(issues, dismissals)
                 if not issues:
                     lines.append("  ✓  No issues found")

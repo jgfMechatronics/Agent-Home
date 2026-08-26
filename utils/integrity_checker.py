@@ -413,12 +413,13 @@ def filter_dismissed_issues(
     ]
 
 
-def load_dismissals(path: Path) -> list[Dismissal]:
-    """Load dismissals from a JSON file.
+def load_dismissals(path: Path, agent_id: str) -> list[Dismissal]:
+    """Load dismissals for a specific agent from a JSON file.
     
-    Returns empty list if file doesn't exist.
+    File structure: dict keyed by agent_id, values are lists of dismissals.
+    Returns empty list if file doesn't exist or agent has no dismissals.
     """
     if not path.exists():
         return []
     data = json.loads(path.read_text())
-    return [TypeAdapter(Dismissal).validate_python(d) for d in data.get("dismissed", [])]
+    return [TypeAdapter(Dismissal).validate_python(d) for d in data.get(agent_id, [])]

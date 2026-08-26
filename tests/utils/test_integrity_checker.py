@@ -869,17 +869,29 @@ class TestFilterDismissedIssues:
 class TestLoadDismissals:
     """Tests for load_dismissals()."""
 
+    _AGENT_ID = "test-agent-id"
+
     def test_loads_valid_file(self, tmp_path):
-        """Parses JSON file into Dismissal objects."""
-        config = {"dismissed": [asdict(_DISMISSAL_A)]}
+        """Parses JSON file into Dismissal objects for the specified agent."""
+        config = {self._AGENT_ID: [asdict(_DISMISSAL_A)]}
         path = tmp_path / "dismissals.json"
         path.write_text(json.dumps(config))
         
-        result = load_dismissals(path)
+        result = load_dismissals(path, self._AGENT_ID)
         
         assert result == [_DISMISSAL_A]
 
     def test_missing_file_returns_empty(self, tmp_path):
         """Non-existent file returns empty list (not an error)."""
-        result = load_dismissals(tmp_path / "nonexistent.json")
+        result = load_dismissals(tmp_path / "nonexistent.json", self._AGENT_ID)
+        assert result == []
+
+    def test_agent_not_in_file_returns_empty(self, tmp_path):
+        """Agent with no dismissals returns empty list."""
+        config = {"other-agent": [asdict(_DISMISSAL_A)]}
+        path = tmp_path / "dismissals.json"
+        path.write_text(json.dumps(config))
+        
+        result = load_dismissals(path, self._AGENT_ID)
+        
         assert result == []
