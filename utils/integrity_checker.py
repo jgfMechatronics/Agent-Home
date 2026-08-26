@@ -17,7 +17,7 @@ from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequ
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 from db.models import MessageRecord
-from messages.messages import load_messages, deserialize_messages, is_valid_tool_pair
+from messages.messages import load_messages, deserialize_messages, is_valid_tool_pair, is_system_alert
 
 class Severity(Enum):
     """Severity levels for integrity issues."""
@@ -152,6 +152,9 @@ def _build_part_hash_table(
             # These situations too ripe for "valid" duplication. Short circuiting should narrow type of part
             # enough that len comparison is valid
             if isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) or (len(part.content) == 0):
+                continue
+            # System alerts (compaction warnings, etc.) are expected to repeat
+            if is_system_alert(part.content):
                 continue
 
             # Avoid declaring duplicate across part type

@@ -45,6 +45,11 @@ def format_system_alert(content: str, tags_on_newline: bool = False) -> str:
     return f"<system_alert>{content}</system_alert>"
 
 
+def is_system_alert(text: str) -> bool:
+    """Check if text was formatted by format_system_alert."""
+    return text.startswith("<system_alert>") and text.endswith("</system_alert>")
+
+
 def _make_orphan_replacement(
     msg: ModelMessage, part_type: type
 ) -> tuple[tuple[datetime, str], ModelResponse]:

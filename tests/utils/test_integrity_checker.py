@@ -89,7 +89,7 @@ from datetime import datetime
 from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
 
 from conftest import PARTIAL_MESSAGE_FIELDS, make_request, make_response, make_retry_pair, make_tool_pair
-from messages.messages import dump_msg_json
+from messages.messages import dump_msg_json, format_system_alert
 from db.models import AgentRecord, MessageRecord
 from messages.messages import deserialize_messages
 from utils.integrity_checker import (
@@ -329,6 +329,10 @@ _EMPTY_DUP = {"type": "ModelRequest", "content": dump_msg_json(make_request(""))
 _SHORT_DUP = {"type": "ModelRequest", "content": dump_msg_json(make_request("ok"))}
 _LONG_DUP  = {"type": "ModelRequest", "content": dump_msg_json(make_request("x" * (_CONTENT_LENGTH_THRESHOLD + 1)))}
 
+_SYSTEM_ALERT_TEXT = format_system_alert("Unexpected big chungus detected")
+_SYSTEM_ALERT = {"type": "ModelRequest", "content": dump_msg_json(make_request(_SYSTEM_ALERT_TEXT))}
+
+
 # ThinkingPart duplicates (ModelResponse with a thinking block)
 def _make_thinking_response(thinking: str) -> ModelResponse:
     return ModelResponse(parts=[ThinkingPart(content=thinking)])
@@ -336,6 +340,7 @@ def _make_thinking_response(thinking: str) -> ModelResponse:
 
 def _make_thinking_and_text_response(thinking: str, text: str) -> ModelResponse:
     return ModelResponse(parts=[ThinkingPart(content=thinking), TextPart(content=text)])
+
 
 _LONG_THINKING_DUP = {"type": "ModelResponse", "content": dump_msg_json(_make_thinking_response("x" * (_CONTENT_LENGTH_THRESHOLD + 1)))}
 
@@ -501,6 +506,11 @@ CONTENT_DUPLICATE_TEST_CASES = [
         ],
         id="adjacent_duplicate_thinking_with_unique_text",
     ),
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [{**_SYSTEM_ALERT}, {}, {**_SYSTEM_ALERT},{}]),
+        [],
+        id="check_system_alert_allowed"        
+    )
 ]
 
 
