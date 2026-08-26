@@ -36,6 +36,28 @@ class IntegrityIssue:
     details: str  # human-readable description
 
 
+@dataclass
+class Dismissal:
+    """A user-acknowledged false positive to filter from results."""
+    check_type: str
+    seq_ids: list[int]
+    reason: str  # Why this was dismissed (for future reference)
+
+
+def filter_dismissed_issues(
+    issues: list[IntegrityIssue],
+    dismissals: list[Dismissal],
+) -> list[IntegrityIssue]:
+    """Remove issues that match a dismissal entry."""
+    return [
+        issue for issue in issues
+        if not any(
+            issue.check_type == d.check_type and issue.seq_ids == d.seq_ids
+            for d in dismissals
+        )
+    ]
+
+
 def _check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
     """Check that seq_ids are strictly consecutive starting at 0 (no gaps, no duplicates).
     

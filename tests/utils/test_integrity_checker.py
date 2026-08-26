@@ -95,6 +95,7 @@ from utils.integrity_checker import (
     _check_seq_id_consecutive, _check_timestamps_increasing, _check_context_window_start_validity,
     _check_message_ordering, _check_for_empty_content,
     _check_tool_call_return_pairing, _check_for_duplicate_content,
+    Dismissal, filter_dismissed_issues,
 )
 
 
@@ -810,3 +811,18 @@ class TestCheckAgentIntegrity:
             s._sa_instance_state = r._sa_instance_state
         assert [vars(r) for r in records] == [vars(s) for s in records_snapshot]
         assert messages == messages_snapshot
+
+
+class TestFilterDismissedIssues:
+    """Tests for filter_dismissed_issues()."""
+
+    def test_matching_dismissal_filters_issue(self):
+        """A dismissal with matching check_type and seq_ids removes the issue."""
+        issues = [
+            IntegrityIssue(check_type="adjacent_duplicate", severity=WARN, seq_ids=[111, 396], details="test"),
+        ]
+        dismissals = [
+            Dismissal(check_type="adjacent_duplicate", seq_ids=[111, 396], reason="Compaction warning duplication"),
+        ]
+        result = filter_dismissed_issues(issues, dismissals)
+        assert result == []
