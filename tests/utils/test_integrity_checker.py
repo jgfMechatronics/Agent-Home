@@ -814,55 +814,44 @@ class TestCheckAgentIntegrity:
         assert messages == messages_snapshot
 
 
+# Reusable fixtures for dismissal tests
+_ISSUE_A = IntegrityIssue(check_type="adjacent_duplicate", severity=WARN, seq_ids=[111, 396], details="test A")
+_ISSUE_B = IntegrityIssue(check_type="seq_id_gap", severity=ERROR, seq_ids=[5, 7], details="test B")
+_DISMISSAL_A = Dismissal(check_type="adjacent_duplicate", seq_ids=[111, 396], reason="Known false positive")
+
+_FILTER_TEST_CASES = [
+    pytest.param([_ISSUE_A], [_DISMISSAL_A], [], id="matching_dismissal_filters"),
+    pytest.param([_ISSUE_A, _ISSUE_B], [_DISMISSAL_A], [_ISSUE_B], id="selective_filtering_keeps_unrelated"),
+    pytest.param([_ISSUE_A, _ISSUE_B], [], [_ISSUE_A, _ISSUE_B], id="empty_dismissals_keeps_all"),
+    pytest.param([], [_DISMISSAL_A], [], id="empty_issues_returns_empty"),
+]
+
 class TestFilterDismissedIssues:
     """Tests for filter_dismissed_issues()."""
 
-    # Reusable test fixtures
-    ISSUE_A = IntegrityIssue(check_type="adjacent_duplicate", severity=WARN, seq_ids=[111, 396], details="test A")
-    ISSUE_B = IntegrityIssue(check_type="seq_id_gap", severity=ERROR, seq_ids=[5, 7], details="test B")
-    DISMISSAL_A = Dismissal(check_type="adjacent_duplicate", seq_ids=[111, 396], reason="Known false positive")
+    @pytest.mark.parametrize("issues,dismissals,expected", _FILTER_TEST_CASES)
+    def test_filter_dismissed_issues(self, issues, dismissals, expected):
+        """Filter removes matching issues and keeps others."""
+        assert filter_dismissed_issues(issues, dismissals) == expected
 
-    def test_matching_dismissal_filters_issue(self):
-        """A dismissal with matching check_type and seq_ids removes the issue."""
-        result = filter_dismissed_issues([self.ISSUE_A], [self.DISMISSAL_A])
-        assert result == []
-
-    @pytest.mark.parametrize("dismissal,reason", [
+    @pytest.mark.parametrize("dismissal", [
         pytest.param(
             Dismissal(check_type="wrong_type", seq_ids=[111, 396], reason="x"),
-            "check_type mismatch",
             id="wrong_check_type",
         ),
         pytest.param(
             Dismissal(check_type="adjacent_duplicate", seq_ids=[111, 397], reason="x"),
-            "seq_ids mismatch",
             id="wrong_seq_ids",
         ),
         pytest.param(
             Dismissal(check_type="adjacent_duplicate", seq_ids=[396, 111], reason="x"),
-            "seq_ids order matters",
             id="reversed_seq_ids",
         ),
     ])
-    def test_non_matching_dismissal_keeps_issue(self, dismissal: Dismissal, reason: str):
+    def test_non_matching_dismissal_keeps_issue(self, dismissal: Dismissal):
         """Issues are kept when dismissal doesn't match exactly."""
-        result = filter_dismissed_issues([self.ISSUE_A], [dismissal])
-        assert result == [self.ISSUE_A], reason
-
-    def test_selective_filtering_keeps_unrelated_issues(self):
-        """Only matching issues are filtered; others are kept."""
-        result = filter_dismissed_issues([self.ISSUE_A, self.ISSUE_B], [self.DISMISSAL_A])
-        assert result == [self.ISSUE_B]
-
-    def test_empty_dismissals_keeps_all(self):
-        """No dismissals means all issues pass through."""
-        result = filter_dismissed_issues([self.ISSUE_A, self.ISSUE_B], [])
-        assert result == [self.ISSUE_A, self.ISSUE_B]
-
-    def test_empty_issues_returns_empty(self):
-        """No issues means empty result regardless of dismissals."""
-        result = filter_dismissed_issues([], [self.DISMISSAL_A])
-        assert result == []
+        result = filter_dismissed_issues([_ISSUE_A], [dismissal])
+        assert result == [_ISSUE_A]
 
 
 class TestLoadDismissals:
