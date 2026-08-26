@@ -820,6 +820,7 @@ _ISSUE_B = IntegrityIssue(check_type="seq_id_gap", severity=ERROR, seq_ids=[5, 7
 _DISMISSAL_A = Dismissal(check_type="adjacent_duplicate", seq_ids=[111, 396], reason="Known false positive")
 
 _FILTER_TEST_CASES = [
+    # input issues, dismissals, expected filter result
     pytest.param([_ISSUE_A], [_DISMISSAL_A], [], id="matching_dismissal_filters"),
     pytest.param([_ISSUE_A, _ISSUE_B], [_DISMISSAL_A], [_ISSUE_B], id="selective_filtering_keeps_unrelated"),
     pytest.param([_ISSUE_A, _ISSUE_B], [], [_ISSUE_A, _ISSUE_B], id="empty_dismissals_keeps_all"),
