@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import TypeAdapter
 from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequestPart, ModelResponsePart
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
@@ -36,39 +37,6 @@ class IntegrityIssue:
     severity: Severity
     seq_ids: list[int]  # seq_ids involved in the issue
     details: str  # human-readable description
-
-
-@dataclass
-class Dismissal:
-    """A user-acknowledged false positive to filter from results."""
-    check_type: str
-    seq_ids: list[int]
-    reason: str  # Why this was dismissed (for future reference)
-
-
-def filter_dismissed_issues(
-    issues: list[IntegrityIssue],
-    dismissals: list[Dismissal],
-) -> list[IntegrityIssue]:
-    """Remove issues that match a dismissal entry."""
-    return [
-        issue for issue in issues
-        if not any(
-            issue.check_type == d.check_type and issue.seq_ids == d.seq_ids
-            for d in dismissals
-        )
-    ]
-
-
-def load_dismissals(path: Path) -> list[Dismissal]:
-    """Load dismissals from a JSON file.
-    
-    Returns empty list if file doesn't exist.
-    """
-    if not path.exists():
-        return []
-    data = json.loads(path.read_text())
-    return [Dismissal(**d) for d in data.get("dismissed", [])]
 
 
 def _check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
@@ -414,3 +382,40 @@ async def check_agent_integrity(
     issues.extend(_check_for_duplicate_content(records, messages))
 
     return issues
+
+
+# ---------------------------------------------------------------------------
+# Blacklist based issue filtering for known false positives or minor issues
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Dismissal:
+    """A user-acknowledged false positive to filter from results."""
+    check_type: str
+    seq_ids: list[int]
+    reason: str  # Why this was dismissed (for future reference)
+
+
+def filter_dismissed_issues(
+    issues: list[IntegrityIssue],
+    dismissals: list[Dismissal],
+) -> list[IntegrityIssue]:
+    """Remove issues that match a dismissal entry."""
+    return [
+        issue for issue in issues
+        if not any(
+            issue.check_type == d.check_type and issue.seq_ids == d.seq_ids
+            for d in dismissals
+        )
+    ]
+
+
+def load_dismissals(path: Path) -> list[Dismissal]:
+    """Load dismissals from a JSON file.
+    
+    Returns empty list if file doesn't exist.
+    """
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text())
+    return [TypeAdapter(Dismissal).validate_python(d) for d in data.get("dismissed", [])]
