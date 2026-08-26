@@ -329,8 +329,8 @@ _EMPTY_DUP = {"type": "ModelRequest", "content": dump_msg_json(make_request(""))
 _SHORT_DUP = {"type": "ModelRequest", "content": dump_msg_json(make_request("ok"))}
 _LONG_DUP  = {"type": "ModelRequest", "content": dump_msg_json(make_request("x" * (_CONTENT_LENGTH_THRESHOLD + 1)))}
 
-_SYSTEM_ALERT_TEXT = format_system_alert("Unexpected big chungus detected")
-_SYSTEM_ALERT = {"type": "ModelRequest", "content": dump_msg_json(make_request(_SYSTEM_ALERT_TEXT))}
+_ALERT_TEXT = format_system_alert("Unexpected big chungus detected")
+_SYSTEM_ALERT = {"type": "ModelRequest", "content": dump_msg_json(make_request(_ALERT_TEXT))}
 
 
 # ThinkingPart duplicates (ModelResponse with a thinking block)

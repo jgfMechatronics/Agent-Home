@@ -41,7 +41,7 @@ log = logging.getLogger(__name__)
 _SYSTEM_ALERT_TEXT = "system_alert"
 
 def format_system_alert(content: str, tags_on_newline: bool = False) -> str:
-    """Wrap content in <_SYSTEM_ALERT_TEXT> XML tags for agent-facing system messages."""
+    """Format agent-facing system messages with xml tags"""
     if tags_on_newline:
         return f"<{_SYSTEM_ALERT_TEXT}>\n{content}\n</{_SYSTEM_ALERT_TEXT}>"
     return f"<{_SYSTEM_ALERT_TEXT}>{content}</{_SYSTEM_ALERT_TEXT}>"

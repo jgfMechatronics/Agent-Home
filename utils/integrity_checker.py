@@ -388,7 +388,7 @@ async def check_agent_integrity(
 
 
 # ---------------------------------------------------------------------------
-# Blacklist based issue filtering for known false positives or minor issues
+# Blocklist based issue filtering for known false positives or minor issues
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -413,6 +413,8 @@ def filter_dismissed_issues(
     ]
 
 
+_DISMISSAL_ADAPTER = TypeAdapter(Dismissal)
+
 def load_dismissals(path: Path, agent_id: str) -> list[Dismissal]:
     """Load dismissals for a specific agent from a JSON file.
     
@@ -422,4 +424,4 @@ def load_dismissals(path: Path, agent_id: str) -> list[Dismissal]:
     if not path.exists():
         return []
     data = json.loads(path.read_text())
-    return [TypeAdapter(Dismissal).validate_python(d) for d in data.get(agent_id, [])]
+    return [_DISMISSAL_ADAPTER.validate_python(d) for d in data.get(agent_id, [])]
