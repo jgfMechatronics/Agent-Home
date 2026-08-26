@@ -8,6 +8,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 import hashlib
+import json
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequestPart, ModelResponsePart
@@ -56,6 +58,17 @@ def filter_dismissed_issues(
             for d in dismissals
         )
     ]
+
+
+def load_dismissals(path: Path) -> list[Dismissal]:
+    """Load dismissals from a JSON file.
+    
+    Returns empty list if file doesn't exist.
+    """
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text())
+    return [Dismissal(**d) for d in data.get("dismissed", [])]
 
 
 def _check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:

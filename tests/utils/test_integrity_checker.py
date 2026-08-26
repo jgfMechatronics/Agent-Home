@@ -78,6 +78,7 @@ from typing import Callable
 from uuid import uuid4
 
 import copy
+import json
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -95,7 +96,7 @@ from utils.integrity_checker import (
     _check_seq_id_consecutive, _check_timestamps_increasing, _check_context_window_start_validity,
     _check_message_ordering, _check_for_empty_content,
     _check_tool_call_return_pairing, _check_for_duplicate_content,
-    Dismissal, filter_dismissed_issues,
+    Dismissal, filter_dismissed_issues, load_dismissals,
 )
 
 
@@ -861,4 +862,30 @@ class TestFilterDismissedIssues:
     def test_empty_issues_returns_empty(self):
         """No issues means empty result regardless of dismissals."""
         result = filter_dismissed_issues([], [self.DISMISSAL_A])
+        assert result == []
+
+
+class TestLoadDismissals:
+    """Tests for load_dismissals()."""
+
+    def test_loads_valid_file(self, tmp_path):
+        """Parses JSON file into Dismissal objects."""
+        config = {
+            "dismissed": [
+                {"check_type": "adjacent_duplicate", "seq_ids": [111, 396], "reason": "Known FP"},
+            ]
+        }
+        path = tmp_path / "dismissals.json"
+        path.write_text(json.dumps(config))
+        
+        result = load_dismissals(path)
+        
+        assert len(result) == 1
+        assert result[0].check_type == "adjacent_duplicate"
+        assert result[0].seq_ids == [111, 396]
+        assert result[0].reason == "Known FP"
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        """Non-existent file returns empty list (not an error)."""
+        result = load_dismissals(tmp_path / "nonexistent.json")
         assert result == []
