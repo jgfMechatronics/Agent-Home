@@ -78,6 +78,7 @@ from typing import Callable
 from uuid import uuid4
 
 import copy
+from dataclasses import asdict
 import json
 import pytest
 import pytest_asyncio
@@ -860,20 +861,13 @@ class TestLoadDismissals:
 
     def test_loads_valid_file(self, tmp_path):
         """Parses JSON file into Dismissal objects."""
-        config = {
-            "dismissed": [
-                {"check_type": "adjacent_duplicate", "seq_ids": [111, 396], "reason": "Known FP"},
-            ]
-        }
+        config = {"dismissed": [asdict(_DISMISSAL_A)]}
         path = tmp_path / "dismissals.json"
         path.write_text(json.dumps(config))
         
         result = load_dismissals(path)
         
-        assert len(result) == 1
-        assert result[0].check_type == "adjacent_duplicate"
-        assert result[0].seq_ids == [111, 396]
-        assert result[0].reason == "Known FP"
+        assert result == [_DISMISSAL_A]
 
     def test_missing_file_returns_empty(self, tmp_path):
         """Non-existent file returns empty list (not an error)."""
