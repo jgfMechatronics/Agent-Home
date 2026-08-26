@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig
 from db.models import AgentConfigSnapshot, AgentRecord, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
-from messages.messages import deserialize_messages, load_messages, persist_messages
+from messages.messages import deserialize_messages, load_messages, persist_messages, format_system_alert, is_system_alert
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
 from conftest import (
@@ -654,3 +654,27 @@ class TestRoundTrip(DBTestBase):
 
         assert restored[0] == response_with_call
         assert restored[1] == request_with_return
+
+
+# ---------------------------------------------------------------------------
+# TestSystemAlertFormatting
+# ---------------------------------------------------------------------------
+
+class TestSystemAlertFormatting:
+    """Tests for format_system_alert / is_system_alert pairing."""
+
+    def test_is_system_alert_detects_formatted_alert(self):
+        alert = format_system_alert("Something happened")
+        assert is_system_alert(alert)
+
+    def test_detects_with_newline(self):
+        alert = format_system_alert("Something happened", True)
+        assert is_system_alert(alert)
+
+    def test_is_system_alert_rejects_corrupted_alert(self):
+        alert = format_system_alert("Something happened")
+        corrupted = alert[1:]  # strip leading <
+        assert not is_system_alert(corrupted)
+
+    def test_not_just_any_xml(self):
+        assert not is_system_alert("<garbage> manure </garbage>")

@@ -210,3 +210,7 @@ marimo/_lsp/
 __marimo__/
 .venv-host
 .letta/settings.local.json
+
+# Integrity checker live test output
+tests/utils/integrity_checker_live_test/results.txt
+tests/utils/integrity_checker_live_test/flagged_messages_dump.txt

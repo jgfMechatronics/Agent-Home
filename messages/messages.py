@@ -1,5 +1,8 @@
 """
 Message persistence, retrieval, and formatting utilities.
+
+TODO: convert any functions that take a list but are read only to use sequence typehint.
+Here and **across codebase**
 """
 import dataclasses
 import hashlib
@@ -7,6 +10,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
+from collections.abc import Sequence
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -34,11 +38,18 @@ log = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
+_SYSTEM_ALERT_TEXT = "system_alert"
+
 def format_system_alert(content: str, tags_on_newline: bool = False) -> str:
-    """Wrap content in <system_alert> XML tags for agent-facing system messages."""
+    """Format agent-facing system messages with xml tags"""
     if tags_on_newline:
-        return f"<system_alert>\n{content}\n</system_alert>"
-    return f"<system_alert>{content}</system_alert>"
+        return f"<{_SYSTEM_ALERT_TEXT}>\n{content}\n</{_SYSTEM_ALERT_TEXT}>"
+    return f"<{_SYSTEM_ALERT_TEXT}>{content}</{_SYSTEM_ALERT_TEXT}>"
+
+
+def is_system_alert(text: str) -> bool:
+    """Check if text was formatted by format_system_alert."""
+    return text.startswith(f"<{_SYSTEM_ALERT_TEXT}>") and text.endswith(f"</{_SYSTEM_ALERT_TEXT}>")
 
 
 def _make_orphan_replacement(
@@ -65,7 +76,7 @@ def _make_orphan_replacement(
     return (_message_timestamp(msg), error_text), ModelResponse(parts=[TextPart(content=error_text)])
 
 
-def _is_valid_tool_pair(call_msg: ModelMessage | None, return_msg: ModelMessage | None) -> bool:
+def is_valid_tool_pair(call_msg: ModelMessage | None, return_msg: ModelMessage | None) -> bool:
     """True if call_msg/return_msg form a matched tool call/return pair.
 
     Requires call_msg to be a ModelResponse with ToolCallPart(s) and return_msg to be a
@@ -103,14 +114,14 @@ def _replace_orphaned_tool_messages(
     for i, msg in enumerate(messages):
         if isinstance(msg, ModelResponse) and any(isinstance(p, ToolCallPart) for p in msg.parts):
             next_msg = messages[i + 1] if i + 1 < len(messages) else None
-            if not _is_valid_tool_pair(msg, next_msg):
+            if not is_valid_tool_pair(msg, next_msg):
                 error_entry, error_response = _make_orphan_replacement(msg, ToolCallPart)
                 errors.append(error_entry)
                 sanitized_msgs.append(error_response)
                 continue # Skips below append of original msg
         elif isinstance(msg, ModelRequest) and any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in msg.parts):
             prev_msg = sanitized_msgs[-1] if sanitized_msgs else None
-            if not _is_valid_tool_pair(prev_msg, msg):
+            if not is_valid_tool_pair(prev_msg, msg):
                 part_type = ToolReturnPart if any(isinstance(p, ToolReturnPart) for p in msg.parts) else RetryPromptPart
                 error_entry, error_response = _make_orphan_replacement(msg, part_type)
                 errors.append(error_entry)
@@ -120,7 +131,7 @@ def _replace_orphaned_tool_messages(
     return sanitized_msgs, errors
 
 
-def _dump_msg_json(msg: ModelMessage) -> str:
+def dump_msg_json(msg: ModelMessage) -> str:
     """Serialize a single ModelMessage to a JSON string (without outer array brackets)."""
     return ModelMessagesTypeAdapter.dump_json([msg]).decode()[1:-1]
 
@@ -165,7 +176,7 @@ def _handle_serialization_error(
     )
     error_text = f"[persist_messages serialization error]: {type(e).__name__}: {e}"
     error_msg = ModelResponse(parts=[TextPart(content=error_text)])
-    content = _dump_msg_json(error_msg)
+    content = dump_msg_json(error_msg)
     error_to_append = (original_ts, error_text) # return this for caller to append to avoid sneakily mutating list
     return content, "ModelResponse", error_msg, error_to_append
 
@@ -292,7 +303,7 @@ async def persist_messages(
             # NOTE: The per msg serialization allows us to eliminate specific messages which have serialization failures,
             # but likely costs us some performance. This is an optimization opportunity: could have happy path try serializing the whole
             # list then on failure go message by message
-            content = _dump_msg_json(msg)
+            content = dump_msg_json(msg)
             msg_type = type(msg).__name__
         except Exception as e:
             content, msg_type, msg, error_to_append = _handle_serialization_error(msg, e, deps.agent_id)
@@ -359,7 +370,7 @@ async def load_messages(
     return list(result.scalars().all())
 
 
-def deserialize_messages(records: list[MessageRecord]) -> list[ModelMessage]:
+def deserialize_messages(records: Sequence[MessageRecord]) -> list[ModelMessage]:
     """Convert MessageRecords to Pydantic AI ModelMessages.
 
     Pure function — no database access. Handles all message types including summaries.
