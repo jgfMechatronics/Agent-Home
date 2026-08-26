@@ -667,7 +667,14 @@ class TestSystemAlertFormatting:
         alert = format_system_alert("Something happened")
         assert is_system_alert(alert)
 
+    def test_detects_with_newline(self):
+        alert = format_system_alert("Something happened", True)
+        assert is_system_alert(alert)
+
     def test_is_system_alert_rejects_corrupted_alert(self):
         alert = format_system_alert("Something happened")
         corrupted = alert[1:]  # strip leading <
         assert not is_system_alert(corrupted)
+
+    def test_not_just_any_xml(self):
+        assert not is_system_alert("<garbage> manure </garbage>")

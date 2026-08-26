@@ -38,16 +38,18 @@ log = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
+_SYSTEM_ALERT_TEXT = "system_alert"
+
 def format_system_alert(content: str, tags_on_newline: bool = False) -> str:
-    """Wrap content in <system_alert> XML tags for agent-facing system messages."""
+    """Wrap content in <_SYSTEM_ALERT_TEXT> XML tags for agent-facing system messages."""
     if tags_on_newline:
-        return f"<system_alert>\n{content}\n</system_alert>"
-    return f"<system_alert>{content}</system_alert>"
+        return f"<{_SYSTEM_ALERT_TEXT}>\n{content}\n</{_SYSTEM_ALERT_TEXT}>"
+    return f"<{_SYSTEM_ALERT_TEXT}>{content}</{_SYSTEM_ALERT_TEXT}>"
 
 
 def is_system_alert(text: str) -> bool:
     """Check if text was formatted by format_system_alert."""
-    return text.startswith("<system_alert>") and text.endswith("</system_alert>")
+    return text.startswith(f"<{_SYSTEM_ALERT_TEXT}>") and text.endswith(f"</{_SYSTEM_ALERT_TEXT}>")
 
 
 def _make_orphan_replacement(
