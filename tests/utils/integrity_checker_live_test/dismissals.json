@@ -1,0 +1,9 @@
+{
+  "dismissed": [
+    {
+      "check_type": "content_duplicate",
+      "seq_ids": [341, 391],
+      "reason": "LLM self-repetition: Haiku said 'Perfect! Let me verify...' twice — acceptable noise, not corruption"
+    }
+  ]
+}

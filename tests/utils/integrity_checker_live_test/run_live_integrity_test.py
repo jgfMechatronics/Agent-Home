@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import load_only, sessionmaker
 
 from db.models import AgentRecord
-from utils.integrity_checker import check_agent_integrity
+from utils.integrity_checker import check_agent_integrity, load_dismissals, filter_dismissed_issues
 
 _DIR = Path(__file__).parent
 _DB_FILES = [
@@ -24,6 +24,7 @@ _DB_FILES = [
     _DIR / "db.sqlite.verybad",
 ]
 _OUTPUT_FILE = _DIR / "results.txt"
+_DISMISSALS_FILE = _DIR / "dismissals.json"
 
 
 async def _check_db(db_path: Path) -> str:
@@ -45,6 +46,8 @@ async def _check_db(db_path: Path) -> str:
             for record in records:
                 lines.append(f"\n  Agent: {record.name}  ({record.id})")
                 issues = await check_agent_integrity(session, record.id)
+                dismissals = load_dismissals(_DISMISSALS_FILE)
+                issues = filter_dismissed_issues(issues, dismissals)
                 if not issues:
                     lines.append("  ✓  No issues found")
                 else:
