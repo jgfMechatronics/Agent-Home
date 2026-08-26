@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime
 
-from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ThinkingPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart
 
 from conftest import PARTIAL_MESSAGE_FIELDS, make_request, make_response, make_retry_pair, make_tool_pair
 from messages.messages import dump_msg_json, format_system_alert
