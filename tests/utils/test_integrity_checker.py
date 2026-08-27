@@ -247,6 +247,8 @@ TIMESTAMP_TEST_CASES = [
 
 # ---------------------------------------------------------------------------
 # Check 2b: ModelMessage Timestamp Test Cases
+# Whereas message record timestamps capture persist time, ModelMessage timestamps *typically* cover
+# ModelMessage construction time (althoug pydantic AI is somewhat inconsistent)
 # ---------------------------------------------------------------------------
 # Use UTC-aware datetimes to match pydantic-ai's internal representation.
 _MSG_TS1 = datetime(2026, 1, 1, 12, 0, 1, tzinfo=timezone.utc)
@@ -259,9 +261,9 @@ def _make_response_record_with_ts(ts: datetime) -> dict:
 MODELMESSAGE_TIMESTAMP_TEST_CASES = [
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
-            {},                                    # ModelRequest — null message timestamp
+            {},                                       # ModelRequest — null message timestamp
             _make_response_record_with_ts(_MSG_TS1),  # seq_id 1
-            {},                                    # ModelRequest — null message timestamp
+            {},                                       # ModelRequest — null message timestamp
             _make_response_record_with_ts(_MSG_TS2),  # seq_id 3, TS2 > TS1 ✓
         ]),
         [],
@@ -322,11 +324,8 @@ _SYSTEM_ALERT = {"type": "ModelRequest", "content": dump_msg_json(make_request(_
 
 
 # ThinkingPart duplicates (ModelResponse with a thinking block)
-def _make_thinking_response(thinking: str, ts: datetime | None = None) -> ModelResponse:
-    kwargs = {"parts": [ThinkingPart(content=thinking)]}
-    if ts is not None:
-        kwargs["timestamp"] = ts
-    return ModelResponse(**kwargs)
+def _make_thinking_response(thinking: str, ts: datetime) -> ModelResponse:
+    return ModelResponse(parts=[ThinkingPart(content=thinking)], timestamp=ts)
 
 
 def _make_thinking_and_text_response(thinking: str, text: str) -> ModelResponse:
@@ -335,8 +334,15 @@ def _make_thinking_and_text_response(thinking: str, text: str) -> ModelResponse:
 
 # Two variants with distinct timestamps so _check_modelmessage_timestamps doesn't
 # fire when these are placed in adjacent records for content-duplicate testing.
-_LONG_THINKING_DUP_A = {"type": "ModelResponse", "content": dump_msg_json(_make_thinking_response("x" * (_CONTENT_LENGTH_THRESHOLD + 1), _MSG_TS1))}
-_LONG_THINKING_DUP_B = {"type": "ModelResponse", "content": dump_msg_json(_make_thinking_response("x" * (_CONTENT_LENGTH_THRESHOLD + 1), _MSG_TS2))}
+_LONG_THINKING_TEXT = "x" * (_CONTENT_LENGTH_THRESHOLD + 1)
+_LONG_THINKING_DUP_A = {
+    "type": "ModelResponse",
+    "content": dump_msg_json(_make_thinking_response(_LONG_THINKING_TEXT, _MSG_TS1)),
+}
+_LONG_THINKING_DUP_B = {
+    "type": "ModelResponse",
+    "content": dump_msg_json(_make_thinking_response(_LONG_THINKING_TEXT, _MSG_TS2)),
+}
 
 # Pre-built matched pairs — computed once so call and return share the same tool_call_id
 _MATCHED_TOOL_CALL, _MATCHED_TOOL_RETURN = make_tool_pair()
@@ -727,6 +733,7 @@ CTX_WINDOW_START_TEST_CASES = [
 # TestCheckAgentIntegrity
 # ---------------------------------------------------------------------------
 
+# These two param sets for checking invariants of helper functions
 _RECORD_ONLY_CHECKERS = [
     pytest.param(_check_seq_id_consecutive, id="check_seq_id_consecutive"),
     pytest.param(_check_timestamps_increasing, id="check_timestamps_increasing"),
