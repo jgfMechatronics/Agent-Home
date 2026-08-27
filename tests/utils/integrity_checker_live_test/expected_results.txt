@@ -1,0 +1,1111 @@
+============================================================
+  db.sqlite.good
+============================================================
+
+  Agent: Haiku  (b618245d-b6f9-4928-821e-9bf9ae8fe0a1)
+  ✓  No issues found
+
+============================================================
+  db.sqlite.verybad
+============================================================
+
+  Agent: Haiku  (b618245d-b6f9-4928-821e-9bf9ae8fe0a1)
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[539, 540]
+             Timestamp out of order at seq_ids 539 → 540: 2026-08-12 17:46:44.163666 → 2026-08-12 02:12:16.821499. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[541, 542]
+             Timestamp out of order at seq_ids 541 → 542: 2026-08-12 17:46:44.164619 → 2026-08-12 02:12:18.640303. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[543, 544]
+             Timestamp out of order at seq_ids 543 → 544: 2026-08-12 17:46:44.164840 → 2026-08-12 02:12:20.127170. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[545, 546]
+             Timestamp out of order at seq_ids 545 → 546: 2026-08-12 17:46:44.165039 → 2026-08-12 02:12:21.642688. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[547, 548]
+             Timestamp out of order at seq_ids 547 → 548: 2026-08-12 17:46:44.165298 → 2026-08-12 02:12:22.376506. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[549, 550]
+             Timestamp out of order at seq_ids 549 → 550: 2026-08-12 17:46:44.165506 → 2026-08-12 02:12:25.082914. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[551, 552]
+             Timestamp out of order at seq_ids 551 → 552: 2026-08-12 17:46:44.165658 → 2026-08-12 02:12:28.883736. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[575, 576]
+             Timestamp out of order at seq_ids 575 → 576: 2026-08-12 17:46:44.168609 → 2026-08-12 02:28:04.736721. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[577, 578]
+             Timestamp out of order at seq_ids 577 → 578: 2026-08-12 17:46:44.168769 → 2026-08-12 02:28:08.088528. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[579, 580]
+             Timestamp out of order at seq_ids 579 → 580: 2026-08-12 17:46:44.168921 → 2026-08-12 02:28:11.392519. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[581, 582]
+             Timestamp out of order at seq_ids 581 → 582: 2026-08-12 17:46:44.169242 → 2026-08-12 02:28:15.889209. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[583, 584]
+             Timestamp out of order at seq_ids 583 → 584: 2026-08-12 17:46:44.169405 → 2026-08-12 02:28:17.706057. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[585, 586]
+             Timestamp out of order at seq_ids 585 → 586: 2026-08-12 17:46:44.169572 → 2026-08-12 02:28:20.526485. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[587, 588]
+             Timestamp out of order at seq_ids 587 → 588: 2026-08-12 17:46:44.169718 → 2026-08-12 02:28:22.856189. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[589, 590]
+             Timestamp out of order at seq_ids 589 → 590: 2026-08-12 17:46:44.169861 → 2026-08-12 02:28:25.726137. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[591, 592]
+             Timestamp out of order at seq_ids 591 → 592: 2026-08-12 17:46:44.170080 → 2026-08-12 02:28:29.962253. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[593, 594]
+             Timestamp out of order at seq_ids 593 → 594: 2026-08-12 17:46:44.170229 → 2026-08-12 02:28:33.362553. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[595, 596]
+             Timestamp out of order at seq_ids 595 → 596: 2026-08-12 17:46:44.170387 → 2026-08-12 02:28:37.261274. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[597, 598]
+             Timestamp out of order at seq_ids 597 → 598: 2026-08-12 17:46:44.170531 → 2026-08-12 02:28:40.300513. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[599, 600]
+             Timestamp out of order at seq_ids 599 → 600: 2026-08-12 17:46:44.170674 → 2026-08-12 02:28:42.583488. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[601, 602]
+             Timestamp out of order at seq_ids 601 → 602: 2026-08-12 17:46:44.170832 → 2026-08-12 02:28:46.334456. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[603, 604]
+             Timestamp out of order at seq_ids 603 → 604: 2026-08-12 17:46:44.170979 → 2026-08-12 02:28:49.954505. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[605, 606]
+             Timestamp out of order at seq_ids 605 → 606: 2026-08-12 17:46:44.171131 → 2026-08-12 02:28:50.994626. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[607, 608]
+             Timestamp out of order at seq_ids 607 → 608: 2026-08-12 17:46:44.171300 → 2026-08-12 02:28:58.213036. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[617, 618]
+             Timestamp out of order at seq_ids 617 → 618: 2026-08-12 17:46:44.172507 → 2026-08-12 02:33:27.645882. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[619, 620]
+             Timestamp out of order at seq_ids 619 → 620: 2026-08-12 17:46:44.172639 → 2026-08-12 02:33:29.256561. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[621, 622]
+             Timestamp out of order at seq_ids 621 → 622: 2026-08-12 17:46:44.172773 → 2026-08-12 02:33:32.650459. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[623, 624]
+             Timestamp out of order at seq_ids 623 → 624: 2026-08-12 17:46:44.172898 → 2026-08-12 02:33:34.004722. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[625, 626]
+             Timestamp out of order at seq_ids 625 → 626: 2026-08-12 17:46:44.173032 → 2026-08-12 02:33:36.064889. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[627, 628]
+             Timestamp out of order at seq_ids 627 → 628: 2026-08-12 17:46:44.173239 → 2026-08-12 02:33:37.568323. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[629, 630]
+             Timestamp out of order at seq_ids 629 → 630: 2026-08-12 17:46:44.173381 → 2026-08-12 02:33:38.697350. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[631, 632]
+             Timestamp out of order at seq_ids 631 → 632: 2026-08-12 17:46:44.173520 → 2026-08-12 02:33:40.219999. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[633, 634]
+             Timestamp out of order at seq_ids 633 → 634: 2026-08-12 17:46:44.173661 → 2026-08-12 02:33:41.472592. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[643, 644]
+             Timestamp out of order at seq_ids 643 → 644: 2026-08-12 17:46:44.174690 → 2026-08-12 02:43:28.227573. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[645, 646]
+             Timestamp out of order at seq_ids 645 → 646: 2026-08-12 17:46:44.174817 → 2026-08-12 02:43:30.564362. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[647, 648]
+             Timestamp out of order at seq_ids 647 → 648: 2026-08-12 17:46:44.174954 → 2026-08-12 02:43:32.111857. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[649, 650]
+             Timestamp out of order at seq_ids 649 → 650: 2026-08-12 17:46:44.175077 → 2026-08-12 02:43:33.349404. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[653, 654]
+             Timestamp out of order at seq_ids 653 → 654: 2026-08-12 17:46:44.175459 → 2026-08-12 02:45:03.500877. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[655, 656]
+             Timestamp out of order at seq_ids 655 → 656: 2026-08-12 17:46:44.175609 → 2026-08-12 02:45:05.067239. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[657, 658]
+             Timestamp out of order at seq_ids 657 → 658: 2026-08-12 17:46:44.175736 → 2026-08-12 02:45:06.089906. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[659, 660]
+             Timestamp out of order at seq_ids 659 → 660: 2026-08-12 17:46:44.175869 → 2026-08-12 02:45:08.385134. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[661, 662]
+             Timestamp out of order at seq_ids 661 → 662: 2026-08-12 17:46:44.176033 → 2026-08-12 02:45:10.634919. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[663, 664]
+             Timestamp out of order at seq_ids 663 → 664: 2026-08-12 17:46:44.176167 → 2026-08-12 02:45:12.146186. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[665, 666]
+             Timestamp out of order at seq_ids 665 → 666: 2026-08-12 17:46:44.176341 → 2026-08-12 02:45:14.381925. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[667, 668]
+             Timestamp out of order at seq_ids 667 → 668: 2026-08-12 17:46:44.176488 → 2026-08-12 02:45:15.519072. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[669, 670]
+             Timestamp out of order at seq_ids 669 → 670: 2026-08-12 17:46:44.176652 → 2026-08-12 02:45:16.778001. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[671, 672]
+             Timestamp out of order at seq_ids 671 → 672: 2026-08-12 17:46:44.176826 → 2026-08-12 02:45:19.635312. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[673, 674]
+             Timestamp out of order at seq_ids 673 → 674: 2026-08-12 17:46:44.176968 → 2026-08-12 02:45:22.020958. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[675, 676]
+             Timestamp out of order at seq_ids 675 → 676: 2026-08-12 17:46:44.177103 → 2026-08-12 02:45:23.952616. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[677, 678]
+             Timestamp out of order at seq_ids 677 → 678: 2026-08-12 17:46:44.177237 → 2026-08-12 02:45:25.491903. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[679, 680]
+             Timestamp out of order at seq_ids 679 → 680: 2026-08-12 17:46:44.177381 → 2026-08-12 02:45:26.981048. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[681, 682]
+             Timestamp out of order at seq_ids 681 → 682: 2026-08-12 17:46:44.177515 → 2026-08-12 02:45:28.503761. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[683, 684]
+             Timestamp out of order at seq_ids 683 → 684: 2026-08-12 17:46:44.177657 → 2026-08-12 02:45:29.860546. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[687, 688]
+             Timestamp out of order at seq_ids 687 → 688: 2026-08-12 17:46:44.178053 → 2026-08-12 02:45:44.886871. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[689, 690]
+             Timestamp out of order at seq_ids 689 → 690: 2026-08-12 17:46:44.178241 → 2026-08-12 02:45:51.593990. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[691, 692]
+             Timestamp out of order at seq_ids 691 → 692: 2026-08-12 17:46:44.178401 → 2026-08-12 02:45:55.379667. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[711, 712]
+             Timestamp out of order at seq_ids 711 → 712: 2026-08-12 17:46:44.181328 → 2026-08-12 16:01:35.333792. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[713, 714]
+             Timestamp out of order at seq_ids 713 → 714: 2026-08-12 17:46:44.181558 → 2026-08-12 16:01:37.802809. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[717, 718]
+             Timestamp out of order at seq_ids 717 → 718: 2026-08-12 17:46:44.182094 → 2026-08-12 16:52:02.848645. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[719, 720]
+             Timestamp out of order at seq_ids 719 → 720: 2026-08-12 17:46:44.182305 → 2026-08-12 16:52:04.314336. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[721, 722]
+             Timestamp out of order at seq_ids 721 → 722: 2026-08-12 17:46:44.182493 → 2026-08-12 16:52:06.546311. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[723, 724]
+             Timestamp out of order at seq_ids 723 → 724: 2026-08-12 17:46:44.182627 → 2026-08-12 16:52:07.804602. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[725, 726]
+             Timestamp out of order at seq_ids 725 → 726: 2026-08-12 17:46:44.182767 → 2026-08-12 16:52:09.494671. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[727, 728]
+             Timestamp out of order at seq_ids 727 → 728: 2026-08-12 17:46:44.182893 → 2026-08-12 16:52:10.890019. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[729, 730]
+             Timestamp out of order at seq_ids 729 → 730: 2026-08-12 17:46:44.183039 → 2026-08-12 16:52:12.525743. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[731, 732]
+             Timestamp out of order at seq_ids 731 → 732: 2026-08-12 17:46:44.183166 → 2026-08-12 16:52:14.191565. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[733, 734]
+             Timestamp out of order at seq_ids 733 → 734: 2026-08-12 17:46:44.183304 → 2026-08-12 16:52:16.631853. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[737, 738]
+             Timestamp out of order at seq_ids 737 → 738: 2026-08-12 17:46:44.183723 → 2026-08-12 16:52:28.274183. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[739, 740]
+             Timestamp out of order at seq_ids 739 → 740: 2026-08-12 17:46:44.183870 → 2026-08-12 16:52:29.780603. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[741, 742]
+             Timestamp out of order at seq_ids 741 → 742: 2026-08-12 17:46:44.184011 → 2026-08-12 16:52:31.512619. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[743, 744]
+             Timestamp out of order at seq_ids 743 → 744: 2026-08-12 17:46:44.184144 → 2026-08-12 16:52:34.474818. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[751, 752]
+             Timestamp out of order at seq_ids 751 → 752: 2026-08-12 17:46:44.184982 → 2026-08-12 16:57:15.089858. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[757, 758]
+             Timestamp out of order at seq_ids 757 → 758: 2026-08-12 17:46:44.185565 → 2026-08-12 16:57:27.091138. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[769, 770]
+             Timestamp out of order at seq_ids 769 → 770: 2026-08-12 17:46:44.186915 → 2026-08-12 17:03:03.420098. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[773, 774]
+             Timestamp out of order at seq_ids 773 → 774: 2026-08-12 17:46:44.187274 → 2026-08-12 17:04:17.536100. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[791, 792]
+             Timestamp out of order at seq_ids 791 → 792: 2026-08-12 17:46:44.189256 → 2026-08-12 17:16:16.362754. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[797, 798]
+             Timestamp out of order at seq_ids 797 → 798: 2026-08-12 17:46:44.189876 → 2026-08-12 17:46:16.534135. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[817, 818]
+             Timestamp out of order at seq_ids 817 → 818: 2026-08-12 17:46:44.192410 → 2026-08-12 02:11:58.721751. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[819, 820]
+             Timestamp out of order at seq_ids 819 → 820: 2026-08-12 17:46:51.128375 → 2026-08-12 02:12:03.222570. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[823, 824]
+             Timestamp out of order at seq_ids 823 → 824: 2026-08-12 17:46:51.128891 → 2026-08-12 02:12:16.821499. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[825, 826]
+             Timestamp out of order at seq_ids 825 → 826: 2026-08-12 17:46:51.129062 → 2026-08-12 02:12:18.640303. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[827, 828]
+             Timestamp out of order at seq_ids 827 → 828: 2026-08-12 17:46:51.129260 → 2026-08-12 02:12:20.127170. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[829, 830]
+             Timestamp out of order at seq_ids 829 → 830: 2026-08-12 17:46:51.129425 → 2026-08-12 02:12:21.642688. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[831, 832]
+             Timestamp out of order at seq_ids 831 → 832: 2026-08-12 17:46:51.129628 → 2026-08-12 02:12:22.376506. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[833, 834]
+             Timestamp out of order at seq_ids 833 → 834: 2026-08-12 17:46:51.129795 → 2026-08-12 02:12:25.082914. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[835, 836]
+             Timestamp out of order at seq_ids 835 → 836: 2026-08-12 17:46:51.129967 → 2026-08-12 02:12:28.883736. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[859, 860]
+             Timestamp out of order at seq_ids 859 → 860: 2026-08-12 17:46:51.132843 → 2026-08-12 02:28:04.736721. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[861, 862]
+             Timestamp out of order at seq_ids 861 → 862: 2026-08-12 17:46:51.133011 → 2026-08-12 02:28:08.088528. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[863, 864]
+             Timestamp out of order at seq_ids 863 → 864: 2026-08-12 17:46:51.133261 → 2026-08-12 02:28:11.392519. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[865, 866]
+             Timestamp out of order at seq_ids 865 → 866: 2026-08-12 17:46:51.133959 → 2026-08-12 02:28:15.889209. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[867, 868]
+             Timestamp out of order at seq_ids 867 → 868: 2026-08-12 17:46:51.134239 → 2026-08-12 02:28:17.706057. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[869, 870]
+             Timestamp out of order at seq_ids 869 → 870: 2026-08-12 17:46:51.134484 → 2026-08-12 02:28:20.526485. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[871, 872]
+             Timestamp out of order at seq_ids 871 → 872: 2026-08-12 17:46:51.134641 → 2026-08-12 02:28:22.856189. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[873, 874]
+             Timestamp out of order at seq_ids 873 → 874: 2026-08-12 17:46:51.134869 → 2026-08-12 02:28:25.726137. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[875, 876]
+             Timestamp out of order at seq_ids 875 → 876: 2026-08-12 17:46:51.135247 → 2026-08-12 02:28:29.962253. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[877, 878]
+             Timestamp out of order at seq_ids 877 → 878: 2026-08-12 17:46:51.135504 → 2026-08-12 02:28:33.362553. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[879, 880]
+             Timestamp out of order at seq_ids 879 → 880: 2026-08-12 17:46:51.135747 → 2026-08-12 02:28:37.261274. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[881, 882]
+             Timestamp out of order at seq_ids 881 → 882: 2026-08-12 17:46:51.135985 → 2026-08-12 02:28:40.300513. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[883, 884]
+             Timestamp out of order at seq_ids 883 → 884: 2026-08-12 17:46:51.136510 → 2026-08-12 02:28:42.583488. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[885, 886]
+             Timestamp out of order at seq_ids 885 → 886: 2026-08-12 17:46:51.136742 → 2026-08-12 02:28:46.334456. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[887, 888]
+             Timestamp out of order at seq_ids 887 → 888: 2026-08-12 17:46:51.136907 → 2026-08-12 02:28:49.954505. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[889, 890]
+             Timestamp out of order at seq_ids 889 → 890: 2026-08-12 17:46:51.137068 → 2026-08-12 02:28:50.994626. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[891, 892]
+             Timestamp out of order at seq_ids 891 → 892: 2026-08-12 17:46:51.137248 → 2026-08-12 02:28:58.213036. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[901, 902]
+             Timestamp out of order at seq_ids 901 → 902: 2026-08-12 17:46:51.138232 → 2026-08-12 02:33:27.645882. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[903, 904]
+             Timestamp out of order at seq_ids 903 → 904: 2026-08-12 17:46:51.138381 → 2026-08-12 02:33:29.256561. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[905, 906]
+             Timestamp out of order at seq_ids 905 → 906: 2026-08-12 17:46:51.138539 → 2026-08-12 02:33:32.650459. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[907, 908]
+             Timestamp out of order at seq_ids 907 → 908: 2026-08-12 17:46:51.138681 → 2026-08-12 02:33:34.004722. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[909, 910]
+             Timestamp out of order at seq_ids 909 → 910: 2026-08-12 17:46:51.138826 → 2026-08-12 02:33:36.064889. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[911, 912]
+             Timestamp out of order at seq_ids 911 → 912: 2026-08-12 17:46:51.138998 → 2026-08-12 02:33:37.568323. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[913, 914]
+             Timestamp out of order at seq_ids 913 → 914: 2026-08-12 17:46:51.139175 → 2026-08-12 02:33:38.697350. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[915, 916]
+             Timestamp out of order at seq_ids 915 → 916: 2026-08-12 17:46:51.139421 → 2026-08-12 02:33:40.219999. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[917, 918]
+             Timestamp out of order at seq_ids 917 → 918: 2026-08-12 17:46:51.139634 → 2026-08-12 02:33:41.472592. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[927, 928]
+             Timestamp out of order at seq_ids 927 → 928: 2026-08-12 17:46:51.140815 → 2026-08-12 02:43:28.227573. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[929, 930]
+             Timestamp out of order at seq_ids 929 → 930: 2026-08-12 17:46:51.140999 → 2026-08-12 02:43:30.564362. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[931, 932]
+             Timestamp out of order at seq_ids 931 → 932: 2026-08-12 17:46:51.141194 → 2026-08-12 02:43:32.111857. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[933, 934]
+             Timestamp out of order at seq_ids 933 → 934: 2026-08-12 17:46:51.141378 → 2026-08-12 02:43:33.349404. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[937, 938]
+             Timestamp out of order at seq_ids 937 → 938: 2026-08-12 17:46:51.141818 → 2026-08-12 02:45:03.500877. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[939, 940]
+             Timestamp out of order at seq_ids 939 → 940: 2026-08-12 17:46:51.142008 → 2026-08-12 02:45:05.067239. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[941, 942]
+             Timestamp out of order at seq_ids 941 → 942: 2026-08-12 17:46:51.142171 → 2026-08-12 02:45:06.089906. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[943, 944]
+             Timestamp out of order at seq_ids 943 → 944: 2026-08-12 17:46:51.142339 → 2026-08-12 02:45:08.385134. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[945, 946]
+             Timestamp out of order at seq_ids 945 → 946: 2026-08-12 17:46:51.142532 → 2026-08-12 02:45:10.634919. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[947, 948]
+             Timestamp out of order at seq_ids 947 → 948: 2026-08-12 17:46:51.142672 → 2026-08-12 02:45:12.146186. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[949, 950]
+             Timestamp out of order at seq_ids 949 → 950: 2026-08-12 17:46:51.142847 → 2026-08-12 02:45:14.381925. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[951, 952]
+             Timestamp out of order at seq_ids 951 → 952: 2026-08-12 17:46:51.142975 → 2026-08-12 02:45:15.519072. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[953, 954]
+             Timestamp out of order at seq_ids 953 → 954: 2026-08-12 17:46:51.143138 → 2026-08-12 02:45:16.778001. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[955, 956]
+             Timestamp out of order at seq_ids 955 → 956: 2026-08-12 17:46:51.143311 → 2026-08-12 02:45:19.635312. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[957, 958]
+             Timestamp out of order at seq_ids 957 → 958: 2026-08-12 17:46:51.143461 → 2026-08-12 02:45:22.020958. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[959, 960]
+             Timestamp out of order at seq_ids 959 → 960: 2026-08-12 17:46:51.143601 → 2026-08-12 02:45:23.952616. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[961, 962]
+             Timestamp out of order at seq_ids 961 → 962: 2026-08-12 17:46:51.143736 → 2026-08-12 02:45:25.491903. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[963, 964]
+             Timestamp out of order at seq_ids 963 → 964: 2026-08-12 17:46:51.143871 → 2026-08-12 02:45:26.981048. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[965, 966]
+             Timestamp out of order at seq_ids 965 → 966: 2026-08-12 17:46:51.144119 → 2026-08-12 02:45:28.503761. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[967, 968]
+             Timestamp out of order at seq_ids 967 → 968: 2026-08-12 17:46:51.144266 → 2026-08-12 02:45:29.860546. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[971, 972]
+             Timestamp out of order at seq_ids 971 → 972: 2026-08-12 17:46:51.144884 → 2026-08-12 02:45:44.886871. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[973, 974]
+             Timestamp out of order at seq_ids 973 → 974: 2026-08-12 17:46:51.145093 → 2026-08-12 02:45:51.593990. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[975, 976]
+             Timestamp out of order at seq_ids 975 → 976: 2026-08-12 17:46:51.145239 → 2026-08-12 02:45:55.379667. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[995, 996]
+             Timestamp out of order at seq_ids 995 → 996: 2026-08-12 17:46:51.147320 → 2026-08-12 16:01:35.333792. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[997, 998]
+             Timestamp out of order at seq_ids 997 → 998: 2026-08-12 17:46:51.147482 → 2026-08-12 16:01:37.802809. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1001, 1002]
+             Timestamp out of order at seq_ids 1001 → 1002: 2026-08-12 17:46:51.147840 → 2026-08-12 16:52:02.848645. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1003, 1004]
+             Timestamp out of order at seq_ids 1003 → 1004: 2026-08-12 17:46:51.148026 → 2026-08-12 16:52:04.314336. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1005, 1006]
+             Timestamp out of order at seq_ids 1005 → 1006: 2026-08-12 17:46:51.148207 → 2026-08-12 16:52:06.546311. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1007, 1008]
+             Timestamp out of order at seq_ids 1007 → 1008: 2026-08-12 17:46:51.148336 → 2026-08-12 16:52:07.804602. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1009, 1010]
+             Timestamp out of order at seq_ids 1009 → 1010: 2026-08-12 17:46:51.148493 → 2026-08-12 16:52:09.494671. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1011, 1012]
+             Timestamp out of order at seq_ids 1011 → 1012: 2026-08-12 17:46:51.148666 → 2026-08-12 16:52:10.890019. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1013, 1014]
+             Timestamp out of order at seq_ids 1013 → 1014: 2026-08-12 17:46:51.148831 → 2026-08-12 16:52:12.525743. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1015, 1016]
+             Timestamp out of order at seq_ids 1015 → 1016: 2026-08-12 17:46:51.148968 → 2026-08-12 16:52:14.191565. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1017, 1018]
+             Timestamp out of order at seq_ids 1017 → 1018: 2026-08-12 17:46:51.149103 → 2026-08-12 16:52:16.631853. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1021, 1022]
+             Timestamp out of order at seq_ids 1021 → 1022: 2026-08-12 17:46:51.149482 → 2026-08-12 16:52:28.274183. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1023, 1024]
+             Timestamp out of order at seq_ids 1023 → 1024: 2026-08-12 17:46:51.149634 → 2026-08-12 16:52:29.780603. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1025, 1026]
+             Timestamp out of order at seq_ids 1025 → 1026: 2026-08-12 17:46:51.149777 → 2026-08-12 16:52:31.512619. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1027, 1028]
+             Timestamp out of order at seq_ids 1027 → 1028: 2026-08-12 17:46:51.149911 → 2026-08-12 16:52:34.474818. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1035, 1036]
+             Timestamp out of order at seq_ids 1035 → 1036: 2026-08-12 17:46:51.151133 → 2026-08-12 16:57:15.089858. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1041, 1042]
+             Timestamp out of order at seq_ids 1041 → 1042: 2026-08-12 17:46:51.151824 → 2026-08-12 16:57:27.091138. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1053, 1054]
+             Timestamp out of order at seq_ids 1053 → 1054: 2026-08-12 17:46:51.153106 → 2026-08-12 17:03:03.420098. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1057, 1058]
+             Timestamp out of order at seq_ids 1057 → 1058: 2026-08-12 17:46:51.153450 → 2026-08-12 17:04:17.536100. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1075, 1076]
+             Timestamp out of order at seq_ids 1075 → 1076: 2026-08-12 17:46:51.155074 → 2026-08-12 17:16:16.362754. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_out_of_order  seq_ids=[1081, 1082]
+             Timestamp out of order at seq_ids 1081 → 1082: 2026-08-12 17:46:51.155618 → 2026-08-12 17:46:16.534135. Possible causes: insertion order bug, clock skew, or re-persisted duplicate.
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1104, 1105]
+             Duplicate timestamp at seq_ids 1104 and 1105
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1107, 1108]
+             Duplicate timestamp at seq_ids 1107 and 1108
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1112, 1113]
+             Duplicate timestamp at seq_ids 1112 and 1113
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1115, 1116]
+             Duplicate timestamp at seq_ids 1115 and 1116
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1118, 1119]
+             Duplicate timestamp at seq_ids 1118 and 1119
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1121, 1122]
+             Duplicate timestamp at seq_ids 1121 and 1122
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1124, 1125]
+             Duplicate timestamp at seq_ids 1124 and 1125
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1127, 1128]
+             Duplicate timestamp at seq_ids 1127 and 1128
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1134, 1135]
+             Duplicate timestamp at seq_ids 1134 and 1135
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1137, 1138]
+             Duplicate timestamp at seq_ids 1137 and 1138
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1140, 1141]
+             Duplicate timestamp at seq_ids 1140 and 1141
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1143, 1144]
+             Duplicate timestamp at seq_ids 1143 and 1144
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1146, 1147]
+             Duplicate timestamp at seq_ids 1146 and 1147
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1149, 1150]
+             Duplicate timestamp at seq_ids 1149 and 1150
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1152, 1153]
+             Duplicate timestamp at seq_ids 1152 and 1153
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1155, 1156]
+             Duplicate timestamp at seq_ids 1155 and 1156
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1158, 1159]
+             Duplicate timestamp at seq_ids 1158 and 1159
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1161, 1162]
+             Duplicate timestamp at seq_ids 1161 and 1162
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1164, 1165]
+             Duplicate timestamp at seq_ids 1164 and 1165
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1167, 1168]
+             Duplicate timestamp at seq_ids 1167 and 1168
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1170, 1171]
+             Duplicate timestamp at seq_ids 1170 and 1171
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1173, 1174]
+             Duplicate timestamp at seq_ids 1173 and 1174
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1178, 1179]
+             Duplicate timestamp at seq_ids 1178 and 1179
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1181, 1182]
+             Duplicate timestamp at seq_ids 1181 and 1182
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1184, 1185]
+             Duplicate timestamp at seq_ids 1184 and 1185
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1193, 1194]
+             Duplicate timestamp at seq_ids 1193 and 1194
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1196, 1197]
+             Duplicate timestamp at seq_ids 1196 and 1197
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1199, 1200]
+             Duplicate timestamp at seq_ids 1199 and 1200
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1204, 1205]
+             Duplicate timestamp at seq_ids 1204 and 1205
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1207, 1208]
+             Duplicate timestamp at seq_ids 1207 and 1208
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1210, 1211]
+             Duplicate timestamp at seq_ids 1210 and 1211
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1215, 1216]
+             Duplicate timestamp at seq_ids 1215 and 1216
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1220, 1221]
+             Duplicate timestamp at seq_ids 1220 and 1221
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1223, 1224]
+             Duplicate timestamp at seq_ids 1223 and 1224
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1226, 1227]
+             Duplicate timestamp at seq_ids 1226 and 1227
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1229, 1230]
+             Duplicate timestamp at seq_ids 1229 and 1230
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1232, 1233]
+             Duplicate timestamp at seq_ids 1232 and 1233
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1235, 1236]
+             Duplicate timestamp at seq_ids 1235 and 1236
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1238, 1239]
+             Duplicate timestamp at seq_ids 1238 and 1239
+  [ERROR   ]  timestamp_duplicate  seq_ids=[1241, 1242]
+             Duplicate timestamp at seq_ids 1241 and 1242
+  [ERROR   ]  adjacent_model_responses  seq_ids=[539, 540]
+             Adjacent ModelResponses at seq_ids 539 and 540 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[817, 818]
+             Adjacent ModelResponses at seq_ids 817 and 818 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1104, 1105]
+             Adjacent ModelResponses at seq_ids 1104 and 1105 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1107, 1108]
+             Adjacent ModelResponses at seq_ids 1107 and 1108 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1112, 1113]
+             Adjacent ModelResponses at seq_ids 1112 and 1113 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1115, 1116]
+             Adjacent ModelResponses at seq_ids 1115 and 1116 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1118, 1119]
+             Adjacent ModelResponses at seq_ids 1118 and 1119 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1121, 1122]
+             Adjacent ModelResponses at seq_ids 1121 and 1122 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1124, 1125]
+             Adjacent ModelResponses at seq_ids 1124 and 1125 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1127, 1128]
+             Adjacent ModelResponses at seq_ids 1127 and 1128 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1134, 1135]
+             Adjacent ModelResponses at seq_ids 1134 and 1135 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1137, 1138]
+             Adjacent ModelResponses at seq_ids 1137 and 1138 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1140, 1141]
+             Adjacent ModelResponses at seq_ids 1140 and 1141 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1143, 1144]
+             Adjacent ModelResponses at seq_ids 1143 and 1144 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1146, 1147]
+             Adjacent ModelResponses at seq_ids 1146 and 1147 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1149, 1150]
+             Adjacent ModelResponses at seq_ids 1149 and 1150 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1152, 1153]
+             Adjacent ModelResponses at seq_ids 1152 and 1153 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1155, 1156]
+             Adjacent ModelResponses at seq_ids 1155 and 1156 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1158, 1159]
+             Adjacent ModelResponses at seq_ids 1158 and 1159 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1161, 1162]
+             Adjacent ModelResponses at seq_ids 1161 and 1162 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1164, 1165]
+             Adjacent ModelResponses at seq_ids 1164 and 1165 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1167, 1168]
+             Adjacent ModelResponses at seq_ids 1167 and 1168 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1170, 1171]
+             Adjacent ModelResponses at seq_ids 1170 and 1171 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1173, 1174]
+             Adjacent ModelResponses at seq_ids 1173 and 1174 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1178, 1179]
+             Adjacent ModelResponses at seq_ids 1178 and 1179 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1181, 1182]
+             Adjacent ModelResponses at seq_ids 1181 and 1182 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1184, 1185]
+             Adjacent ModelResponses at seq_ids 1184 and 1185 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1193, 1194]
+             Adjacent ModelResponses at seq_ids 1193 and 1194 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1196, 1197]
+             Adjacent ModelResponses at seq_ids 1196 and 1197 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1199, 1200]
+             Adjacent ModelResponses at seq_ids 1199 and 1200 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1204, 1205]
+             Adjacent ModelResponses at seq_ids 1204 and 1205 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1207, 1208]
+             Adjacent ModelResponses at seq_ids 1207 and 1208 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1210, 1211]
+             Adjacent ModelResponses at seq_ids 1210 and 1211 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1215, 1216]
+             Adjacent ModelResponses at seq_ids 1215 and 1216 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1220, 1221]
+             Adjacent ModelResponses at seq_ids 1220 and 1221 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1223, 1224]
+             Adjacent ModelResponses at seq_ids 1223 and 1224 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1226, 1227]
+             Adjacent ModelResponses at seq_ids 1226 and 1227 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1229, 1230]
+             Adjacent ModelResponses at seq_ids 1229 and 1230 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1232, 1233]
+             Adjacent ModelResponses at seq_ids 1232 and 1233 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1235, 1236]
+             Adjacent ModelResponses at seq_ids 1235 and 1236 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1238, 1239]
+             Adjacent ModelResponses at seq_ids 1238 and 1239 — consecutive responses should not occur
+  [ERROR   ]  adjacent_model_responses  seq_ids=[1241, 1242]
+             Adjacent ModelResponses at seq_ids 1241 and 1242 — consecutive responses should not occur
+  [ERROR   ]  content_duplicate  seq_ids=[341, 391, 630, 680, 914, 964]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [341, 391, 630, 680, 914, 964]
+  [ERROR   ]  content_duplicate  seq_ids=[249, 540, 824]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [249, 540, 824]
+  [ERROR   ]  content_duplicate  seq_ids=[251, 542, 826]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [251, 542, 826]
+  [ERROR   ]  content_duplicate  seq_ids=[257, 548, 832]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [257, 548, 832]
+  [ERROR   ]  content_duplicate  seq_ids=[264, 553, 837]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [264, 553, 837]
+  [ERROR   ]  content_duplicate  seq_ids=[265, 554, 838]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [265, 554, 838]
+  [ERROR   ]  content_duplicate  seq_ids=[265, 554, 838]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [265, 554, 838]
+  [ERROR   ]  content_duplicate  seq_ids=[266, 555, 839]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [266, 555, 839]
+  [ERROR   ]  content_duplicate  seq_ids=[267, 556, 840]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [267, 556, 840]
+  [ERROR   ]  content_duplicate  seq_ids=[267, 556, 840]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [267, 556, 840]
+  [ERROR   ]  content_duplicate  seq_ids=[268, 557, 841]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [268, 557, 841]
+  [ERROR   ]  content_duplicate  seq_ids=[269, 558, 842]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [269, 558, 842]
+  [ERROR   ]  content_duplicate  seq_ids=[269, 558, 842]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [269, 558, 842]
+  [ERROR   ]  content_duplicate  seq_ids=[270, 559, 843]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [270, 559, 843]
+  [ERROR   ]  content_duplicate  seq_ids=[271, 560, 844]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [271, 560, 844]
+  [ERROR   ]  content_duplicate  seq_ids=[271, 560, 844]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [271, 560, 844]
+  [ERROR   ]  content_duplicate  seq_ids=[272, 561, 845]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [272, 561, 845]
+  [ERROR   ]  content_duplicate  seq_ids=[273, 562, 846]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [273, 562, 846]
+  [ERROR   ]  content_duplicate  seq_ids=[273, 562, 846]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [273, 562, 846]
+  [ERROR   ]  content_duplicate  seq_ids=[274, 563, 847]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [274, 563, 847]
+  [ERROR   ]  content_duplicate  seq_ids=[275, 564, 848]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [275, 564, 848]
+  [ERROR   ]  content_duplicate  seq_ids=[275, 564, 848]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [275, 564, 848]
+  [ERROR   ]  content_duplicate  seq_ids=[276, 565, 849]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [276, 565, 849]
+  [ERROR   ]  content_duplicate  seq_ids=[277, 566, 850]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [277, 566, 850]
+  [ERROR   ]  content_duplicate  seq_ids=[277, 566, 850]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [277, 566, 850]
+  [ERROR   ]  content_duplicate  seq_ids=[278, 567, 851]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [278, 567, 851]
+  [ERROR   ]  content_duplicate  seq_ids=[279, 568, 852]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [279, 568, 852]
+  [ERROR   ]  content_duplicate  seq_ids=[279, 568, 852]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [279, 568, 852]
+  [ERROR   ]  content_duplicate  seq_ids=[280, 569, 853]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [280, 569, 853]
+  [ERROR   ]  content_duplicate  seq_ids=[281, 570, 854]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [281, 570, 854]
+  [ERROR   ]  content_duplicate  seq_ids=[281, 570, 854]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [281, 570, 854]
+  [ERROR   ]  content_duplicate  seq_ids=[282, 571, 855]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [282, 571, 855]
+  [ERROR   ]  content_duplicate  seq_ids=[283, 572, 856]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [283, 572, 856]
+  [ERROR   ]  content_duplicate  seq_ids=[283, 572, 856]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [283, 572, 856]
+  [ERROR   ]  content_duplicate  seq_ids=[284, 573, 857]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [284, 573, 857]
+  [ERROR   ]  content_duplicate  seq_ids=[285, 574, 858]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [285, 574, 858]
+  [ERROR   ]  content_duplicate  seq_ids=[285, 574, 858]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [285, 574, 858]
+  [ERROR   ]  content_duplicate  seq_ids=[291, 580, 864]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [291, 580, 864]
+  [ERROR   ]  content_duplicate  seq_ids=[293, 582, 866]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [293, 582, 866]
+  [ERROR   ]  content_duplicate  seq_ids=[295, 584, 868]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [295, 584, 868]
+  [ERROR   ]  content_duplicate  seq_ids=[303, 592, 876]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [303, 592, 876]
+  [ERROR   ]  content_duplicate  seq_ids=[313, 602, 886]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [313, 602, 886]
+  [ERROR   ]  content_duplicate  seq_ids=[317, 606, 890]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [317, 606, 890]
+  [ERROR   ]  content_duplicate  seq_ids=[319, 608, 892]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [319, 608, 892]
+  [ERROR   ]  content_duplicate  seq_ids=[320, 609, 893]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [320, 609, 893]
+  [ERROR   ]  content_duplicate  seq_ids=[321, 610, 894]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [321, 610, 894]
+  [ERROR   ]  content_duplicate  seq_ids=[321, 610, 894]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [321, 610, 894]
+  [ERROR   ]  content_duplicate  seq_ids=[322, 611, 895]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [322, 611, 895]
+  [ERROR   ]  content_duplicate  seq_ids=[323, 612, 896]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [323, 612, 896]
+  [ERROR   ]  content_duplicate  seq_ids=[323, 612, 896]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [323, 612, 896]
+  [ERROR   ]  content_duplicate  seq_ids=[324, 613, 897]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [324, 613, 897]
+  [ERROR   ]  content_duplicate  seq_ids=[325, 614, 898]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [325, 614, 898]
+  [ERROR   ]  content_duplicate  seq_ids=[325, 614, 898]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [325, 614, 898]
+  [ERROR   ]  content_duplicate  seq_ids=[326, 615, 899]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [326, 615, 899]
+  [ERROR   ]  content_duplicate  seq_ids=[327, 616, 900]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [327, 616, 900]
+  [ERROR   ]  content_duplicate  seq_ids=[337, 626, 910]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [337, 626, 910]
+  [ERROR   ]  content_duplicate  seq_ids=[345, 634, 918]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [345, 634, 918]
+  [ERROR   ]  content_duplicate  seq_ids=[346, 635, 919]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [346, 635, 919]
+  [ERROR   ]  content_duplicate  seq_ids=[347, 636, 920]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [347, 636, 920]
+  [ERROR   ]  content_duplicate  seq_ids=[347, 636, 920]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [347, 636, 920]
+  [ERROR   ]  content_duplicate  seq_ids=[348, 637, 921]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [348, 637, 921]
+  [ERROR   ]  content_duplicate  seq_ids=[349, 638, 922]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [349, 638, 922]
+  [ERROR   ]  content_duplicate  seq_ids=[349, 638, 922]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [349, 638, 922]
+  [ERROR   ]  content_duplicate  seq_ids=[350, 639, 923]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [350, 639, 923]
+  [ERROR   ]  content_duplicate  seq_ids=[351, 640, 924]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [351, 640, 924]
+  [ERROR   ]  content_duplicate  seq_ids=[351, 640, 924]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [351, 640, 924]
+  [ERROR   ]  content_duplicate  seq_ids=[352, 641, 925]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [352, 641, 925]
+  [ERROR   ]  content_duplicate  seq_ids=[353, 642, 926]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [353, 642, 926]
+  [ERROR   ]  content_duplicate  seq_ids=[353, 642, 926]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [353, 642, 926]
+  [WARN    ]  content_duplicate  seq_ids=[357, 646, 930]
+             Short length duplicate content detected with suspect frequency. Duplication occurred at seq_ids: [357, 646, 930]
+  [ERROR   ]  content_duplicate  seq_ids=[361, 650, 934]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [361, 650, 934]
+  [ERROR   ]  content_duplicate  seq_ids=[362, 651, 935]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [362, 651, 935]
+  [ERROR   ]  content_duplicate  seq_ids=[363, 652, 936]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [363, 652, 936]
+  [ERROR   ]  content_duplicate  seq_ids=[365, 654, 938]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [365, 654, 938]
+  [ERROR   ]  content_duplicate  seq_ids=[369, 658, 942]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [369, 658, 942]
+  [ERROR   ]  content_duplicate  seq_ids=[371, 660, 944]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [371, 660, 944]
+  [ERROR   ]  content_duplicate  seq_ids=[373, 662, 946]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [373, 662, 946]
+  [ERROR   ]  content_duplicate  seq_ids=[375, 664, 948]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [375, 664, 948]
+  [ERROR   ]  content_duplicate  seq_ids=[381, 670, 954]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [381, 670, 954]
+  [ERROR   ]  content_duplicate  seq_ids=[383, 672, 956]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [383, 672, 956]
+  [ERROR   ]  content_duplicate  seq_ids=[385, 674, 958]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [385, 674, 958]
+  [ERROR   ]  content_duplicate  seq_ids=[387, 676, 960]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [387, 676, 960]
+  [ERROR   ]  content_duplicate  seq_ids=[395, 684, 968]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [395, 684, 968]
+  [ERROR   ]  content_duplicate  seq_ids=[397, 686, 970]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [397, 686, 970]
+  [ERROR   ]  content_duplicate  seq_ids=[397, 686, 970]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [397, 686, 970]
+  [ERROR   ]  content_duplicate  seq_ids=[399, 688, 972]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [399, 688, 972]
+  [ERROR   ]  content_duplicate  seq_ids=[401, 690, 974]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [401, 690, 974]
+  [ERROR   ]  content_duplicate  seq_ids=[403, 692, 976]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [403, 692, 976]
+  [ERROR   ]  content_duplicate  seq_ids=[404, 693, 977]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [404, 693, 977]
+  [ERROR   ]  content_duplicate  seq_ids=[405, 694, 978]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [405, 694, 978]
+  [ERROR   ]  content_duplicate  seq_ids=[405, 694, 978]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [405, 694, 978]
+  [ERROR   ]  content_duplicate  seq_ids=[406, 695, 979]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [406, 695, 979]
+  [ERROR   ]  content_duplicate  seq_ids=[407, 696, 980]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [407, 696, 980]
+  [ERROR   ]  content_duplicate  seq_ids=[407, 696, 980]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [407, 696, 980]
+  [ERROR   ]  content_duplicate  seq_ids=[408, 697, 981]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [408, 697, 981]
+  [ERROR   ]  content_duplicate  seq_ids=[409, 698, 982]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [409, 698, 982]
+  [ERROR   ]  content_duplicate  seq_ids=[409, 698, 982]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [409, 698, 982]
+  [ERROR   ]  content_duplicate  seq_ids=[410, 699, 983]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [410, 699, 983]
+  [ERROR   ]  content_duplicate  seq_ids=[411, 700, 984]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [411, 700, 984]
+  [ERROR   ]  content_duplicate  seq_ids=[411, 700, 984]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [411, 700, 984]
+  [ERROR   ]  content_duplicate  seq_ids=[412, 701, 985]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [412, 701, 985]
+  [ERROR   ]  content_duplicate  seq_ids=[413, 702, 986]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [413, 702, 986]
+  [ERROR   ]  content_duplicate  seq_ids=[413, 702, 986]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [413, 702, 986]
+  [WARN    ]  content_duplicate  seq_ids=[414, 703, 987]
+             Short length duplicate content detected with suspect frequency. Duplication occurred at seq_ids: [414, 703, 987]
+  [ERROR   ]  content_duplicate  seq_ids=[415, 704, 988]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [415, 704, 988]
+  [WARN    ]  content_duplicate  seq_ids=[415, 704, 988]
+             Short length duplicate content detected with suspect frequency. Duplication occurred at seq_ids: [415, 704, 988]
+  [ERROR   ]  content_duplicate  seq_ids=[416, 705, 989]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [416, 705, 989]
+  [ERROR   ]  content_duplicate  seq_ids=[417, 706, 990]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [417, 706, 990]
+  [ERROR   ]  content_duplicate  seq_ids=[417, 706, 990]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [417, 706, 990]
+  [ERROR   ]  content_duplicate  seq_ids=[418, 707, 991]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [418, 707, 991]
+  [ERROR   ]  content_duplicate  seq_ids=[419, 708, 992]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [419, 708, 992]
+  [ERROR   ]  content_duplicate  seq_ids=[419, 708, 992]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [419, 708, 992]
+  [ERROR   ]  content_duplicate  seq_ids=[420, 709, 993]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [420, 709, 993]
+  [ERROR   ]  content_duplicate  seq_ids=[421, 710, 994]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [421, 710, 994]
+  [ERROR   ]  content_duplicate  seq_ids=[421, 710, 994]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [421, 710, 994]
+  [ERROR   ]  content_duplicate  seq_ids=[423, 712, 996]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [423, 712, 996]
+  [ERROR   ]  content_duplicate  seq_ids=[425, 714, 998]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [425, 714, 998]
+  [ERROR   ]  content_duplicate  seq_ids=[426, 715, 999]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [426, 715, 999]
+  [ERROR   ]  content_duplicate  seq_ids=[427, 716, 1000]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [427, 716, 1000]
+  [ERROR   ]  content_duplicate  seq_ids=[427, 716, 1000]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [427, 716, 1000]
+  [WARN    ]  content_duplicate  seq_ids=[429, 718, 1002]
+             Short length duplicate content detected with suspect frequency. Duplication occurred at seq_ids: [429, 718, 1002]
+  [ERROR   ]  content_duplicate  seq_ids=[439, 728, 1012]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [439, 728, 1012]
+  [ERROR   ]  content_duplicate  seq_ids=[443, 732, 1016]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [443, 732, 1016]
+  [ERROR   ]  content_duplicate  seq_ids=[445, 734, 1018]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [445, 734, 1018]
+  [WARN    ]  content_duplicate  seq_ids=[448, 735, 1019]
+             Short length duplicate content detected with suspect frequency. Duplication occurred at seq_ids: [448, 735, 1019]
+  [ERROR   ]  content_duplicate  seq_ids=[449, 736, 1020]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [449, 736, 1020]
+  [ERROR   ]  content_duplicate  seq_ids=[449, 736, 1020]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [449, 736, 1020]
+  [ERROR   ]  content_duplicate  seq_ids=[453, 740, 1024]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [453, 740, 1024]
+  [ERROR   ]  content_duplicate  seq_ids=[455, 742, 1026]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [455, 742, 1026]
+  [ERROR   ]  content_duplicate  seq_ids=[457, 744, 1028]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [457, 744, 1028]
+  [WARN    ]  content_duplicate  seq_ids=[458, 745, 1029]
+             Short length duplicate content detected with suspect frequency. Duplication occurred at seq_ids: [458, 745, 1029]
+  [ERROR   ]  content_duplicate  seq_ids=[459, 746, 1030]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [459, 746, 1030]
+  [WARN    ]  content_duplicate  seq_ids=[459, 746, 1030]
+             Short length duplicate content detected with suspect frequency. Duplication occurred at seq_ids: [459, 746, 1030]
+  [ERROR   ]  content_duplicate  seq_ids=[460, 747, 1031]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [460, 747, 1031]
+  [ERROR   ]  content_duplicate  seq_ids=[461, 748, 1032]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [461, 748, 1032]
+  [ERROR   ]  content_duplicate  seq_ids=[461, 748, 1032]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [461, 748, 1032]
+  [WARN    ]  content_duplicate  seq_ids=[462, 749, 1033]
+             Short length duplicate content detected with suspect frequency. Duplication occurred at seq_ids: [462, 749, 1033]
+  [ERROR   ]  content_duplicate  seq_ids=[463, 750, 1034]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [463, 750, 1034]
+  [ERROR   ]  content_duplicate  seq_ids=[465, 752, 1036]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [465, 752, 1036]
+  [WARN    ]  content_duplicate  seq_ids=[466, 753, 1037]
+             Short length duplicate content detected with suspect frequency. Duplication occurred at seq_ids: [466, 753, 1037]
+  [ERROR   ]  content_duplicate  seq_ids=[467, 754, 1038]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [467, 754, 1038]
+  [ERROR   ]  content_duplicate  seq_ids=[469, 756, 1040]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [469, 756, 1040]
+  [WARN    ]  content_duplicate  seq_ids=[471, 758, 1042]
+             Short length duplicate content detected with suspect frequency. Duplication occurred at seq_ids: [471, 758, 1042]
+  [ERROR   ]  content_duplicate  seq_ids=[472, 759, 1043]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [472, 759, 1043]
+  [ERROR   ]  content_duplicate  seq_ids=[473, 760, 1044]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [473, 760, 1044]
+  [ERROR   ]  content_duplicate  seq_ids=[475, 761, 1045]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [475, 761, 1045]
+  [ERROR   ]  content_duplicate  seq_ids=[476, 762, 1046]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [476, 762, 1046]
+  [ERROR   ]  content_duplicate  seq_ids=[478, 763, 1047]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [478, 763, 1047]
+  [ERROR   ]  content_duplicate  seq_ids=[479, 764, 1048]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [479, 764, 1048]
+  [WARN    ]  content_duplicate  seq_ids=[481, 765, 1049]
+             Short length duplicate content detected with suspect frequency. Duplication occurred at seq_ids: [481, 765, 1049]
+  [ERROR   ]  content_duplicate  seq_ids=[482, 766, 1050]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [482, 766, 1050]
+  [ERROR   ]  content_duplicate  seq_ids=[482, 766, 1050]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [482, 766, 1050]
+  [ERROR   ]  content_duplicate  seq_ids=[483, 767, 1051]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [483, 767, 1051]
+  [ERROR   ]  content_duplicate  seq_ids=[484, 768, 1052]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [484, 768, 1052]
+  [ERROR   ]  content_duplicate  seq_ids=[486, 770, 1054]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [486, 770, 1054]
+  [ERROR   ]  content_duplicate  seq_ids=[487, 771, 1055]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [487, 771, 1055]
+  [ERROR   ]  content_duplicate  seq_ids=[488, 772, 1056]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [488, 772, 1056]
+  [ERROR   ]  content_duplicate  seq_ids=[490, 774, 1058]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [490, 774, 1058]
+  [ERROR   ]  content_duplicate  seq_ids=[491, 775, 1059]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [491, 775, 1059]
+  [ERROR   ]  content_duplicate  seq_ids=[492, 776, 1060]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [492, 776, 1060]
+  [ERROR   ]  content_duplicate  seq_ids=[492, 776, 1060]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [492, 776, 1060]
+  [ERROR   ]  content_duplicate  seq_ids=[494, 777, 1061]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [494, 777, 1061]
+  [ERROR   ]  content_duplicate  seq_ids=[495, 778, 1062]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [495, 778, 1062]
+  [ERROR   ]  content_duplicate  seq_ids=[495, 778, 1062]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [495, 778, 1062]
+  [ERROR   ]  content_duplicate  seq_ids=[496, 779, 1063]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [496, 779, 1063]
+  [ERROR   ]  content_duplicate  seq_ids=[497, 780, 1064]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [497, 780, 1064]
+  [ERROR   ]  content_duplicate  seq_ids=[497, 780, 1064]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [497, 780, 1064]
+  [ERROR   ]  content_duplicate  seq_ids=[498, 781, 1065]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [498, 781, 1065]
+  [ERROR   ]  content_duplicate  seq_ids=[499, 781, 1065]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [499, 781, 1065]
+  [ERROR   ]  content_duplicate  seq_ids=[500, 781, 1065]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [500, 781, 1065]
+  [ERROR   ]  content_duplicate  seq_ids=[501, 782, 1066]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [501, 782, 1066]
+  [ERROR   ]  content_duplicate  seq_ids=[503, 784, 1068]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [503, 784, 1068]
+  [ERROR   ]  content_duplicate  seq_ids=[503, 784, 1068]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [503, 784, 1068]
+  [ERROR   ]  content_duplicate  seq_ids=[505, 786, 1070]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [505, 786, 1070]
+  [ERROR   ]  content_duplicate  seq_ids=[506, 787, 1071]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [506, 787, 1071]
+  [ERROR   ]  content_duplicate  seq_ids=[507, 787, 1071]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [507, 787, 1071]
+  [ERROR   ]  content_duplicate  seq_ids=[508, 787, 1071]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [508, 787, 1071]
+  [ERROR   ]  content_duplicate  seq_ids=[509, 788, 1072]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [509, 788, 1072]
+  [ERROR   ]  content_duplicate  seq_ids=[509, 788, 1072]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [509, 788, 1072]
+  [ERROR   ]  content_duplicate  seq_ids=[510, 789, 1073]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [510, 789, 1073]
+  [ERROR   ]  content_duplicate  seq_ids=[511, 790, 1074]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [511, 790, 1074]
+  [ERROR   ]  content_duplicate  seq_ids=[513, 792, 1076]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [513, 792, 1076]
+  [ERROR   ]  content_duplicate  seq_ids=[514, 793, 1077]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [514, 793, 1077]
+  [ERROR   ]  content_duplicate  seq_ids=[515, 794, 1078]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [515, 794, 1078]
+  [ERROR   ]  content_duplicate  seq_ids=[517, 795, 1079]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [517, 795, 1079]
+  [ERROR   ]  content_duplicate  seq_ids=[518, 796, 1080]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [518, 796, 1080]
+  [ERROR   ]  content_duplicate  seq_ids=[520, 798, 1082]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [520, 798, 1082]
+  [ERROR   ]  content_duplicate  seq_ids=[521, 799, 1083]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [521, 799, 1083]
+  [ERROR   ]  content_duplicate  seq_ids=[527, 805, 1089]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [527, 805, 1089]
+  [ERROR   ]  content_duplicate  seq_ids=[529, 807, 1091]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [529, 807, 1091]
+  [ERROR   ]  content_duplicate  seq_ids=[535, 813, 1097]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [535, 813, 1097]
+  [ERROR   ]  content_duplicate  seq_ids=[537, 815, 1099]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [537, 815, 1099]
+  [ERROR   ]  content_duplicate  seq_ids=[242, 818]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [242, 818]
+  [ERROR   ]  content_duplicate  seq_ids=[244, 820]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [244, 820]
+  [ERROR   ]  content_duplicate  seq_ids=[247, 822]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [247, 822]
+  [ERROR   ]  content_duplicate  seq_ids=[247, 822]
+             High length duplicate content detected. Higher length content is less likely to naturally recur. Duplication occurred at seq_ids: [247, 822]
+  [ERROR   ]  content_duplicate  seq_ids=[1104, 1105]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1104, 1105]
+  [ERROR   ]  content_duplicate  seq_ids=[1107, 1108]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1107, 1108]
+  [ERROR   ]  content_duplicate  seq_ids=[1107, 1108]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1107, 1108]
+  [ERROR   ]  content_duplicate  seq_ids=[1112, 1113]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1112, 1113]
+  [ERROR   ]  content_duplicate  seq_ids=[1115, 1116]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1115, 1116]
+  [ERROR   ]  content_duplicate  seq_ids=[1115, 1116]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1115, 1116]
+  [ERROR   ]  content_duplicate  seq_ids=[1118, 1119]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1118, 1119]
+  [ERROR   ]  content_duplicate  seq_ids=[1118, 1119]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1118, 1119]
+  [ERROR   ]  content_duplicate  seq_ids=[1121, 1122]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1121, 1122]
+  [ERROR   ]  content_duplicate  seq_ids=[1121, 1122]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1121, 1122]
+  [ERROR   ]  content_duplicate  seq_ids=[1124, 1125]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1124, 1125]
+  [ERROR   ]  content_duplicate  seq_ids=[1124, 1125]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1124, 1125]
+  [ERROR   ]  content_duplicate  seq_ids=[1127, 1128]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1127, 1128]
+  [ERROR   ]  content_duplicate  seq_ids=[1127, 1128]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1127, 1128]
+  [ERROR   ]  content_duplicate  seq_ids=[1134, 1135]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1134, 1135]
+  [ERROR   ]  content_duplicate  seq_ids=[1137, 1138]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1137, 1138]
+  [ERROR   ]  content_duplicate  seq_ids=[1137, 1138]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1137, 1138]
+  [ERROR   ]  content_duplicate  seq_ids=[1140, 1141]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1140, 1141]
+  [ERROR   ]  content_duplicate  seq_ids=[1140, 1141]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1140, 1141]
+  [ERROR   ]  content_duplicate  seq_ids=[1143, 1144]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1143, 1144]
+  [ERROR   ]  content_duplicate  seq_ids=[1143, 1144]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1143, 1144]
+  [ERROR   ]  content_duplicate  seq_ids=[1146, 1147]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1146, 1147]
+  [ERROR   ]  content_duplicate  seq_ids=[1146, 1147]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1146, 1147]
+  [ERROR   ]  content_duplicate  seq_ids=[1149, 1150]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1149, 1150]
+  [ERROR   ]  content_duplicate  seq_ids=[1149, 1150]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1149, 1150]
+  [ERROR   ]  content_duplicate  seq_ids=[1152, 1153]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1152, 1153]
+  [ERROR   ]  content_duplicate  seq_ids=[1152, 1153]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1152, 1153]
+  [ERROR   ]  content_duplicate  seq_ids=[1155, 1156]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1155, 1156]
+  [ERROR   ]  content_duplicate  seq_ids=[1155, 1156]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1155, 1156]
+  [ERROR   ]  content_duplicate  seq_ids=[1158, 1159]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1158, 1159]
+  [ERROR   ]  content_duplicate  seq_ids=[1158, 1159]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1158, 1159]
+  [ERROR   ]  content_duplicate  seq_ids=[1161, 1162]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1161, 1162]
+  [ERROR   ]  content_duplicate  seq_ids=[1161, 1162]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1161, 1162]
+  [ERROR   ]  content_duplicate  seq_ids=[1164, 1165]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1164, 1165]
+  [ERROR   ]  content_duplicate  seq_ids=[1164, 1165]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1164, 1165]
+  [ERROR   ]  content_duplicate  seq_ids=[1167, 1168]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1167, 1168]
+  [ERROR   ]  content_duplicate  seq_ids=[1167, 1168]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1167, 1168]
+  [ERROR   ]  content_duplicate  seq_ids=[1170, 1171]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1170, 1171]
+  [ERROR   ]  content_duplicate  seq_ids=[1170, 1171]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1170, 1171]
+  [ERROR   ]  content_duplicate  seq_ids=[1173, 1174]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1173, 1174]
+  [ERROR   ]  content_duplicate  seq_ids=[1173, 1174]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1173, 1174]
+  [ERROR   ]  content_duplicate  seq_ids=[1178, 1179]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1178, 1179]
+  [ERROR   ]  content_duplicate  seq_ids=[1181, 1182]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1181, 1182]
+  [ERROR   ]  content_duplicate  seq_ids=[1181, 1182]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1181, 1182]
+  [ERROR   ]  content_duplicate  seq_ids=[1184, 1185]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1184, 1185]
+  [ERROR   ]  content_duplicate  seq_ids=[1184, 1185]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1184, 1185]
+  [ERROR   ]  content_duplicate  seq_ids=[1193, 1194]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1193, 1194]
+  [ERROR   ]  content_duplicate  seq_ids=[1196, 1197]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1196, 1197]
+  [ERROR   ]  content_duplicate  seq_ids=[1196, 1197]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1196, 1197]
+  [ERROR   ]  content_duplicate  seq_ids=[1199, 1200]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1199, 1200]
+  [ERROR   ]  content_duplicate  seq_ids=[1199, 1200]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1199, 1200]
+  [ERROR   ]  content_duplicate  seq_ids=[1204, 1205]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1204, 1205]
+  [ERROR   ]  content_duplicate  seq_ids=[1207, 1208]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1207, 1208]
+  [ERROR   ]  content_duplicate  seq_ids=[1207, 1208]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1207, 1208]
+  [ERROR   ]  content_duplicate  seq_ids=[1210, 1211]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1210, 1211]
+  [ERROR   ]  content_duplicate  seq_ids=[1210, 1211]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1210, 1211]
+  [ERROR   ]  content_duplicate  seq_ids=[1215, 1216]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1215, 1216]
+  [ERROR   ]  content_duplicate  seq_ids=[1220, 1221]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1220, 1221]
+  [ERROR   ]  content_duplicate  seq_ids=[1223, 1224]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1223, 1224]
+  [ERROR   ]  content_duplicate  seq_ids=[1223, 1224]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1223, 1224]
+  [ERROR   ]  content_duplicate  seq_ids=[1226, 1227]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1226, 1227]
+  [ERROR   ]  content_duplicate  seq_ids=[1226, 1227]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1226, 1227]
+  [ERROR   ]  content_duplicate  seq_ids=[1229, 1230]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1229, 1230]
+  [ERROR   ]  content_duplicate  seq_ids=[1229, 1230]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1229, 1230]
+  [ERROR   ]  content_duplicate  seq_ids=[1232, 1233]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1232, 1233]
+  [ERROR   ]  content_duplicate  seq_ids=[1232, 1233]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1232, 1233]
+  [ERROR   ]  content_duplicate  seq_ids=[1235, 1236]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1235, 1236]
+  [ERROR   ]  content_duplicate  seq_ids=[1235, 1236]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1235, 1236]
+  [ERROR   ]  content_duplicate  seq_ids=[1238, 1239]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1238, 1239]
+  [ERROR   ]  content_duplicate  seq_ids=[1238, 1239]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1238, 1239]
+  [ERROR   ]  content_duplicate  seq_ids=[1241, 1242]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1241, 1242]
+  [ERROR   ]  content_duplicate  seq_ids=[1241, 1242]
+             Duplicate content found in adjacent messages. Adjacent duplication is unlikely to naturally occur. Duplication occurred at seq_ids: [1241, 1242]
+  [ERROR   ]  modelmessage_timestamp_out_of_order  seq_ids=[539, 540]
+             ModelMessage timestamp out of order at seq_ids 539 → 540: 2026-08-12 17:46:44.163666+00:00 → 2026-08-12 02:12:16.821499+00:00. Possible causes: clock skew or re-persisted duplicate.
+  [ERROR   ]  modelmessage_timestamp_out_of_order  seq_ids=[817, 818]
+             ModelMessage timestamp out of order at seq_ids 817 → 818: 2026-08-12 17:46:44.192410+00:00 → 2026-08-12 02:11:58.721751+00:00. Possible causes: clock skew or re-persisted duplicate.
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1104, 1105]
+             Duplicate ModelMessage timestamp at seq_ids 1104 and 1105
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1107, 1108]
+             Duplicate ModelMessage timestamp at seq_ids 1107 and 1108
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1112, 1113]
+             Duplicate ModelMessage timestamp at seq_ids 1112 and 1113
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1115, 1116]
+             Duplicate ModelMessage timestamp at seq_ids 1115 and 1116
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1118, 1119]
+             Duplicate ModelMessage timestamp at seq_ids 1118 and 1119
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1121, 1122]
+             Duplicate ModelMessage timestamp at seq_ids 1121 and 1122
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1124, 1125]
+             Duplicate ModelMessage timestamp at seq_ids 1124 and 1125
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1127, 1128]
+             Duplicate ModelMessage timestamp at seq_ids 1127 and 1128
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1134, 1135]
+             Duplicate ModelMessage timestamp at seq_ids 1134 and 1135
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1137, 1138]
+             Duplicate ModelMessage timestamp at seq_ids 1137 and 1138
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1140, 1141]
+             Duplicate ModelMessage timestamp at seq_ids 1140 and 1141
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1143, 1144]
+             Duplicate ModelMessage timestamp at seq_ids 1143 and 1144
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1146, 1147]
+             Duplicate ModelMessage timestamp at seq_ids 1146 and 1147
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1149, 1150]
+             Duplicate ModelMessage timestamp at seq_ids 1149 and 1150
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1152, 1153]
+             Duplicate ModelMessage timestamp at seq_ids 1152 and 1153
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1155, 1156]
+             Duplicate ModelMessage timestamp at seq_ids 1155 and 1156
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1158, 1159]
+             Duplicate ModelMessage timestamp at seq_ids 1158 and 1159
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1161, 1162]
+             Duplicate ModelMessage timestamp at seq_ids 1161 and 1162
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1164, 1165]
+             Duplicate ModelMessage timestamp at seq_ids 1164 and 1165
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1167, 1168]
+             Duplicate ModelMessage timestamp at seq_ids 1167 and 1168
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1170, 1171]
+             Duplicate ModelMessage timestamp at seq_ids 1170 and 1171
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1173, 1174]
+             Duplicate ModelMessage timestamp at seq_ids 1173 and 1174
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1178, 1179]
+             Duplicate ModelMessage timestamp at seq_ids 1178 and 1179
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1181, 1182]
+             Duplicate ModelMessage timestamp at seq_ids 1181 and 1182
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1184, 1185]
+             Duplicate ModelMessage timestamp at seq_ids 1184 and 1185
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1193, 1194]
+             Duplicate ModelMessage timestamp at seq_ids 1193 and 1194
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1196, 1197]
+             Duplicate ModelMessage timestamp at seq_ids 1196 and 1197
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1199, 1200]
+             Duplicate ModelMessage timestamp at seq_ids 1199 and 1200
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1204, 1205]
+             Duplicate ModelMessage timestamp at seq_ids 1204 and 1205
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1207, 1208]
+             Duplicate ModelMessage timestamp at seq_ids 1207 and 1208
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1210, 1211]
+             Duplicate ModelMessage timestamp at seq_ids 1210 and 1211
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1215, 1216]
+             Duplicate ModelMessage timestamp at seq_ids 1215 and 1216
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1220, 1221]
+             Duplicate ModelMessage timestamp at seq_ids 1220 and 1221
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1223, 1224]
+             Duplicate ModelMessage timestamp at seq_ids 1223 and 1224
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1226, 1227]
+             Duplicate ModelMessage timestamp at seq_ids 1226 and 1227
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1229, 1230]
+             Duplicate ModelMessage timestamp at seq_ids 1229 and 1230
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1232, 1233]
+             Duplicate ModelMessage timestamp at seq_ids 1232 and 1233
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1235, 1236]
+             Duplicate ModelMessage timestamp at seq_ids 1235 and 1236
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1238, 1239]
+             Duplicate ModelMessage timestamp at seq_ids 1238 and 1239
+  [ERROR   ]  modelmessage_timestamp_duplicate  seq_ids=[1241, 1242]
+             Duplicate ModelMessage timestamp at seq_ids 1241 and 1242
+
+  Agent: Sonnet  (a44c7a16-e735-42a7-91fd-341187a56977)
+  ✓  No issues found

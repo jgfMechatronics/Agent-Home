@@ -150,11 +150,6 @@ async def agent_deps(session: AsyncSession, agent_record: AgentRecord) -> AgentD
 # Pydantic-AI message factory helpers — shared across test modules
 # ---------------------------------------------------------------------------
 
-# Fixed naive UTC timestamp used in tool-pair request messages.  ModelRequest
-# doesn't auto-assign a timestamp the way ModelResponse does, so we pin one to
-# make assertions about orphan-warning log output predictable without bracketing.
-_TOOL_PAIR_REQUEST_TS = datetime(2026, 1, 1, 12, 0, 0)
-
 
 def make_request(content: str = "hello") -> ModelRequest:
     """Minimal ModelRequest with a single UserPromptPart."""
@@ -178,9 +173,7 @@ def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
     """A matched tool-call / tool-return pair.
 
     Returns (ModelResponse(ToolCallPart), ModelRequest(ToolReturnPart)).
-    The ModelRequest has a fixed timestamp so tests can assert on it without
-    time-bracketing.
-    
+
     NOTE: These message shapes are hand-crafted to match pydantic-ai's internal format.
     A possibly more robust alternative would be to use FunctionModel (pydantic_ai.models.function) to
     run a real agent turn and capture the actual message sequence via result.all_messages().
@@ -192,7 +185,7 @@ def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
     return_part = ToolReturnPart(tool_name="mem_replace", content="ok", tool_call_id=tool_call_id)
     return (
         ModelResponse(parts=[call_part]),
-        ModelRequest(parts=[return_part], timestamp=_TOOL_PAIR_REQUEST_TS),
+        ModelRequest(parts=[return_part]),
     )
 
 
@@ -200,7 +193,7 @@ def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
     """A matched tool-call / retry-prompt pair (ModelRetry path).
 
     The call side is identical to make_tool_pair() — only the response side differs
-    (RetryPromptPart instead of ToolReturnPart).  Same fixed-timestamp convention.
+    (RetryPromptPart instead of ToolReturnPart).
     """
     call_response, _ = make_tool_pair()
     retry_part = RetryPromptPart(
@@ -210,7 +203,7 @@ def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
     )
     return (
         call_response,
-        ModelRequest(parts=[retry_part], timestamp=_TOOL_PAIR_REQUEST_TS),
+        ModelRequest(parts=[retry_part]),
     )
 
 

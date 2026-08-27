@@ -4,6 +4,11 @@
       "check_type": "content_duplicate",
       "seq_ids": [341, 391],
       "reason": "LLM self-repetition: Haiku said 'Perfect! Let me verify...' twice — acceptable noise, not corruption"
+    },
+    {
+      "check_type": "timestamp_out_of_order",
+      "seq_ids": [110, 111],
+      "reason": "Message record ts setting was inconsistent in version of AH which generated this input. Timestamps were just slightly out of order due to different sources"
     }
   ]
 }

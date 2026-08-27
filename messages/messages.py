@@ -21,7 +21,6 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     RetryPromptPart,
-    UserPromptPart,
 )
 from pydantic_ai.tools import ToolDefinition
 from sqlalchemy import func, select
@@ -73,7 +72,7 @@ def _make_orphan_replacement(
     # RetryPromptPart.tool_name may be None — filter to avoid join errors
     tool_names = [p.tool_name for p in msg.parts if isinstance(p, part_type) and p.tool_name is not None]
     error_text = f"[Orphaned tool {label}(s) dropped: {', '.join(tool_names)}]"
-    return (_message_timestamp(msg), error_text), ModelResponse(parts=[TextPart(content=error_text)])
+    return (utcnow(), error_text), ModelResponse(parts=[TextPart(content=error_text)])
 
 
 def is_valid_tool_pair(call_msg: ModelMessage | None, return_msg: ModelMessage | None) -> bool:
@@ -136,28 +135,6 @@ def dump_msg_json(msg: ModelMessage) -> str:
     return ModelMessagesTypeAdapter.dump_json([msg]).decode()[1:-1]
 
 
-def _message_timestamp(msg: ModelMessage) -> datetime:
-    """Extract a naive UTC datetime from a ModelMessage for storage.
-
-    ModelResponse always has .timestamp set (auto-assigned on construction).
-    ModelRequest.timestamp is None by default; fall back to the first
-    UserPromptPart.timestamp if available, otherwise use current time.
-
-    TODO: revisit if ModelRequest ever carries its own timestamp in a future
-    pydantic_ai version, or if non-UserPrompt parts need timestamp handling.
-    """
-    ts: datetime | None = msg.timestamp
-    if ts is None and isinstance(msg, ModelRequest):
-        ts = next(
-            (p.timestamp for p in msg.parts if isinstance(p, UserPromptPart)),
-            None,
-        )
-    if ts is None:
-        return utcnow()
-    # Strip tzinfo — SQLite stores naive datetimes
-    return ts.replace(tzinfo=None) if ts.tzinfo is not None else ts
-
-
 def _handle_serialization_error(
     msg: ModelMessage,
     e: Exception,
@@ -166,10 +143,9 @@ def _handle_serialization_error(
     """Build an error ModelResponse in place of a message that failed to serialize.
 
     Logs the failure and returns (content, msg_type, error_msg, error_entry) where
-    error_entry is (original_ts, error_text) for the caller to append to its errors list.
+    error_entry is (timestamp, error_text) for the caller to append to its errors list.
     Must be called from within the except block so log.exception captures the active traceback.
     """
-    original_ts = _message_timestamp(msg)
     log.exception(
         "persist_messages: unexpected serialization failure for agent %s (%s); injecting error record",
         agent_id, e,
@@ -177,7 +153,7 @@ def _handle_serialization_error(
     error_text = f"[persist_messages serialization error]: {type(e).__name__}: {e}"
     error_msg = ModelResponse(parts=[TextPart(content=error_text)])
     content = dump_msg_json(error_msg)
-    error_to_append = (original_ts, error_text) # return this for caller to append to avoid sneakily mutating list
+    error_to_append = (utcnow(), error_text)
     return content, "ModelResponse", error_msg, error_to_append
 
 
@@ -241,9 +217,9 @@ async def _persist_error_warnings(
         ModelResponse(parts=[TextPart(content=(
             f"WARNING: A problem was encountered while persisting messages from the last turn: "
             f"'{error_text}'. A warning was injected in place of the problematic message, "
-            f"problematic message timestamp was {original_timestamp}"
+            f"error occurred at {error_ts}"
         ))])
-        for original_timestamp, error_text in errors
+        for error_ts, error_text in errors
     ]
     await deps.session.flush()  # Ensure main messages visible to recursive call's MAX query
     await persist_messages(deps, warning_messages, tool_schemas, _is_error_pass=True)
@@ -327,7 +303,7 @@ async def persist_messages(
             content=content,
             total_tokens=msg_total_tokens,
             seq_id=next_seq_id + i,
-            timestamp=_message_timestamp(msg),
+            timestamp=utcnow(),
             system_prompt_hash=system_prompt_hash,
             tool_definition_hash=tool_definition_hash,
             agent_config_hash=agent_config_hash,
