@@ -134,10 +134,9 @@ def _check_modelmessage_timestamps(
     records: Sequence[MessageRecord],
     messages: Sequence[ModelMessage],
 ) -> list[IntegrityIssue]:
-    """Check that pydantic-ai ModelResponse generation timestamps are monotonically increasing.
+    """Check that pydantic-ai ModelMessage generation timestamps are monotonically increasing.
 
-    Inspects ModelResponse.timestamp only — ModelRequest timestamps are skipped (they are
-    typically None in production and not a meaningful ordering signal).
+    Skips messages with null timestamps (typically ModelRequest for tool returns, retries, etc.).
     Detects re-persisted messages from earlier sessions whose embedded generation timestamps
     predate surrounding messages.
 
@@ -148,15 +147,16 @@ def _check_modelmessage_timestamps(
         messages: Deserialized ModelMessages in the same order as records
     """
     issues: list[IntegrityIssue] = []
-    pairs: list[tuple[datetime, int]] = [
+    ts_seq_id_pairs: list[tuple[datetime, int]] = [
         (msg.timestamp, record.seq_id)
         for msg, record in zip(messages, records)
-        if isinstance(msg, ModelResponse)
+        if msg.timestamp is not None
     ]
 
-    for i in range(1, len(pairs)):
-        prev_ts, prev_seq_id = pairs[i - 1]
-        curr_ts, curr_seq_id = pairs[i]
+    # Duplicatey with _check_timestamps_increasing but the different IntegrityIssue details make it complex to dedupe.
+    for i in range(1, len(ts_seq_id_pairs)):
+        prev_ts, prev_seq_id = ts_seq_id_pairs[i - 1]
+        curr_ts, curr_seq_id = ts_seq_id_pairs[i]
 
         if curr_ts < prev_ts:
             issues.append(IntegrityIssue(
