@@ -187,13 +187,14 @@ class TestPersistMessages(DBTestBase):
         assert result == resp_with_other_usage.usage.total_tokens
 
     async def test_timestamp_set_on_all_records(self):
-        request = make_request()
-        response = make_response()
-        records = await self._persist_and_fetch([request, response])
-        
-        # Pydantic-AI's handling of timestamps across ModelRequests and ModelResponses is inconsistent
-        assert records[0].timestamp == request.parts[0].timestamp.replace(tzinfo=None)
-        assert records[1].timestamp == response.timestamp.replace(tzinfo=None)
+        # Record timestamps are persist time (utcnow()), not message generation time
+        before = utcnow()
+        records = await self._persist_and_fetch([make_request(), make_response()])
+        after = utcnow()
+
+        assert before <= records[0].timestamp <= after
+        assert before <= records[1].timestamp <= after
+        assert records[0].timestamp <= records[1].timestamp
 
     async def test_agent_id_set_on_all_records(self):
         records = await self._persist_and_fetch([make_request(), make_response()])
@@ -276,18 +277,19 @@ class TestPersistMessages(DBTestBase):
     # ------------Tests for handling non-persistable messages -----------------------
     
     # ------------ Helpers -------------------------
-    def _assert_summary_warning_appended(self, records, error_text, original_timestamp):
+    def _assert_summary_warning_appended(self, records, error_text):
         """Assert the last record in records is a summary warning matching the expected format."""
         record = records[-1]
         assert record.type == "ModelResponse"
         restored = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
 
-        expected = (
+        # Timestamp is persist time (utcnow()) — check stable prefix only
+        expected_prefix = (
             f"WARNING: A problem was encountered while persisting messages from the last turn: "
             f"'{error_text}'. A warning was injected in place of the problematic message, "
-            f"problematic message timestamp was {original_timestamp}"
+            f"error occurred at "
         )
-        assert restored[0].parts[0].content == expected
+        assert restored[0].parts[0].content.startswith(expected_prefix)
 
     async def _assert_orphan_replaced(self, orphan_msg, orphaned_part_type, expected_error):
         """Persist a single orphaned tool message and assert it was replaced with the expected
@@ -306,10 +308,7 @@ class TestPersistMessages(DBTestBase):
         restored = ModelMessagesTypeAdapter.validate_json(f"[{records[0].content}]")
         assert restored[0].parts[0].content == expected_error
 
-        # Summary warning appended at end
-        ts = orphan_msg.timestamp
-        original_timestamp = ts.replace(tzinfo=None) if (ts is not None and ts.tzinfo is not None) else ts
-        self._assert_summary_warning_appended(records, expected_error, original_timestamp)
+        self._assert_summary_warning_appended(records, expected_error)
 
     # -------------- Tests -------------------
     # TODO: Check for multiple orphaned tool messages in a single list of msgs,
@@ -372,9 +371,8 @@ class TestPersistMessages(DBTestBase):
         positional = ModelMessagesTypeAdapter.validate_json(f"[{records[1].content}]")
         assert positional[0].parts[0].content == error_text
 
-        # Summary warning appended at end, referencing the error and original timestamp
-        expected_ts = bad.timestamp.replace(tzinfo=None)
-        self._assert_summary_warning_appended(records, error_text, expected_ts)
+        # Summary warning appended at end, referencing the error
+        self._assert_summary_warning_appended(records, error_text)
 
         # Exception logged
         assert any("sim failure" in r.message for r in caplog.records)

@@ -12,7 +12,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart
 
@@ -25,6 +25,7 @@ from utils.integrity_checker import (
     _check_seq_id_consecutive, _check_timestamps_increasing, _check_context_window_start_validity,
     _check_message_ordering, _check_for_empty_content,
     _check_tool_call_return_pairing, _check_for_duplicate_content,
+    _check_modelmessage_timestamps,
     Dismissal, filter_dismissed_issues, load_dismissals,
 )
 
@@ -245,6 +246,67 @@ TIMESTAMP_TEST_CASES = [
 
 
 # ---------------------------------------------------------------------------
+# Check 2b: ModelMessage Timestamp Test Cases
+# Whereas message record timestamps capture persist time, ModelMessage timestamps *typically* cover
+# ModelMessage construction time (although pydantic AI is somewhat inconsistent)
+# ---------------------------------------------------------------------------
+# Use UTC-aware datetimes to match pydantic-ai's internal representation.
+_MSG_TS1 = datetime(2026, 1, 1, 12, 0, 1, tzinfo=timezone.utc)
+_MSG_TS2 = datetime(2026, 1, 1, 12, 0, 2, tzinfo=timezone.utc)
+
+def _make_response_record_with_ts(ts: datetime) -> dict:
+    """Record override dict for a ModelResponse with a specific generation timestamp."""
+    return {"type": "ModelResponse", "content": dump_msg_json(ModelResponse(parts=[TextPart(content=str(ts))], timestamp=ts))}
+
+MODELMESSAGE_TIMESTAMP_TEST_CASES = [
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},                                       # ModelRequest — null message timestamp
+            _make_response_record_with_ts(_MSG_TS1),  # seq_id 1
+            {},                                       # ModelRequest — null message timestamp
+            _make_response_record_with_ts(_MSG_TS2),  # seq_id 3, TS2 > TS1 ✓
+        ]),
+        [],
+        id="happy_nulls_skipped",
+    ),
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},
+            _make_response_record_with_ts(_MSG_TS1),  # seq_id 1
+            {},
+            _make_response_record_with_ts(_MSG_TS1),  # seq_id 3, equal to TS1 ✗
+        ]),
+        [IntegrityIssue(
+            check_type="modelmessage_timestamp_duplicate",
+            severity=ERROR,
+            seq_ids=[1, 3],
+            details=f"Duplicate ModelMessage timestamp at seq_ids 1 and 3",
+        )],
+        id="sad_equal_timestamps",
+    ),
+    pytest.param(
+        lambda agent_id: make_message_sequence(agent_id, [
+            {},
+            _make_response_record_with_ts(_MSG_TS2),  # seq_id 1, TS2
+            {},
+            _make_response_record_with_ts(_MSG_TS1),  # seq_id 3, TS1 < TS2 ✗
+        ]),
+        [IntegrityIssue(
+            check_type="modelmessage_timestamp_out_of_order",
+            severity=ERROR,
+            seq_ids=[1, 3],
+            details=(
+                f"ModelMessage timestamp out of order at seq_ids 1 → 3: "
+                f"{_MSG_TS2} → {_MSG_TS1}. "
+                "Possible causes: clock skew or re-persisted duplicate."
+            ),
+        )],
+        id="sad_inversion",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
 # Check 3: Content Duplicate Test Cases
 # ---------------------------------------------------------------------------
 
@@ -262,15 +324,25 @@ _SYSTEM_ALERT = {"type": "ModelRequest", "content": dump_msg_json(make_request(_
 
 
 # ThinkingPart duplicates (ModelResponse with a thinking block)
-def _make_thinking_response(thinking: str) -> ModelResponse:
-    return ModelResponse(parts=[ThinkingPart(content=thinking)])
+def _make_thinking_response(thinking: str, ts: datetime) -> ModelResponse:
+    return ModelResponse(parts=[ThinkingPart(content=thinking)], timestamp=ts)
 
 
 def _make_thinking_and_text_response(thinking: str, text: str) -> ModelResponse:
     return ModelResponse(parts=[ThinkingPart(content=thinking), TextPart(content=text)])
 
 
-_LONG_THINKING_DUP = {"type": "ModelResponse", "content": dump_msg_json(_make_thinking_response("x" * (_CONTENT_LENGTH_THRESHOLD + 1)))}
+# Two variants with distinct timestamps so _check_modelmessage_timestamps doesn't
+# fire when these are placed in adjacent records for content-duplicate testing.
+_LONG_THINKING_TEXT = "x" * (_CONTENT_LENGTH_THRESHOLD + 1)
+_LONG_THINKING_DUP_A = {
+    "type": "ModelResponse",
+    "content": dump_msg_json(_make_thinking_response(_LONG_THINKING_TEXT, _MSG_TS1)),
+}
+_LONG_THINKING_DUP_B = {
+    "type": "ModelResponse",
+    "content": dump_msg_json(_make_thinking_response(_LONG_THINKING_TEXT, _MSG_TS2)),
+}
 
 # Pre-built matched pairs — computed once so call and return share the same tool_call_id
 _MATCHED_TOOL_CALL, _MATCHED_TOOL_RETURN = make_tool_pair()
@@ -371,8 +443,8 @@ CONTENT_DUPLICATE_TEST_CASES = [
     # ThinkingPart: adjacent duplicate — verifies thinking block content is inspected at all
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
-            {**_LONG_THINKING_DUP},
-            {**_LONG_THINKING_DUP},  # adjacent duplicate
+            {**_LONG_THINKING_DUP_A},
+            {**_LONG_THINKING_DUP_B},  # adjacent duplicate — same ThinkingPart content, distinct timestamp
             {},
         ]),
         [
@@ -661,6 +733,7 @@ CTX_WINDOW_START_TEST_CASES = [
 # TestCheckAgentIntegrity
 # ---------------------------------------------------------------------------
 
+# These two param sets for checking invariants of helper functions
 _RECORD_ONLY_CHECKERS = [
     pytest.param(_check_seq_id_consecutive, id="check_seq_id_consecutive"),
     pytest.param(_check_timestamps_increasing, id="check_timestamps_increasing"),
@@ -672,6 +745,7 @@ _RECORD_ONLY_CHECKERS = [
 _RECORD_AND_MESSAGE_CHECKERS = [
     pytest.param(_check_tool_call_return_pairing, id="check_tool_call_return_pairing"),
     pytest.param(_check_for_duplicate_content, id="check_for_duplicate_content"),
+    pytest.param(_check_modelmessage_timestamps, id="check_modelmessage_timestamps"),
 ]
 
 
@@ -693,42 +767,8 @@ class TestCheckAgentIntegrity:
         issues = await check_agent_integrity(self.session, self.agent.id)
         assert issues == expected_issues
 
-    # The below structure gives us a nice hierarchy in test explorer and isolates failures to particular param lists better
-    @pytest.mark.parametrize("build_records,expected_issues", CLEAN_TEST_CASES)
-    async def test_clean(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", SEQ_ID_TEST_CASES)
-    async def test_seq_id(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", TIMESTAMP_TEST_CASES)
-    async def test_timestamp(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", CONTENT_DUPLICATE_TEST_CASES)
-    async def test_content_duplicate(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", EMPTY_CONTENT_TEST_CASES)
-    async def test_empty_content(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", DESERIALIZATION_FAILURE_TEST_CASES)
-    async def test_deserialization_failure(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", TOOL_PAIRING_TEST_CASES)
-    async def test_tool_pairing(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", MESSAGE_ORDERING_TEST_CASES)
-    async def test_message_ordering(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", CTX_WINDOW_START_TEST_CASES)
-    async def test_ctx_window_start(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
+    # Per-category test methods (test_clean, test_seq_id, …) are generated via
+    # _make_check_test + setattr below the class definition.
 
     @pytest.mark.parametrize("checker", _RECORD_ONLY_CHECKERS)
     async def test_record_only_checkers_do_not_mutate_input(self, checker):
@@ -751,6 +791,38 @@ class TestCheckAgentIntegrity:
             s._sa_instance_state = r._sa_instance_state
         assert [vars(r) for r in records] == [vars(s) for s in records_snapshot]
         assert messages == messages_snapshot
+
+
+def _make_check_test(name: str, cases: list) -> Callable:
+    """Generate a parametrized test method that calls _run_check.
+
+    Used below with setattr to build the per-category test methods on
+    TestCheckAgentIntegrity without repeating the same 2-line boilerplate
+    for each check category.
+    """
+    async def _test(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        await self._run_check(build_records, expected_issues)
+    _test.__name__ = name
+    return pytest.mark.parametrize("build_records,expected_issues", cases)(_test)
+
+
+# Generate per-category test methods on TestCheckAgentIntegrity. Each is a
+# parametrized call to _run_check — identical bodies, different case lists.
+# Adding a new check category means adding one entry to this dict.
+# This structure gives nice test organization in pytest/test explorer
+for _name, _cases in {
+    "test_clean":                    CLEAN_TEST_CASES,
+    "test_seq_id":                   SEQ_ID_TEST_CASES,
+    "test_timestamp":                TIMESTAMP_TEST_CASES,
+    "test_modelmessage_timestamp":   MODELMESSAGE_TIMESTAMP_TEST_CASES,
+    "test_content_duplicate":        CONTENT_DUPLICATE_TEST_CASES,
+    "test_empty_content":            EMPTY_CONTENT_TEST_CASES,
+    "test_deserialization_failure":  DESERIALIZATION_FAILURE_TEST_CASES,
+    "test_tool_pairing":             TOOL_PAIRING_TEST_CASES,
+    "test_message_ordering":         MESSAGE_ORDERING_TEST_CASES,
+    "test_ctx_window_start":         CTX_WINDOW_START_TEST_CASES,
+}.items():
+    setattr(TestCheckAgentIntegrity, _name, _make_check_test(_name, _cases))
 
 
 # Reusable fixtures for dismissal tests
