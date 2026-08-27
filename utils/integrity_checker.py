@@ -6,6 +6,7 @@ Top-level function: check_agent_integrity(session, agent_id) -> list[IntegrityIs
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 import hashlib
 import json
@@ -126,6 +127,56 @@ def _check_timestamps_increasing(records: Sequence[MessageRecord]) -> list[Integ
                 details=f"Duplicate timestamp at seq_ids {prev.seq_id} and {curr.seq_id}",
             ))
     
+    return issues
+
+
+def _check_modelmessage_timestamps(
+    records: Sequence[MessageRecord],
+    messages: Sequence[ModelMessage],
+) -> list[IntegrityIssue]:
+    """Check that pydantic-ai ModelResponse generation timestamps are monotonically increasing.
+
+    Inspects ModelResponse.timestamp only — ModelRequest timestamps are skipped (they are
+    typically None in production and not a meaningful ordering signal).
+    Detects re-persisted messages from earlier sessions whose embedded generation timestamps
+    predate surrounding messages.
+
+    See also: _check_timestamps_increasing (record-level persist-time equivalent).
+
+    Args:
+        records: MessageRecords in seq_id order (for seq_id reporting)
+        messages: Deserialized ModelMessages in the same order as records
+    """
+    issues: list[IntegrityIssue] = []
+    pairs: list[tuple[datetime, int]] = [
+        (msg.timestamp, record.seq_id)
+        for msg, record in zip(messages, records)
+        if isinstance(msg, ModelResponse)
+    ]
+
+    for i in range(1, len(pairs)):
+        prev_ts, prev_seq_id = pairs[i - 1]
+        curr_ts, curr_seq_id = pairs[i]
+
+        if curr_ts < prev_ts:
+            issues.append(IntegrityIssue(
+                check_type="modelmessage_timestamp_out_of_order",
+                severity=ERROR,
+                seq_ids=[prev_seq_id, curr_seq_id],
+                details=(
+                    f"ModelMessage timestamp out of order at seq_ids {prev_seq_id} → {curr_seq_id}: "
+                    f"{prev_ts} → {curr_ts}. "
+                    "Possible causes: clock skew or re-persisted duplicate."
+                ),
+            ))
+        elif curr_ts == prev_ts:
+            issues.append(IntegrityIssue(
+                check_type="modelmessage_timestamp_duplicate",
+                severity=ERROR,
+                seq_ids=[prev_seq_id, curr_seq_id],
+                details=f"Duplicate ModelMessage timestamp at seq_ids {prev_seq_id} and {curr_seq_id}",
+            ))
+
     return issues
 
 
@@ -383,6 +434,7 @@ async def check_agent_integrity(
     # Deserialization-dependent checks
     issues.extend(_check_tool_call_return_pairing(records, messages))
     issues.extend(_check_for_duplicate_content(records, messages))
+    issues.extend(_check_modelmessage_timestamps(records, messages))
 
     return issues
 
