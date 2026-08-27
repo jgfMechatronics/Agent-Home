@@ -135,7 +135,6 @@ def dump_msg_json(msg: ModelMessage) -> str:
     return ModelMessagesTypeAdapter.dump_json([msg]).decode()[1:-1]
 
 
-
 def _handle_serialization_error(
     msg: ModelMessage,
     e: Exception,

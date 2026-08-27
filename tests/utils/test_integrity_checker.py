@@ -248,7 +248,7 @@ TIMESTAMP_TEST_CASES = [
 # ---------------------------------------------------------------------------
 # Check 2b: ModelMessage Timestamp Test Cases
 # Whereas message record timestamps capture persist time, ModelMessage timestamps *typically* cover
-# ModelMessage construction time (althoug pydantic AI is somewhat inconsistent)
+# ModelMessage construction time (although pydantic AI is somewhat inconsistent)
 # ---------------------------------------------------------------------------
 # Use UTC-aware datetimes to match pydantic-ai's internal representation.
 _MSG_TS1 = datetime(2026, 1, 1, 12, 0, 1, tzinfo=timezone.utc)
