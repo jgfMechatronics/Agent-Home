@@ -767,46 +767,8 @@ class TestCheckAgentIntegrity:
         issues = await check_agent_integrity(self.session, self.agent.id)
         assert issues == expected_issues
 
-    # The below structure gives us a nice hierarchy in test explorer and isolates failures to particular param lists better
-    @pytest.mark.parametrize("build_records,expected_issues", CLEAN_TEST_CASES)
-    async def test_clean(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", SEQ_ID_TEST_CASES)
-    async def test_seq_id(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", TIMESTAMP_TEST_CASES)
-    async def test_timestamp(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", MODELMESSAGE_TIMESTAMP_TEST_CASES)
-    async def test_modelmessage_timestamp(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", CONTENT_DUPLICATE_TEST_CASES)
-    async def test_content_duplicate(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", EMPTY_CONTENT_TEST_CASES)
-    async def test_empty_content(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", DESERIALIZATION_FAILURE_TEST_CASES)
-    async def test_deserialization_failure(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", TOOL_PAIRING_TEST_CASES)
-    async def test_tool_pairing(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", MESSAGE_ORDERING_TEST_CASES)
-    async def test_message_ordering(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
-
-    @pytest.mark.parametrize("build_records,expected_issues", CTX_WINDOW_START_TEST_CASES)
-    async def test_ctx_window_start(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
-        await self._run_check(build_records, expected_issues)
+    # Per-category test methods (test_clean, test_seq_id, …) are generated via
+    # _make_check_test + setattr below the class definition.
 
     @pytest.mark.parametrize("checker", _RECORD_ONLY_CHECKERS)
     async def test_record_only_checkers_do_not_mutate_input(self, checker):
@@ -829,6 +791,38 @@ class TestCheckAgentIntegrity:
             s._sa_instance_state = r._sa_instance_state
         assert [vars(r) for r in records] == [vars(s) for s in records_snapshot]
         assert messages == messages_snapshot
+
+
+def _make_check_test(name: str, cases: list) -> Callable:
+    """Generate a parametrized test method that calls _run_check.
+
+    Used below with setattr to build the per-category test methods on
+    TestCheckAgentIntegrity without repeating the same 2-line boilerplate
+    for each check category.
+    """
+    async def _test(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
+        await self._run_check(build_records, expected_issues)
+    _test.__name__ = name
+    return pytest.mark.parametrize("build_records,expected_issues", cases)(_test)
+
+
+# Generate per-category test methods on TestCheckAgentIntegrity. Each is a
+# parametrized call to _run_check — identical bodies, different case lists.
+# Adding a new check category means adding one entry to this dict.
+# This structure gives nice test organization in pytest/test explorer
+for _name, _cases in {
+    "test_clean":                    CLEAN_TEST_CASES,
+    "test_seq_id":                   SEQ_ID_TEST_CASES,
+    "test_timestamp":                TIMESTAMP_TEST_CASES,
+    "test_modelmessage_timestamp":   MODELMESSAGE_TIMESTAMP_TEST_CASES,
+    "test_content_duplicate":        CONTENT_DUPLICATE_TEST_CASES,
+    "test_empty_content":            EMPTY_CONTENT_TEST_CASES,
+    "test_deserialization_failure":  DESERIALIZATION_FAILURE_TEST_CASES,
+    "test_tool_pairing":             TOOL_PAIRING_TEST_CASES,
+    "test_message_ordering":         MESSAGE_ORDERING_TEST_CASES,
+    "test_ctx_window_start":         CTX_WINDOW_START_TEST_CASES,
+}.items():
+    setattr(TestCheckAgentIntegrity, _name, _make_check_test(_name, _cases))
 
 
 # Reusable fixtures for dismissal tests
