@@ -108,7 +108,7 @@ class MessageRecord(Base):
     content: Mapped[str]  # TEXT storing serialized ModelMessage JSON — not deserialized by SQLAlchemy
     total_tokens: Mapped[int | None]  # sum of input + output tokens for the LLM request associated with this message; None for ModelRequests and error rows
     seq_id: Mapped[int]  # per-agent monotonic ordinal; Used for ordering message history per agent
-    timestamp: Mapped[datetime]
+    timestamp: Mapped[datetime] # this is set by the one constructing the message but is generally *persist time*
 
     # Context reconstruction fields. See SystemPromptSnapshot, ToolDefinitionSnapshot, AgentConfigSnapshot.
     system_prompt_hash: Mapped[str] = mapped_column(ForeignKey("system_prompt_snapshots.id"))
