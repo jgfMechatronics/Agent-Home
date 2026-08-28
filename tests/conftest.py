@@ -15,6 +15,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
+from db.connection import _configure_sqlite_conn
 
 # Prevent AnthropicModel construction from failing in tests that don't make real API calls
 os.environ.setdefault("ANTHROPIC_API_KEY", "test")
@@ -215,12 +216,7 @@ async def session():
         "sqlite+aiosqlite:///:memory:",
         poolclass=StaticPool,
     )
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def enable_foreign_keys(dbapi_conn, _):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+    event.listens_for(engine.sync_engine, "connect")(_configure_sqlite_conn)
 
     try:
         async with engine.begin() as conn:

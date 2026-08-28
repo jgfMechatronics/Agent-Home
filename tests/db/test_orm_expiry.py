@@ -24,6 +24,7 @@ import pytest_asyncio
 
 pytestmark = pytest.mark.skip(reason="Documentation of ORM expiry behavior — conclusions in module docstring.")
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from db.connection import _configure_sqlite_conn
 from sqlalchemy.pool import StaticPool
 from sqlalchemy import event
 
@@ -40,12 +41,7 @@ SAMPLE_CONFIG = AgentConfig(
 @pytest_asyncio.fixture
 async def async_session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
-
-    @event.listens_for(engine.sync_engine, "connect")
-    def enable_fk(dbapi_conn, _):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+    event.listens_for(engine.sync_engine, "connect")(_configure_sqlite_conn)
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
