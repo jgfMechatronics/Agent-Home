@@ -49,6 +49,34 @@ async def test_create_sqlite_engine_enables_foreign_keys(raw_engine):
         assert result.scalar() == 1
 
 
+# --- create_sqlite_engine readonly mode ---
+
+class TestCreateSqliteEngineReadonly:
+    """readonly=True opens the DB in read-only mode — reads succeed, writes are rejected."""
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, tmp_path):
+        """Create and initialise a writable DB, then open a readonly engine against it."""
+        db_path = str(tmp_path / "test.db")
+        writable = create_sqlite_engine(db_path)
+        await init_db(writable)
+        await writable.dispose()
+
+        self.engine = create_sqlite_engine(db_path, readonly=True)
+        yield
+        await self.engine.dispose()
+
+    async def test_can_read(self):
+        async with self.engine.connect() as conn:
+            result = await conn.execute(text("SELECT 1"))
+            assert result.scalar() == 1
+
+    async def test_cannot_write(self):
+        with pytest.raises(Exception, match="attempt to write a readonly database"):
+            async with self.engine.begin() as conn:
+                await conn.execute(text("CREATE TABLE _readonly_test (id INTEGER)"))
+
+
 # --- init_db ---
 
 async def test_init_db_creates_tables(raw_engine):
