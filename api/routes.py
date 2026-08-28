@@ -214,7 +214,7 @@ async def handle_message(
         logger.exception("Unexpected error in handle_message for agent %s", agent_id)
         await deps.session.rollback()
         yield ServerSentEvent(
-            data={"message": f"Unexpected internal server error: '{type(e).__name__}: {str(e)}'"},
+            data={"message": f"\n\nUnexpected internal server error: '{type(e).__name__}: {str(e)}'"},
             event="Error",
         )
 
