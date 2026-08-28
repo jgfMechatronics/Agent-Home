@@ -23,8 +23,11 @@ def _configure_sqlite_conn(dbapi_conn, _) -> None:
     cursor.close()
 
 
-def create_sqlite_engine(db_path: str) -> AsyncEngine:
-    url = f"sqlite+aiosqlite:///{db_path}"
+def create_sqlite_engine(db_path: str, readonly: bool = False) -> AsyncEngine:
+    if readonly:
+        url = f"sqlite+aiosqlite:///file:{db_path}?mode=ro&uri=true"
+    else:
+        url = f"sqlite+aiosqlite:///{db_path}"
     engine = create_async_engine(url=url, poolclass=NullPool)
     event.listens_for(engine.sync_engine, "connect")(_configure_sqlite_conn)
     return engine
