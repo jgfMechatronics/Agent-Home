@@ -267,7 +267,7 @@ class TestHandleMessage(_BaseRouteTest):
         assert len(sse_events) == 2
         assert sse_events[0]["event"] == "PartStartEvent"
         assert sse_events[1]["event"] == "Error"
-        assert sse_events[1]["data"]["message"] == "Unexpected internal server error: 'RuntimeError: something went wrong'"
+        assert sse_events[1]["data"]["message"] == "\n\nUnexpected internal server error: 'RuntimeError: something went wrong'"
 
 
 # ---------------------------------------------------------------------------
