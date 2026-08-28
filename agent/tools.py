@@ -234,7 +234,7 @@ async def memory_insert(
 
 def _format_inter_agent_message(sender_name: str, content: str) -> str:
     """Prepend the standard inter-agent origin marker to a message."""
-    return f"[INTER AGENT MESSAGE. From: {sender_name}]\n{content}"
+    return f"[INTER AGENT MESSAGE. If you want to reply, use the 'send_message' tool. From: {sender_name}]\n{content}"
 
 
 async def send_message(
