@@ -23,7 +23,7 @@ from pathlib import Path
 
 from agent.crud import get_all_agents
 from db.connection import create_sqlite_engine, get_session
-from utils.integrity_checker import check_agent_integrity, load_dismissals, filter_dismissed_issues
+from utils.integrity_checker import check_agent_integrity, load_dismissals, filter_dismissed_issues, INTEGRITY_LOCKFILE_NAME
 
 _RESULTS_FILENAME = "integrity_checker_results.txt"
 _DISMISSALS_FILENAME = "integrity_issue_dismissals.json"
@@ -70,6 +70,8 @@ async def run(db_path: Path) -> int:
     finally:
         await engine.dispose()
 
+    lockfile_path = db_path.parent / INTEGRITY_LOCKFILE_NAME
+
     lines.append("\n" + "=" * 60)
     lines.append("RESULT: ISSUES FOUND — inspect above." if found_issues else "RESULT: Clean.")
 
@@ -77,6 +79,10 @@ async def run(db_path: Path) -> int:
     print(output)
     results_path.write_text(output)
     print(f"Results written to {results_path}")
+
+    if found_issues:
+        lockfile_path.touch()
+        print(f"Lockfile created: {lockfile_path} — delete it once issues are resolved to allow server startup.")
 
     return 1 if found_issues else 0
 
