@@ -1,5 +1,8 @@
 """FastAPI application and lifespan"""
+import asyncio
+import logging
 import os
+import signal
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -10,12 +13,24 @@ from api.routes import router
 from api.schemas import HealthResponse
 from db.connection import create_sqlite_engine, init_db
 
+logger = logging.getLogger(__name__)
 
 DB_PATH = os.environ["AGENT_HOME_DB_PATH"]
 
 
+def _handle_background_task_exception(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """
+    The user is not notified about exceptions in background tasks, and they will typically occur
+    in contexts where agents may be running unmonitored. Kill server to prevent dammage
+    """
+    exc = context.get("exception")
+    logger.critical("Unhandled exception in background task, shutting down: %s", exc, exc_info=exc)
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    asyncio.get_running_loop().set_exception_handler(_handle_background_task_exception)
     engine = create_sqlite_engine(DB_PATH)
     try:
         await init_db(engine)
