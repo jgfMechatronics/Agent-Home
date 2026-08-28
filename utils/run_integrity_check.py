@@ -29,15 +29,6 @@ _RESULTS_FILENAME = "integrity_checker_results.txt"
 _DISMISSALS_FILENAME = "integrity_issue_dismissals.json"
 
 
-def _format_issue(issue) -> str:
-    parts = [f"  [{issue.severity.value.upper()}] {issue.check_type}"]
-    if issue.seq_ids:
-        parts.append(f"    seq_ids={issue.seq_ids}")
-    if issue.details:
-        parts.append(f"    {issue.details}")
-    return "\n".join(parts)
-
-
 async def run(db_path: Path) -> int:
     """Run integrity checks on all agents. Returns 1 if any issues found, else 0."""
     dismissals_path = db_path.parent / _DISMISSALS_FILENAME
@@ -45,15 +36,15 @@ async def run(db_path: Path) -> int:
 
     engine = create_sqlite_engine(str(db_path.absolute()), readonly=True)
 
-    lines: list[str] = []
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    lines.append(f"Integrity Check Results — {timestamp}")
-    lines.append(f"Database: {db_path}")
-    lines.append("=" * 60)
-
-    found_issues = False
-
     try:
+        lines: list[str] = []
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        lines.append(f"Integrity Check Results — {timestamp}")
+        lines.append(f"Database: {db_path}")
+        lines.append("=" * 60)
+
+        found_issues = False
+        
         async with get_session(engine) as session:
             agents = await get_all_agents(session)
 
@@ -74,7 +65,7 @@ async def run(db_path: Path) -> int:
 
                     found_issues = True
                     for issue in issues:
-                        lines.append(_format_issue(issue))
+                        lines.append(f"  {repr(issue)}")
 
     finally:
         await engine.dispose()
