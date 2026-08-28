@@ -4,6 +4,7 @@ import logging
 import os
 import signal
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -12,6 +13,7 @@ from agent.factory import AgentLockedError, AgentNotFoundError
 from api.routes import router
 from api.schemas import HealthResponse
 from db.connection import create_sqlite_engine, init_db
+from utils.integrity_checker import INTEGRITY_LOCKFILE_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,15 @@ def _handle_background_task_exception(loop: asyncio.AbstractEventLoop, context: 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    lockfile = Path(DB_PATH).parent / INTEGRITY_LOCKFILE_NAME
+    if lockfile.exists():
+        msg = (
+            f"Integrity check failed — server startup blocked. "
+            f"Inspect {lockfile.parent / 'integrity_checker_results.txt'} and resolve all issues, "
+            f"then delete {lockfile} to allow the server to start."
+        )
+        logger.critical(msg)
+        raise RuntimeError(msg)
     asyncio.get_running_loop().set_exception_handler(_handle_background_task_exception)
     engine = create_sqlite_engine(DB_PATH)
     try:

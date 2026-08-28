@@ -69,6 +69,24 @@ class TestLifespan:
             await self.startup_and_shutdown_lifespan()
         # dispose assertion happens in startup_and_shutdown_lifespan's finally block
 
+    async def test_lockfile_blocks_startup(self, tmp_path):
+        """Server refuses to start if INTEGRITY_CHECK_FAILED lockfile exists beside the DB."""
+        from utils.integrity_checker import INTEGRITY_LOCKFILE_NAME
+        db_path = tmp_path / "agent_home.sqlite"
+        (tmp_path / INTEGRITY_LOCKFILE_NAME).touch()
+
+        with patch('api.app.DB_PATH', str(db_path)):
+            self.app = _create_app()
+            with pytest.raises(RuntimeError, match="Integrity check failed"):
+                async with LifespanManager(self.app):
+                    pass
+
+    async def test_no_lockfile_allows_startup(self, tmp_path):
+        """Server starts normally when no lockfile is present."""
+        with patch('api.app.DB_PATH', str(tmp_path / "agent_home.sqlite")):
+            self.app = _create_app()
+            await self.startup_and_shutdown_lifespan()
+
 
 class TestExceptionHandlers:
     """App-level exception handlers map domain exceptions to HTTP responses."""
