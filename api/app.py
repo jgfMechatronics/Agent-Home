@@ -21,7 +21,9 @@ DB_PATH = os.environ["AGENT_HOME_DB_PATH"]
 def _handle_background_task_exception(loop: asyncio.AbstractEventLoop, context: dict) -> None:
     """
     The user is not notified about exceptions in background tasks, and they will typically occur
-    in contexts where agents may be running unmonitored. Kill server to prevent dammage
+    in contexts where agents may be running unmonitored, and critically, may be kicking off new runs for each other
+    in a degraded state.
+    Kill server to prevent dammage
     """
     exc = context.get("exception")
     logger.critical("Unhandled exception in background task, shutting down: %s", exc, exc_info=exc)
