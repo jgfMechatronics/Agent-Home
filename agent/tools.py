@@ -340,6 +340,7 @@ async def _deliver_message(
         logger.error("send_message background task failed for agent %r: %s", agent_id, e)
         if not delivery_future.done():
             delivery_future.set_exception(e)
+        raise
 
 
 # =============================================================================
