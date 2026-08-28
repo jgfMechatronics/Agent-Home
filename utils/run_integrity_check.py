@@ -85,6 +85,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run Agent Home integrity checker on a SQLite database.")
     parser.add_argument("db_path", type=Path, help="Path to the SQLite database file.")
     args = parser.parse_args()
+    args.db_path = args.db_path.expanduser()
 
     if not args.db_path.exists():
         print(f"Error: database file not found: {args.db_path}", file=sys.stderr)
