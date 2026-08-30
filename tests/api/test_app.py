@@ -10,6 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from agent.factory import AgentLockedError, AgentNotFoundError
 from api.app import _create_app
 from api.routes import router
+from tests.conftest import TEST_BASE_URL
 
 
 def test_create_app_includes_router():
@@ -109,7 +110,7 @@ class TestExceptionHandlers:
             raise RuntimeError("something broke")
 
         async with AsyncClient(
-            transport=ASGITransport(app=self.app, raise_app_exceptions=False), base_url="http://test"
+            transport=ASGITransport(app=self.app, raise_app_exceptions=False), base_url=TEST_BASE_URL
         ) as client:
             self.client = client
             yield

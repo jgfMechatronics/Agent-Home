@@ -2,6 +2,8 @@ import hashlib
 import os
 import uuid
 
+TEST_BASE_URL = "http://localhost"
+
 # Must be set before any import of api.app (which reads it at module level).
 # Conftest is imported first by pytest, making this the right place for it.
 os.environ.setdefault("AGENT_HOME_DB_PATH", os.path.expanduser("~/.agent-home_pytest/db.sqlite"))
@@ -349,7 +351,7 @@ async def client(app: FastAPI) -> AsyncClient:
     """
     async with AsyncClient(
         transport=ASGITransport(app=app, raise_app_exceptions=False),
-        base_url="http://test"
+        base_url=TEST_BASE_URL,
     ) as c:
         yield c
 
