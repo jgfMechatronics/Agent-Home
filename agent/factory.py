@@ -11,6 +11,7 @@ StatefulAgent Pattern:
   - Could own lifespan. Lock acquisition/release and such. AgentFactory could then be an object which only exists long enough to construct a StatefulAgent, or could just be a free function
 """
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -141,12 +142,12 @@ def _construct_toolsets(toolset_names: list[str]) -> list:
     Returns:
         List of constructed toolset instances ready for Agent consumption.
     """
-    # TODO: Make URLs configurable via env or config
     # TODO: Consider module-level instances for connection reuse
     toolsets = []
     for name in toolset_names:
         if name == "mcp_filesystem":
-            toolsets.append(MCPToolset("http://host.docker.internal:8080/mcp"))
+            sandbox_container_name = os.environ.get("AGENT_SANDBOX_CONTAINER_NAME", "ellm-dev")
+            toolsets.append(MCPToolset(f"http://{sandbox_container_name}:8080/mcp"))
         # Future toolsets can be added here with elif branches
     return toolsets
 

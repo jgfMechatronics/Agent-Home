@@ -19,7 +19,7 @@ from fastmcp.server.transforms import ToolTransform
 from fastmcp.tools.tool_transform import ArgTransformConfig, ToolTransformConfig
 
 
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8080
 DEFAULT_WORKSPACE = "/workspace/git/misc/test"
 
@@ -90,7 +90,7 @@ def create_fs_proxy(workspace_path: str = DEFAULT_WORKSPACE):
             "mcpServers": {
                 "desktop-commander": {
                     "command": "npx",
-                    "args": ["-y", "@wonderwhy-er/desktop-commander@latest", "--no-onboarding"],
+                    "args": ["-y", "@wonderwhy-er/desktop-commander@0.2.47", "--no-onboarding"],
                     "cwd": config_dir,
                 }
             }
@@ -118,7 +118,7 @@ def main():
         "--host",
         type=str,
         default=DEFAULT_HOST,
-        help=f"Host to bind to (default: {DEFAULT_HOST}, use 0.0.0.0 for cross-container)",
+        help=f"Host to bind to (default: {DEFAULT_HOST}). Use 0.0.0.0 for cross-container use when mcp running in sandbox",
     )
     parser.add_argument(
         "--port",
