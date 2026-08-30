@@ -2,8 +2,6 @@ import hashlib
 import os
 import uuid
 
-TEST_BASE_URL = "http://localhost"
-
 # Must be set before any import of api.app (which reads it at module level).
 # Conftest is imported first by pytest, making this the right place for it.
 os.environ.setdefault("AGENT_HOME_DB_PATH", os.path.expanduser("~/.agent-home_pytest/db.sqlite"))
@@ -302,6 +300,9 @@ async def agent_with_blocks(session: AsyncSession):
 # Shared route test helpers and fixtures
 # Used by both tests/api/test_routes.py and tests/agent/test_runner.py
 # ---------------------------------------------------------------------------
+
+TEST_BASE_URL = "http://localhost"
+
 
 def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | None = None) -> Mock:
     """Create a mock agent whose run_stream_events yields the given events.
