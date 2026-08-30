@@ -127,6 +127,12 @@ def main():
         help=f"Port to run the proxy on (default: {DEFAULT_PORT})",
     )
     parser.add_argument(
+        "--allowed-host",
+        type=str,
+        default="ellm-dev",
+        help="Hostname to allow in Host header validation (default: ellm-dev). Should match this container's name on the Docker network.",
+    )
+    parser.add_argument(
         "--workspace",
         type=str,
         default=DEFAULT_WORKSPACE,
@@ -137,7 +143,14 @@ def main():
     proxy = create_fs_proxy(args.workspace)
     print(f"Starting Desktop Commander MCP proxy on http://{args.host}:{args.port}/mcp")
     print(f"Allowed directory: {args.workspace}")
-    proxy.run(transport="streamable-http", host=args.host, port=args.port)
+    print(f"Allowed host: {args.allowed_host}")
+    proxy.run(
+        transport="streamable-http",
+        host=args.host,
+        port=args.port,
+        host_origin_protection=True,
+        allowed_hosts=[args.allowed_host],
+    )
 
 
 if __name__ == "__main__":
