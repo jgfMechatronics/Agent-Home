@@ -147,6 +147,7 @@ class TestTrustedHost(_BaseAppClientTest):
         ("localhost:8000", 200),  # port stripped before comparison — all ports on allowed hosts pass
         ("evil.com", 400),
         ("notlocalhost", 400),
+        ("localhost.but_actually_evil", 400)
     ])
     async def test_host_validation(self, host: str, expected_status: int) -> None:
         response = await self.client.get("/health", headers={"host": host})
