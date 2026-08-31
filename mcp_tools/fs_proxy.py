@@ -74,8 +74,8 @@ async def _warmup_lifespan(server: "FastMCPProxy"):
     agent request may time out while npx initialises the subprocess. This lifespan
     triggers list_tools() immediately after the proxy server starts, so DC is ready
     before any agent connects.
-    NOTE: Agents can attempt a connection before its ready as the container will be up before this completes.
-    Its *really* slow
+    NOTE: Agents can attempt a connection (which will fail) before its ready as the container
+    will be up before this completes. Its *really* slow.
     """
     print("Warming up Desktop Commander connection...")
     tools = await server.list_tools()
