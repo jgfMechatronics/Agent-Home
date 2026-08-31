@@ -14,11 +14,14 @@ import json
 import os
 import tempfile
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
-from fastmcp import Client
 from fastmcp.server import create_proxy
 from fastmcp.server.transforms import ToolTransform
 from fastmcp.tools.tool_transform import ArgTransformConfig, ToolTransformConfig
+
+if TYPE_CHECKING:
+    from fastmcp.server.providers.proxy import FastMCPProxy
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -64,7 +67,7 @@ _TIMEOUT_MS_DESCRIPTION = (
 
 
 @asynccontextmanager
-async def _warmup_lifespan(server):
+async def _warmup_lifespan(server: "FastMCPProxy"):
     """Force Desktop Commander to start at proxy startup rather than on first request.
 
     DC is launched lazily by FastMCP on first tool call. Without this warmup, the first
@@ -73,8 +76,7 @@ async def _warmup_lifespan(server):
     before any agent connects.
     """
     print("Warming up Desktop Commander connection...")
-    async with Client(server) as client:
-        tools = await client.list_tools()
+    tools = await server.list_tools()
     print(f"Desktop Commander ready: {len(tools)} tools available")
     yield
 
