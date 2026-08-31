@@ -21,7 +21,7 @@ dependencies = [
     # TODO: Consider switching to pydantic-ai-slim as a leaning operation later.
     "ddgs>=9.14.4",
     "markdownify>=1.2.3",
-    "fastmcp",
+    "fastmcp>=3.4.3",
 ]
 
 [project.optional-dependencies]
