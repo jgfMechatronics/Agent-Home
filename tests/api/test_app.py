@@ -165,3 +165,22 @@ class TestTrustedHost(_BaseAppClientTest):
     async def test_host_validation(self, host: str, expected_status: int) -> None:
         response = await self.client.get("/health", headers={"host": host})
         assert response.status_code == expected_status
+
+
+class TestOriginValidation(_BaseAppClientTest):
+    """OriginValidationMiddleware rejects browser cross-site requests via Origin header."""
+
+    @pytest.mark.parametrize("origin,expected_status", [
+        (None, 200),                              # no Origin — direct API call, always allowed
+        ("http://localhost", 200),
+        ("http://localhost:8000", 200),           # port is ignored in host comparison
+        ("http://127.0.0.1", 200),
+        ("http://127.0.0.1:8000", 200),
+        ("http://evil.com", 403),
+        ("http://notlocalhost", 403),
+        ("http://localhost.evil.com", 403),       # subdomain of allowed host — must not pass
+    ])
+    async def test_origin_validation(self, origin: str | None, expected_status: int) -> None:
+        headers = {"origin": origin} if origin is not None else {}
+        response = await self.client.get("/health", headers=headers)
+        assert response.status_code == expected_status
