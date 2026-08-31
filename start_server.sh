@@ -42,7 +42,7 @@ mkdir -p ~/.agent-home
 # Start server
 cd "$SCRIPT_DIR"
 echo "Starting server... stdout: $LOG_FILE  stderr: $ERR_FILE"
-nohup uv run uvicorn main:app --host 0.0.0.0 --port 8000 > "$LOG_FILE" 2> "$ERR_FILE" &
+nohup uv run uvicorn main:app --host 127.0.0.1 --port 8000 > "$LOG_FILE" 2> "$ERR_FILE" &
 echo $! > "$PID_FILE"
 echo "Server started (PID $(cat "$PID_FILE"))"
 

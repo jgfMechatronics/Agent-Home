@@ -19,18 +19,24 @@ services:
     container_name: agent-home
     restart: no
     ports:
-      - "127.0.0.1:8000:8000"  # Bind to localhost only — prevents other containers reaching the API via host.docker.internal
-    extra_hosts:
-      # Allows Agent Home to reach MCP tools (e.g. Desktop Commander) running in the ellm-dev container.
-      # TODO: Replace with a proper Docker network between agent-home and ellm-dev.
-      #       At that point, containers address each other by name and host.docker.internal can be removed.
-      - "host.docker.internal:host-gateway"
+      - "127.0.0.1:8000:8000"  # Bind to localhost only
     volumes:
       - ./data:/data  # Persistent storage for SQLite DB
     environment:
-      - AGENT_HOME_DB_PATH=/data/db.sqlite 
+      - AGENT_HOME_DB_PATH=/data/db.sqlite
     env_file:
       - .env  # Load API keys and other vars from .env file
+    networks:
+      - agent-home_container_net
+
+networks:
+  agent-home_container_net:
+    name: ${ELLM_AGENT_NETWORK:-agent-home_container_net}
+    # Compose creates this network on `up` and removes it on `down`.
+    # If the sandbox container is still running when AH goes down, Docker will
+    # refuse to remove the network — it persists until the sandbox is also stopped.... we think
 
 # Example .env file contents:
 # ANTHROPIC_API_KEY=sk-ant-...
+# AGENT_SANDBOX_CONTAINER_NAME=ellm-dev        # must match the sandbox container name
+# ELLM_AGENT_NETWORK=agent-home_container_net  # must match the network name used by the sandbox container

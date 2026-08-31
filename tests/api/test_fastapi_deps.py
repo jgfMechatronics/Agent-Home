@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError
 from agent.types import AgentAppState, AgentDeps
 from api.fastapi_deps import get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_session_dep
+from tests.conftest import TEST_BASE_URL
 
 
 # --- Fixtures ---
@@ -70,7 +71,7 @@ async def _build_test_client(
     app.dependency_overrides[get_agent_app_state_reg] = lambda: agent_app_state_reg
 
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app), base_url=TEST_BASE_URL
     ) as client:
         yield client
 
