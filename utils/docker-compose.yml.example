@@ -26,17 +26,8 @@ services:
       - AGENT_HOME_DB_PATH=/data/db.sqlite
     env_file:
       - .env  # Load API keys and other vars from .env file
-    networks:
-      - agent-home_container_net
-
-networks:
-  agent-home_container_net:
-    name: ${ELLM_AGENT_NETWORK:-agent-home_container_net}
-    # Compose creates this network on `up` and removes it on `down`.
-    # If the sandbox container is still running when AH goes down, Docker will
-    # refuse to remove the network — it persists until the sandbox is also stopped.... we think
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Required on Linux — allows reaching fs_proxy via host bridge
 
 # Example .env file contents:
 # ANTHROPIC_API_KEY=sk-ant-...
-# AGENT_SANDBOX_CONTAINER_NAME=ellm-dev        # must match the sandbox container name
-# ELLM_AGENT_NETWORK=agent-home_container_net  # must match the network name used by the sandbox container
