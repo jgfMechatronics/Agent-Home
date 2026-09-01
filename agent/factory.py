@@ -146,8 +146,7 @@ def _construct_toolsets(toolset_names: list[str]) -> list:
     toolsets = []
     for name in toolset_names:
         if name == "mcp_filesystem":
-            sandbox_container_name = os.environ.get("AGENT_SANDBOX_CONTAINER_NAME", "ellm-dev")
-            toolsets.append(MCPToolset(f"http://{sandbox_container_name}:8080/mcp"))
+            toolsets.append(MCPToolset("http://host.docker.internal:8080/mcp"))
         # Future toolsets can be added here with elif branches
     return toolsets
 
