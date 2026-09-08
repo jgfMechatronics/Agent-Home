@@ -5,9 +5,13 @@ import os
 import signal
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from starlette.datastructures import Headers
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from agent.factory import AgentLockedError, AgentNotFoundError
 from api.routes import router
@@ -18,6 +22,39 @@ from utils.integrity_checker import INTEGRITY_LOCKFILE_NAME
 logger = logging.getLogger(__name__)
 
 DB_PATH = os.environ["AGENT_HOME_DB_PATH"]
+
+
+_ALLOWED_HOSTS: tuple[str, ...] = ("localhost", "127.0.0.1")
+_ALLOWED_ORIGINS: tuple[str, ...] = _ALLOWED_HOSTS
+
+
+class OriginValidationMiddleware:
+    """Reject browser-originated cross-site requests by validating the Origin header.
+
+    Browsers send an Origin header on cross-origin requests. If it is present and does
+    not resolve to an allowed host, the request is rejected with a 403. Requests without
+    an Origin header (direct API calls from toad, curl, scripts) are always allowed.
+
+    This prevents a malicious web page from making requests to the server on behalf of
+    a user who happens to visit it while the server is running locally — a relevant concern
+    as endpoints become more capable.
+
+    Note: TrustedHostMiddleware handles DNS rebinding; this middleware handles CSRF.
+    Together they cover the two main browser-based attack vectors.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        origin = Headers(scope=scope).get("origin")
+        if origin is not None and urlparse(origin).hostname not in _ALLOWED_ORIGINS:
+            await Response(status_code=403)(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
 
 
 def _handle_background_task_exception(loop: asyncio.AbstractEventLoop, context: dict) -> None:
@@ -82,6 +119,10 @@ def _create_app() -> FastAPI:
     app.add_exception_handler(AgentNotFoundError, agent_not_found_handler)
     app.add_exception_handler(AgentLockedError, agent_locked_handler)
     app.add_exception_handler(Exception, unexpected_error_handler)
+    # Prevent DNS rebinding (validates Host header)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_ALLOWED_HOSTS)
+    # Prevent CSRF (validates Origin header on browser-originated requests)
+    app.add_middleware(OriginValidationMiddleware)
 
     @app.get("/health")
     async def health() -> HealthResponse:

@@ -301,6 +301,9 @@ async def agent_with_blocks(session: AsyncSession):
 # Used by both tests/api/test_routes.py and tests/agent/test_runner.py
 # ---------------------------------------------------------------------------
 
+TEST_BASE_URL = "http://localhost"
+
+
 def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | None = None) -> Mock:
     """Create a mock agent whose run_stream_events yields the given events.
 
@@ -349,7 +352,7 @@ async def client(app: FastAPI) -> AsyncClient:
     """
     async with AsyncClient(
         transport=ASGITransport(app=app, raise_app_exceptions=False),
-        base_url="http://test"
+        base_url=TEST_BASE_URL,
     ) as c:
         yield c
 

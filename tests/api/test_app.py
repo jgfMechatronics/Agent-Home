@@ -1,6 +1,7 @@
 import os
 
 import pytest
+import pytest_asyncio
 from asgi_lifespan import LifespanManager
 from collections.abc import AsyncGenerator
 from unittest.mock import patch, AsyncMock, MagicMock
@@ -10,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from agent.factory import AgentLockedError, AgentNotFoundError
 from api.app import _create_app
 from api.routes import router
+from tests.conftest import TEST_BASE_URL
 
 
 def test_create_app_includes_router():
@@ -88,14 +90,28 @@ class TestLifespan:
             await self.startup_and_shutdown_lifespan()
 
 
-class TestExceptionHandlers:
+class _BaseAppClientTest:
+    """Shared setup for tests that need an AsyncClient wrapping a fresh _create_app() instance."""
+
+    def _add_test_routes(self) -> None:
+        """Override to register additional test routes on self.app before client creation."""
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup_client(self) -> AsyncGenerator[None, None]:
+        self.app = _create_app()
+        self._add_test_routes()
+        async with AsyncClient(
+            transport=ASGITransport(app=self.app, raise_app_exceptions=False),
+            base_url=TEST_BASE_URL,
+        ) as client:
+            self.client = client
+            yield
+
+
+class TestExceptionHandlers(_BaseAppClientTest):
     """App-level exception handlers map domain exceptions to HTTP responses."""
 
-    @pytest.fixture(autouse=True)
-    async def client(self) -> AsyncGenerator[None, None]:
-        """Real _create_app() instance with test routes that raise domain exceptions."""
-        self.app = _create_app()
-
+    def _add_test_routes(self) -> None:
         @self.app.get("/test-not-found")
         async def _raise_not_found():
             raise AgentNotFoundError("agent 'x' not found")
@@ -107,12 +123,6 @@ class TestExceptionHandlers:
         @self.app.get("/test-unexpected")
         async def _raise_unexpected():
             raise RuntimeError("something broke")
-
-        async with AsyncClient(
-            transport=ASGITransport(app=self.app, raise_app_exceptions=False), base_url="http://test"
-        ) as client:
-            self.client = client
-            yield
 
     @pytest.mark.parametrize("path,expected_status,error_msg", [
         ("/test-not-found", 404, "AgentNotFoundError: agent 'x' not found"),
@@ -126,3 +136,53 @@ class TestExceptionHandlers:
         response = await self.client.get(path)
         assert response.status_code == expected_status
         assert response.json()["detail"] == error_msg
+
+
+class TestTrustedHost(_BaseAppClientTest):
+    """TrustedHostMiddleware rejects requests with unexpected Host headers."""
+
+    @pytest.mark.parametrize("host,expected_status", [
+        ("localhost", 200),
+        ("127.0.0.1", 200),
+        ("localhost:8000", 200),  # port stripped before comparison — all ports on allowed hosts pass
+        ("evil.com", 400),
+        ("notlocalhost", 400),
+        ("localhost.but_actually_evil", 400)
+    ])
+    async def test_host_validation(self, host: str, expected_status: int) -> None:
+        response = await self.client.get("/health", headers={"host": host})
+        assert response.status_code == expected_status
+
+
+class TestOriginValidation(_BaseAppClientTest):
+    """OriginValidationMiddleware rejects browser cross-site requests via Origin header."""
+
+    @pytest.mark.parametrize("origin,expected_status", [
+        (None, 200),                              # no Origin — direct API call, always allowed
+        ("http://localhost", 200),
+        ("http://localhost:8000", 200),           # port is ignored in host comparison
+        ("http://127.0.0.1", 200),
+        ("http://127.0.0.1:8000", 200),
+        ("http://evil.com", 403),
+        ("http://notlocalhost", 403),
+        ("http://localhost.evil.com", 403),       # subdomain of allowed host — must not pass
+        ("http://not.localhost", 403),
+        ("null", 403),                            # If the origin field is present it MUST be populated with a known valid origin.
+        ("", 403)
+    ])
+    async def test_origin_validation(self, origin: str | None, expected_status: int) -> None:
+        headers = {"origin": origin} if origin is not None else {}
+        response = await self.client.get("/health", headers=headers)
+        assert response.status_code == expected_status
+
+    async def test_valid_origin_still_rejected_on_bad_host(self) -> None:
+        response = await self.client.get(
+            "/health", headers={"host": "evil.com", "origin": "http://localhost:8000"}
+        )
+        assert response.status_code == 400
+
+    async def test_valid_host_still_rejected_on_bad_origin(self) -> None:
+        response = await self.client.get(
+            "/health", headers={"host": "localhost", "origin": "http://evil.com"}
+        )
+        assert response.status_code == 403
