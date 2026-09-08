@@ -43,4 +43,4 @@ extraPaths = ["."]
 agent-home-acp = "acp.__main__:cli"
 
 [tool.hatch.build.targets.wheel]
-packages = ["api", "agent", "memory", "messages", "db", "acp", "mcp_tools]
+packages = ["api", "agent", "memory", "messages", "db", "acp", "mcp_tools"]
