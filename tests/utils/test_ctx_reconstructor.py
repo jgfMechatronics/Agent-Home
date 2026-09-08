@@ -242,7 +242,7 @@ class TestReconstructContextIntegration:
             factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
             async with factory.build_agent_and_deps() as (pydantic_agent, deps):
                 # Capture expected tool definitions from the live agent (ground truth)
-                expected_tool_definitions = _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
+                expected_tool_definitions = await _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
                 async for _ in run_stateful_agent(pydantic_agent, deps, agent_app_state_reg[self.agent_record.id], prompt):
                     pass
 
