@@ -973,6 +973,6 @@ class TestFormatInterAgentMessage:
     def test_format_structure(self):
         """Message has header with sender, newline, then content."""
         result = _format_inter_agent_message("alice", "hello world")
-        assert result.startswith("[INTER AGENT MESSAGE. From: alice]")
+        assert result.startswith("[INTER AGENT MESSAGE. If you want to reply, use the 'send_message' tool. From: alice]")
         header, _, body = result.partition("\n")
         assert body == "hello world"
