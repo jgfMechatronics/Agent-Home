@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from starlette.datastructures import Headers
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -45,10 +46,12 @@ class OriginValidationMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        origin = dict(scope.get("headers", [])).get(b"origin")
-        if origin is not None and urlparse(origin.decode()).hostname not in _ALLOWED_ORIGIN_HOSTS:
-            response = Response(status_code=403)
-            await response(scope, receive, send)
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        origin = Headers(scope=scope).get("origin")
+        if origin is not None and urlparse(origin).hostname not in _ALLOWED_ORIGIN_HOSTS:
+            await Response(status_code=403)(scope, receive, send)
             return
         await self.app(scope, receive, send)
 
