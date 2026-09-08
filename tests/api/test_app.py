@@ -166,8 +166,23 @@ class TestOriginValidation(_BaseAppClientTest):
         ("http://evil.com", 403),
         ("http://notlocalhost", 403),
         ("http://localhost.evil.com", 403),       # subdomain of allowed host — must not pass
+        ("http://not.localhost", 403),
+        ("null", 403),                            # If the origin field is present it MUST be populated with a known valid origin.
+        ("", 403)
     ])
     async def test_origin_validation(self, origin: str | None, expected_status: int) -> None:
         headers = {"origin": origin} if origin is not None else {}
         response = await self.client.get("/health", headers=headers)
         assert response.status_code == expected_status
+
+    async def test_valid_origin_still_rejected_on_bad_host(self) -> None:
+        response = await self.client.get(
+            "/health", headers={"host": "evil.com", "origin": "http://localhost:8000"}
+        )
+        assert response.status_code == 400
+
+    async def test_valid_host_still_rejected_on_bad_origin(self) -> None:
+        response = await self.client.get(
+            "/health", headers={"host": "localhost", "origin": "http://evil.com"}
+        )
+        assert response.status_code == 403
