@@ -156,12 +156,12 @@ class TestCompactionWarnerIntegration:
 
 # Expected threshold fraction — tests will fail if implementation constant diverges.
 # This makes the dependency explicit rather than hiding it in magic numbers.
-EXPECTED_WARNING_THRESHOLD = 0.75
+EXPECTED_WARNING_THRESHOLD = 0.90
 
 SMALL_COMPACT_LIMIT = 100
 LARGE_COMPACT_LIMIT = 1000
-SMALL_THRESHOLD = int(SMALL_COMPACT_LIMIT * EXPECTED_WARNING_THRESHOLD)  # 75
-LARGE_THRESHOLD = int(LARGE_COMPACT_LIMIT * EXPECTED_WARNING_THRESHOLD)  # 750
+SMALL_THRESHOLD = int(SMALL_COMPACT_LIMIT * EXPECTED_WARNING_THRESHOLD)
+LARGE_THRESHOLD = int(LARGE_COMPACT_LIMIT * EXPECTED_WARNING_THRESHOLD)
 
 
 @pytest.mark.asyncio
@@ -169,12 +169,12 @@ class TestCompactionWarnerUnit:
     """Unit tests for CompactionWarner threshold logic and compaction flag reset."""
 
     @pytest.mark.parametrize("tokens,soft_limit,should_warn", [
-        (SMALL_THRESHOLD - 1, SMALL_COMPACT_LIMIT, False),    # Below (74)
-        (SMALL_THRESHOLD, SMALL_COMPACT_LIMIT, True),         # At (75)
-        (SMALL_THRESHOLD + 1, SMALL_COMPACT_LIMIT, True),     # Above (76)
-        (LARGE_THRESHOLD - 1, LARGE_COMPACT_LIMIT, False),    # Below (749)
-        (LARGE_THRESHOLD, LARGE_COMPACT_LIMIT, True),         # At (750)
-        (LARGE_THRESHOLD + 1, LARGE_COMPACT_LIMIT, True),     # Above (751)
+        (SMALL_THRESHOLD - 1, SMALL_COMPACT_LIMIT, False),    # Below
+        (SMALL_THRESHOLD, SMALL_COMPACT_LIMIT, True),         # At
+        (SMALL_THRESHOLD + 1, SMALL_COMPACT_LIMIT, True),     # Above
+        (LARGE_THRESHOLD - 1, LARGE_COMPACT_LIMIT, False),    # Below (large limit)
+        (LARGE_THRESHOLD, LARGE_COMPACT_LIMIT, True),         # At (large limit)
+        (LARGE_THRESHOLD + 1, LARGE_COMPACT_LIMIT, True),     # Above (large limit)
         (LARGE_COMPACT_LIMIT + 1, LARGE_COMPACT_LIMIT, True), # Probably shouldn't be possible
         (0, SMALL_COMPACT_LIMIT, False),                      # Zero tokens
     ])
