@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 DB_PATH = os.environ["AGENT_HOME_DB_PATH"]
 
 
-_ALLOWED_ORIGIN_HOSTS = {"localhost", "127.0.0.1"}
+_ALLOWED_HOSTS: tuple[str, ...] = ("localhost", "127.0.0.1")
+_ALLOWED_ORIGINS: tuple[str, ...] = _ALLOWED_HOSTS
 
 
 class OriginValidationMiddleware:
@@ -50,7 +51,7 @@ class OriginValidationMiddleware:
             await self.app(scope, receive, send)
             return
         origin = Headers(scope=scope).get("origin")
-        if origin is not None and urlparse(origin).hostname not in _ALLOWED_ORIGIN_HOSTS:
+        if origin is not None and urlparse(origin).hostname not in _ALLOWED_ORIGINS:
             await Response(status_code=403)(scope, receive, send)
             return
         await self.app(scope, receive, send)
@@ -119,7 +120,7 @@ def _create_app() -> FastAPI:
     app.add_exception_handler(AgentLockedError, agent_locked_handler)
     app.add_exception_handler(Exception, unexpected_error_handler)
     # Prevent DNS rebinding (validates Host header)
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=_ALLOWED_HOSTS)
     # Prevent CSRF (validates Origin header on browser-originated requests)
     app.add_middleware(OriginValidationMiddleware)
 
