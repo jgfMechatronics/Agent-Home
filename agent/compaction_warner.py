@@ -1,6 +1,6 @@
 """CompactionWarner capability — warns agent when approaching compaction threshold.
 
-Injects a warning message when context tokens exceed 75% of soft_compaction_limit.
+Injects a warning message when context tokens exceed COMPACTION_WARNING_THRESHOLD_FRACTION of soft_compaction_limit.
 Fire-once behavior: only warns once per compaction cycle (flag resets when compaction runs).
 """
 from dataclasses import dataclass
@@ -19,7 +19,7 @@ from messages.messages import format_system_alert
 from agent.types import AgentDeps
 
 
-COMPACTION_WARNING_THRESHOLD_FRACTION = 0.75
+COMPACTION_WARNING_THRESHOLD_FRACTION = 0.90
 
 COMPACTION_WARNING_TEXT = format_system_alert("""\
 You are nearing compaction. Oldest messages at the beginning of your context will soon be evicted.
@@ -36,7 +36,7 @@ If your memory is already up to date with your active context, you can ignore th
 class CompactionWarner(AbstractCapability[AgentDeps]):
     """Capability that warns the agent when approaching compaction threshold.
     
-    Fires once when context tokens cross the warning threshold (75% of soft limit).
+    Fires once when context tokens cross COMPACTION_WARNING_THRESHOLD_FRACTION of soft_compaction_limit.
     Resets when compaction runs (via compaction_warning_fired flag on AgentRecord).
     """
 
