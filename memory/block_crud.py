@@ -192,3 +192,21 @@ async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str], commit: bo
         blocks_by_label[label].position = position
 
     await _persist(deps, commit)
+
+
+async def update_block_settings(
+    deps: AgentDeps,
+    label: str,
+    new_label: str,
+    description: str,
+    char_limit: int,
+    position: int,
+    commit: bool = True,
+) -> MemoryBlockRecord:
+    """
+    Update block settings (label, description, char_limit, position).
+    
+    Raises BlockNotFoundError if block doesn't exist.
+    TODO: Add validation for label conflicts, position conflicts, etc.
+    """
+    raise NotImplementedError("update_block_settings not yet implemented")

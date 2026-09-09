@@ -42,6 +42,26 @@ class UpdateBlockContentRequest(BaseModel):
     content: str
 
 
+class BlockSettingsSchema(BaseModel):
+    """Settings/metadata for a memory block (excludes content and timestamps).
+    
+    Used for both GET response and PUT request — edit-in-place workflow.
+    """
+    label: str
+    description: str
+    char_limit: int
+    position: int
+
+    @classmethod
+    def from_record(cls, block: "MemoryBlockRecord") -> "BlockSettingsSchema":
+        return cls(
+            label=block.label,
+            description=block.description,
+            char_limit=block.char_limit,
+            position=block.position,
+        )
+
+
 # --- Response Schemas ---
 
 class AgentMetadataResponse(BaseModel):

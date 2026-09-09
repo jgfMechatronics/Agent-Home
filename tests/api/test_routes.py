@@ -32,7 +32,7 @@ from api.fastapi_deps import get_agent_deps
 from agent.crud import create_agent_record
 from conftest import make_deps, SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
-from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
+from api.schemas import AgentMetadataResponse, BlockSettingsSchema, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, DuplicateBlockError
 
 
@@ -632,3 +632,58 @@ class TestUpdateBlockContent(_MemoryBlockEndpointBase):
 
         assert response.status_code == 400
         assert "char limit" in response.json()["detail"].lower()
+
+
+class TestGetBlockSettings(_MemoryBlockEndpointBase):
+    """GET /agents/{agent_id}/memory/blocks/{label}/settings — get block settings."""
+    crud_patch_target = "api.routes.get_block"
+    crud_attr_name = "mock_get_block"
+
+    async def test_returns_settings_for_existing_block(self, client: AsyncClient):
+        """Returns 200 with settings schema for existing block."""
+        target_block = self.blocks[0]
+        self.mock_get_block.return_value = target_block
+
+        response = await client.get(
+            f"/agents/{self.agent_record.id}/memory/blocks/{target_block.label}/settings",
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data == {
+            "label": target_block.label,
+            "description": target_block.description,
+            "char_limit": target_block.char_limit,
+            "position": target_block.position,
+        }
+
+
+class TestUpdateBlockSettings(_MemoryBlockEndpointBase):
+    """PUT /agents/{agent_id}/memory/blocks/{label}/settings — update block settings."""
+    crud_patch_target = "api.routes.update_block_settings"
+    crud_attr_name = "mock_update_block_settings"
+
+    async def test_calls_update_block_settings_and_returns_200(self, client: AsyncClient):
+        """Successful update calls update_block_settings and returns 200 with updated settings."""
+        target_block = self.blocks[0]
+        new_settings = {
+            "label": "renamed-block",
+            "description": "Updated description.",
+            "char_limit": 30000,
+            "position": 5,
+        }
+        # Mutate fixture to represent updated state
+        target_block.label = new_settings["label"]
+        target_block.description = new_settings["description"]
+        target_block.char_limit = new_settings["char_limit"]
+        target_block.position = new_settings["position"]
+        self.mock_update_block_settings.return_value = target_block
+
+        response = await client.put(
+            f"/agents/{self.agent_record.id}/memory/blocks/{self.blocks[0].label}/settings",
+            json=new_settings,
+        )
+
+        assert response.status_code == 200
+        self.mock_update_block_settings.assert_called_once()
+        assert response.json() == new_settings

@@ -25,6 +25,7 @@ from agent.runner import run_stateful_agent
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps
 from api.schemas import (
     AgentMetadataResponse,
+    BlockSettingsSchema,
     CoreMemoryResponse,
     CreateAgentRequest,
     CreateMemoryBlockRequest,
@@ -34,7 +35,16 @@ from api.schemas import (
     SystemInstructionsResponse,
     UpdateBlockContentRequest,
 )
-from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, DuplicateBlockError, create_block, get_blocks, update_block
+from memory.block_crud import (
+    BlockNotFoundError,
+    ContentExceedsLimitError,
+    DuplicateBlockError,
+    create_block,
+    get_block,
+    get_blocks,
+    update_block,
+    update_block_settings,
+)
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import load_messages
 
