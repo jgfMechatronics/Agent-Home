@@ -595,16 +595,10 @@ class TestUpdateBlockContent(_MemoryBlockEndpointBase):
     async def test_calls_update_block_and_returns_200(self, client: AsyncClient):
         """Successful update calls update_block and returns 200 with updated block."""
         target_block = self.blocks[0]
-        mock_updated_block = MemoryBlockRecord(
-            agent_id=self.agent_record.id,
-            label=target_block.label,
-            description=target_block.description,
-            content=self._UPDATED_CONTENT,
-            char_limit=target_block.char_limit,
-            position=target_block.position,
-            updated_at=self._MOCK_UPDATED_AT,
-        )
-        self.mock_update_block.return_value = mock_updated_block
+        # Mutate fixture to represent updated state (not persisted, just mock return value)
+        target_block.content = self._UPDATED_CONTENT
+        target_block.updated_at = self._MOCK_UPDATED_AT
+        setattr(self, self.crud_attr_name, target_block)
 
         response = await client.put(
             f"/agents/{self.agent_record.id}/memory/blocks/{target_block.label}/content",
@@ -613,4 +607,4 @@ class TestUpdateBlockContent(_MemoryBlockEndpointBase):
 
         assert response.status_code == 200
         self.mock_update_block.assert_called_once()
-        assert MemoryBlockResponse.model_validate(response.json()) == MemoryBlockResponse.from_record(mock_updated_block)
+        assert MemoryBlockResponse.model_validate(response.json()) == MemoryBlockResponse.from_record(target_block)
