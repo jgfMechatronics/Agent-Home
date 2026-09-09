@@ -32,8 +32,9 @@ from api.schemas import (
     MessageRequest,
     MessagesResponse,
     SystemInstructionsResponse,
+    UpdateBlockContentRequest,
 )
-from memory.block_crud import DuplicateBlockError, create_block, get_blocks
+from memory.block_crud import DuplicateBlockError, create_block, get_blocks, update_block
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import load_messages
 
@@ -223,6 +224,18 @@ async def create_memory_block(
         block = await create_block(deps, body.label, body.content, body.description, body.char_limit)
     except DuplicateBlockError as e:
         raise HTTPException(status_code=400, detail=f"Duplicate block: {e}") from e
+    return MemoryBlockResponse.from_record(block)
+
+
+@router.put("/{agent_id}/memory/blocks/{label}/content")
+async def update_block_content(
+    agent_id: str,
+    label: str,
+    body: UpdateBlockContentRequest,
+    deps: AgentDeps = Depends(get_agent_deps),
+) -> MemoryBlockResponse:
+    """Update the content of a memory block."""
+    block = await update_block(deps, label, body.content)
     return MemoryBlockResponse.from_record(block)
 
 
