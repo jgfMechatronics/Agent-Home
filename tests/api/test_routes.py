@@ -417,7 +417,7 @@ _VALID_CONFIG_BODY = {
 }
 _PUT_ENDPOINT_PARAMS = [
     ("/agents/{agent_id}/config", _VALID_CONFIG_BODY),
-    ("/agents/{agent_id}/system-instructions", "some instructions"),
+    ("/agents/{agent_id}/system-instructions", {"system_instructions": "some instructions"}),
     # Memory block routes
     ("/agents/{agent_id}/memory/blocks/some-label/content", {"content": "new content"}),
     # TODO: Add these when implemented
@@ -598,7 +598,7 @@ class TestUpdateBlockContent(_MemoryBlockEndpointBase):
         # Mutate fixture to represent updated state (not persisted, just mock return value)
         target_block.content = self._UPDATED_CONTENT
         target_block.updated_at = self._MOCK_UPDATED_AT
-        setattr(self, self.crud_attr_name, target_block)
+        self.mock_update_block.return_value = target_block
 
         response = await client.put(
             f"/agents/{self.agent_record.id}/memory/blocks/{target_block.label}/content",
