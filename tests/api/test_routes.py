@@ -418,6 +418,11 @@ _VALID_CONFIG_BODY = {
 _PUT_ENDPOINT_PARAMS = [
     ("/agents/{agent_id}/config", _VALID_CONFIG_BODY),
     ("/agents/{agent_id}/system-instructions", "some instructions"),
+    # Memory block routes
+    ("/agents/{agent_id}/memory/blocks/some-label/content", {"content": "new content"}),
+    # TODO: Add these when implemented
+    # ("/agents/{agent_id}/memory/blocks/some-label", {"description": "new desc"}),  # block settings
+    # ("/agents/{agent_id}/memory/blocks/order", ["label1", "label2"]),  # block reorder
 ]
 
 
@@ -444,6 +449,18 @@ class TestNotFound:
         """All PUT endpoints with agent_id return 404 for unknown agents."""
         url = path.format(agent_id=uuid4())
         response = await client.put(url, json=body)
+        assert response.status_code == 404
+
+    @pytest.mark.parametrize("path,body", [
+        ("/agents/{agent_id}/memory/blocks", {"label": "test", "content": "content"}),
+        # TODO: Add more POST endpoints as they're created
+    ])
+    async def test_post_endpoints_return_404_for_unknown_agent(
+        self, client: AsyncClient, path: str, body
+    ):
+        """All POST endpoints with agent_id return 404 for unknown agents."""
+        url = path.format(agent_id=uuid4())
+        response = await client.post(url, json=body)
         assert response.status_code == 404
 
 
@@ -478,7 +495,6 @@ class _MemoryBlockEndpointBase:
     - self.agent_record: The agent from agent_with_blocks
     - self.blocks: The pre-existing blocks from agent_with_blocks
     - self.mock_session: A mock session
-    - self.configure_mock_get_agent_deps(raise_exc=None): Configure dep override behavior
     - self.<crud_attr_name>: The mocked crud function
     """
     crud_patch_target: str
@@ -491,16 +507,10 @@ class _MemoryBlockEndpointBase:
         self.blocks = agent_with_blocks["blocks"]
         self.mock_session = Mock()
 
-        def _configure(raise_exc=None):
-            async def _mock_dep():
-                if raise_exc is not None:
-                    raise raise_exc
-                yield make_deps(self.mock_session, self.agent_record)
+        async def _mock_dep():
+            yield make_deps(self.mock_session, self.agent_record)
 
-            app.dependency_overrides[get_agent_deps] = _mock_dep
-
-        self.configure_mock_get_agent_deps = _configure
-        _configure()  # default: happy path
+        app.dependency_overrides[get_agent_deps] = _mock_dep
 
         with patch(self.crud_patch_target, new_callable=AsyncMock) as mock:
             setattr(self, self.crud_attr_name, mock)
@@ -538,20 +548,7 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
         self.mock_create_block.assert_called_once()
         assert MemoryBlockResponse.model_validate(response.json()) == MemoryBlockResponse.from_record(mock_block_record)
 
-    async def test_returns_404_for_unknown_agent(self, client: AsyncClient):
-        """
-        Returns 404 before calling create_block when agent does not exist.
-        Exception is propagated by the route and caught by app level handler
-        """
-        self.configure_mock_get_agent_deps(raise_exc=AgentNotFoundError(f"Agent not found"))
-
-        response = await client.post(
-            f"/agents/{uuid4()}/memory/blocks",
-            json=self._VALID_BODY,
-        )
-
-        assert response.status_code == 404
-        self.mock_create_block.assert_not_called()
+    # 404 tested via parametrized TestNotFound
 
     async def test_returns_400_for_duplicate_block(self, client: AsyncClient):
         """
