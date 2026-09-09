@@ -568,3 +568,57 @@ class TestCreateMemoryBlock:
 
         assert response.status_code == 500
         assert response.json()["detail"] == "RuntimeError: DB failure"
+
+
+class TestUpdateBlockContent:
+    """PUT /agents/{agent_id}/memory/blocks/{label}/content — update block content."""
+
+    _UPDATED_CONTENT = "This is the new content."
+    _MOCK_UPDATED_AT = datetime(2026, 9, 10, 12, 0, 0)
+
+    @pytest.fixture(autouse=True)
+    def mock_update_block_dep(self, app: FastAPI, agent_with_blocks: dict):
+        """Overrides get_agent_deps and patches update_block for all tests."""
+        self.agent_record = agent_with_blocks["agent"]
+        self.blocks = agent_with_blocks["blocks"]
+        self.mock_session = Mock()
+
+        def _configure(raise_exc=None):
+            async def _mock_dep():
+                if raise_exc is not None:
+                    raise raise_exc
+                yield make_deps(self.mock_session, self.agent_record)
+
+            app.dependency_overrides[get_agent_deps] = _mock_dep
+
+        self.configure_mock_get_agent_deps = _configure
+        _configure()  # default: happy path
+
+        with patch("api.routes.update_block", new_callable=AsyncMock) as mock:
+            self.mock_update_block = mock
+            yield
+
+        app.dependency_overrides.pop(get_agent_deps)
+
+    async def test_calls_update_block_and_returns_200(self, client: AsyncClient):
+        """Successful update calls update_block and returns 200 with updated block."""
+        target_block = self.blocks[0]
+        mock_updated_block = MemoryBlockRecord(
+            agent_id=self.agent_record.id,
+            label=target_block.label,
+            description=target_block.description,
+            content=self._UPDATED_CONTENT,
+            char_limit=target_block.char_limit,
+            position=target_block.position,
+            updated_at=self._MOCK_UPDATED_AT,
+        )
+        self.mock_update_block.return_value = mock_updated_block
+
+        response = await client.put(
+            f"/agents/{self.agent_record.id}/memory/blocks/{target_block.label}/content",
+            json={"content": self._UPDATED_CONTENT},
+        )
+
+        assert response.status_code == 200
+        self.mock_update_block.assert_called_once()
+        assert MemoryBlockResponse.model_validate(response.json()) == MemoryBlockResponse.from_record(mock_updated_block)
