@@ -19,7 +19,7 @@ from collections.abc import Sequence
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import AgentDeps
+from agent.types import AgentDeps, BlockSettings
 from db.models import MemoryBlockRecord
 
 
@@ -197,14 +197,17 @@ async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str], commit: bo
 async def update_block_settings(
     deps: AgentDeps,
     label: str,
-    new_label: str,
-    description: str,
-    char_limit: int,
-    position: int,
+    settings: BlockSettings,
     commit: bool = True,
 ) -> MemoryBlockRecord:
     """
     Update block settings (label, description, char_limit, position).
+    
+    Args:
+        deps: Agent dependencies (proves caller holds lock)
+        label: Current label of block to update (from URL path)
+        settings: New settings to apply (settings.label may differ for rename)
+        commit: Whether to commit transaction
     
     Raises BlockNotFoundError if block doesn't exist.
     TODO: Add validation for label conflicts, position conflicts, etc.
