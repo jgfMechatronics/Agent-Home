@@ -467,8 +467,52 @@ class TestAgentLocked:
         assert response.json()["detail"] == f"AgentLockedError: Agent {agent_record.id!r} did not become available within {LOCK_TIMEOUT_FAST}s"
 
 
-class TestCreateMemoryBlock:
+class _MemoryBlockEndpointBase:
+    """Base for memory block endpoint tests that patch a crud function and override get_agent_deps.
+    
+    Subclasses must define:
+    - crud_patch_target: str — the crud function to patch (e.g. "api.routes.create_block")
+    - crud_attr_name: str — attribute name for the mock (e.g. "mock_create_block")
+    
+    Provides:
+    - self.agent_record: The agent from agent_with_blocks
+    - self.blocks: The pre-existing blocks from agent_with_blocks
+    - self.mock_session: A mock session
+    - self.configure_mock_get_agent_deps(raise_exc=None): Configure dep override behavior
+    - self.<crud_attr_name>: The mocked crud function
+    """
+    crud_patch_target: str
+    crud_attr_name: str
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, app: FastAPI, agent_with_blocks: dict):
+        """Common setup: override get_agent_deps, patch crud function, cleanup."""
+        self.agent_record = agent_with_blocks["agent"]
+        self.blocks = agent_with_blocks["blocks"]
+        self.mock_session = Mock()
+
+        def _configure(raise_exc=None):
+            async def _mock_dep():
+                if raise_exc is not None:
+                    raise raise_exc
+                yield make_deps(self.mock_session, self.agent_record)
+
+            app.dependency_overrides[get_agent_deps] = _mock_dep
+
+        self.configure_mock_get_agent_deps = _configure
+        _configure()  # default: happy path
+
+        with patch(self.crud_patch_target, new_callable=AsyncMock) as mock:
+            setattr(self, self.crud_attr_name, mock)
+            yield
+
+        app.dependency_overrides.pop(get_agent_deps)
+
+
+class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
     """POST /agents/{agent_id}/memory/blocks — create a memory block."""
+    crud_patch_target = "api.routes.create_block"
+    crud_attr_name = "mock_create_block"
 
     _VALID_BODY = {
         "label": "notes",
@@ -477,33 +521,6 @@ class TestCreateMemoryBlock:
         "char_limit": 5000,
     }
     _MOCK_UPDATED_AT = datetime(2026, 1, 1, 12, 0, 0)
-
-    @pytest.fixture(autouse=True)
-    def mock_create_block_dep(self, app: FastAPI, agent_record: AgentRecord):
-        """Overrides get_agent_deps and patches create_block for all tests.
-
-        Provides self.configure_mock_get_agent_deps() to change dep behavior (e.g. raise
-        AgentNotFoundError for 404 tests). Default: yields a valid AgentDeps.
-        """
-        self.agent_record = agent_record
-        self.mock_session = Mock()
-
-        def _configure(raise_exc=None):
-            async def _mock_dep():
-                if raise_exc is not None:
-                    raise raise_exc
-                yield make_deps(self.mock_session, agent_record)
-                
-            app.dependency_overrides[get_agent_deps] = _mock_dep
-
-        self.configure_mock_get_agent_deps = _configure
-        _configure()  # default: happy path
-
-        with patch("api.routes.create_block", new_callable=AsyncMock) as mock:
-            self.mock_create_block = mock
-            yield
-
-        app.dependency_overrides.pop(get_agent_deps)
 
     async def test_calls_create_block_and_returns_201(self, client: AsyncClient):
         """Successful creation calls create_block and returns 201 with block data."""
@@ -570,35 +587,13 @@ class TestCreateMemoryBlock:
         assert response.json()["detail"] == "RuntimeError: DB failure"
 
 
-class TestUpdateBlockContent:
+class TestUpdateBlockContent(_MemoryBlockEndpointBase):
     """PUT /agents/{agent_id}/memory/blocks/{label}/content — update block content."""
+    crud_patch_target = "api.routes.update_block"
+    crud_attr_name = "mock_update_block"
 
     _UPDATED_CONTENT = "This is the new content."
     _MOCK_UPDATED_AT = datetime(2026, 9, 10, 12, 0, 0)
-
-    @pytest.fixture(autouse=True)
-    def mock_update_block_dep(self, app: FastAPI, agent_with_blocks: dict):
-        """Overrides get_agent_deps and patches update_block for all tests."""
-        self.agent_record = agent_with_blocks["agent"]
-        self.blocks = agent_with_blocks["blocks"]
-        self.mock_session = Mock()
-
-        def _configure(raise_exc=None):
-            async def _mock_dep():
-                if raise_exc is not None:
-                    raise raise_exc
-                yield make_deps(self.mock_session, self.agent_record)
-
-            app.dependency_overrides[get_agent_deps] = _mock_dep
-
-        self.configure_mock_get_agent_deps = _configure
-        _configure()  # default: happy path
-
-        with patch("api.routes.update_block", new_callable=AsyncMock) as mock:
-            self.mock_update_block = mock
-            yield
-
-        app.dependency_overrides.pop(get_agent_deps)
 
     async def test_calls_update_block_and_returns_200(self, client: AsyncClient):
         """Successful update calls update_block and returns 200 with updated block."""
