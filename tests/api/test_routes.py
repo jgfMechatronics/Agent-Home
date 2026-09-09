@@ -420,9 +420,9 @@ _PUT_ENDPOINT_PARAMS = [
     ("/agents/{agent_id}/system-instructions", {"system_instructions": "some instructions"}),
     # Memory block routes
     ("/agents/{agent_id}/memory/blocks/some-label/content", {"content": "new content"}),
-    # TODO: Add these when implemented
-    # ("/agents/{agent_id}/memory/blocks/some-label", {"description": "new desc"}),  # block settings
-    # ("/agents/{agent_id}/memory/blocks/order", ["label1", "label2"]),  # block reorder
+    ("/agents/{agent_id}/memory/blocks/some-label/settings", {"description": "new desc"}),
+    # TODO: Add when implemented
+    # ("/agents/{agent_id}/memory/blocks/order", ["label1", "label2"]),
 ]
 
 
@@ -435,6 +435,7 @@ class TestNotFound:
         "/agents/{agent_id}/messages",
         "/agents/{agent_id}/config",
         "/agents/{agent_id}/system-instructions",
+        "/agents/{agent_id}/memory/blocks/some-label/settings",
     ])
     async def test_get_endpoints_return_404_for_unknown_agent(self, client: AsyncClient, path: str):
         """All GET endpoints with agent_id return 404 for unknown agents."""
@@ -661,6 +662,17 @@ class TestGetBlockSettings(_MemoryBlockEndpointBase):
             "position": target_block.position,
         }
 
+    async def test_returns_404_for_unknown_label(self, client: AsyncClient):
+        """Returns 404 when block label doesn't exist for this agent."""
+        self.mock_get_block.return_value = None
+
+        response = await client.get(
+            f"/agents/{self.agent_record.id}/memory/blocks/nonexistent-label/settings",
+        )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
 
 class TestUpdateBlockSettings(_MemoryBlockEndpointBase):
     """PUT /agents/{agent_id}/memory/blocks/{label}/settings — update block settings."""
@@ -706,3 +718,15 @@ class TestUpdateBlockSettings(_MemoryBlockEndpointBase):
         assert call_args.args[2] == BlockSettings(**request_settings)  # settings object
         # Verify route returns helper's output (which differs from request)
         assert response.json() == BlockSettings.from_record(target_block).model_dump()
+
+    async def test_returns_404_for_unknown_label(self, client: AsyncClient):
+        """Returns 404 when block label doesn't exist for this agent."""
+        self.mock_update_block_settings.side_effect = BlockNotFoundError("block not found")
+
+        response = await client.put(
+            f"/agents/{self.agent_record.id}/memory/blocks/nonexistent-label/settings",
+            json={"label": "nonexistent-label", "description": "new desc", "char_limit": 5000, "position": 0},
+        )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
