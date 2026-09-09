@@ -27,12 +27,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Local
 from agent.factory import AgentNotFoundError, LOCK_TIMEOUT_FAST
-from agent.types import AgentAppState, AgentConfig, AgentDeps
+from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings
 from api.fastapi_deps import get_agent_deps
 from agent.crud import create_agent_record
 from conftest import make_deps, SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
-from api.schemas import AgentMetadataResponse, BlockSettingsSchema, CoreMemoryResponse, MemoryBlockResponse
+from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, DuplicateBlockError
 
 
@@ -607,6 +607,10 @@ class TestUpdateBlockContent(_MemoryBlockEndpointBase):
 
         assert response.status_code == 200
         self.mock_update_block.assert_called_once()
+        call_args = self.mock_update_block.call_args
+        assert call_args.args[0].agent_id == self.agent_record.id
+        assert call_args.args[1] == target_block.label
+        assert call_args.args[2] == self._UPDATED_CONTENT
         assert MemoryBlockResponse.model_validate(response.json()) == MemoryBlockResponse.from_record(target_block)
 
     async def test_returns_404_for_unknown_label(self, client: AsyncClient):
@@ -664,26 +668,41 @@ class TestUpdateBlockSettings(_MemoryBlockEndpointBase):
     crud_attr_name = "mock_update_block_settings"
 
     async def test_calls_update_block_settings_and_returns_200(self, client: AsyncClient):
-        """Successful update calls update_block_settings and returns 200 with updated settings."""
+        """Successful update calls update_block_settings and returns 200 with helper's output.
+        
+        Input and output intentionally differ to verify route returns the helper's result,
+        not just echoing the request. In practice they'd usually match, but the route's job
+        is to pass through whatever the helper returns.
+        """
         target_block = self.blocks[0]
-        new_settings = {
+        original_label = target_block.label
+        
+        # Request body — what the client sends
+        request_settings = {
             "label": "renamed-block",
             "description": "Updated description.",
             "char_limit": 30000,
             "position": 5,
         }
-        # Mutate fixture to represent updated state
-        target_block.label = new_settings["label"]
-        target_block.description = new_settings["description"]
-        target_block.char_limit = new_settings["char_limit"]
-        target_block.position = new_settings["position"]
+        
+        # Helper's return — intentionally different to prove route returns this, not request
+        target_block.label = request_settings["label"]
+        target_block.description = "Helper changed this description."  # Different!
+        target_block.char_limit = request_settings["char_limit"]
+        target_block.position = 99  # Different!
         self.mock_update_block_settings.return_value = target_block
 
         response = await client.put(
-            f"/agents/{self.agent_record.id}/memory/blocks/{self.blocks[0].label}/settings",
-            json=new_settings,
+            f"/agents/{self.agent_record.id}/memory/blocks/{original_label}/settings",
+            json=request_settings,
         )
 
         assert response.status_code == 200
+        # Verify route called helper with correct args
         self.mock_update_block_settings.assert_called_once()
-        assert response.json() == new_settings
+        call_args = self.mock_update_block_settings.call_args
+        assert call_args.args[0].agent_id == self.agent_record.id  # deps
+        assert call_args.args[1] == original_label  # current label from URL
+        assert call_args.args[2] == BlockSettings(**request_settings)  # settings object
+        # Verify route returns helper's output (which differs from request)
+        assert response.json() == BlockSettings.from_record(target_block).model_dump()
