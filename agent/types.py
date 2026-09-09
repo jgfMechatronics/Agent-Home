@@ -76,7 +76,7 @@ class AgentConfig(BaseModel):
     
     Optional fields:
     - toolset_names: List of toolset names to attach (e.g., ["mcp_filesystem"]). Typically used for attaching MCP toolsets
-    - compaction_target_fraction: Target context size after compaction as fraction of soft_compaction_limit
+    - compaction_target_fraction: Fraction of current message tokens to retain after compaction (not a fraction of soft_compaction_limit)
     - is_deletable: Whether agent can be deleted (default False)
     - retries: how many times the agent can retry a failed tool call
     - thinking_enabled
