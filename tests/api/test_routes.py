@@ -33,7 +33,7 @@ from agent.crud import create_agent_record
 from conftest import make_deps, SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
-from memory.block_crud import DuplicateBlockError
+from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, DuplicateBlockError
 
 
 # --- Test Classes ---
@@ -608,3 +608,27 @@ class TestUpdateBlockContent(_MemoryBlockEndpointBase):
         assert response.status_code == 200
         self.mock_update_block.assert_called_once()
         assert MemoryBlockResponse.model_validate(response.json()) == MemoryBlockResponse.from_record(target_block)
+
+    async def test_returns_404_for_unknown_label(self, client: AsyncClient):
+        """Returns 404 when block label doesn't exist for this agent."""
+        self.mock_update_block.side_effect = BlockNotFoundError("block not found")
+
+        response = await client.put(
+            f"/agents/{self.agent_record.id}/memory/blocks/nonexistent-label/content",
+            json={"content": "new content"},
+        )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    async def test_returns_400_for_content_over_limit(self, client: AsyncClient):
+        """Returns 400 when new content exceeds char_limit."""
+        self.mock_update_block.side_effect = ContentExceedsLimitError("new content exceeds char limit")
+
+        response = await client.put(
+            f"/agents/{self.agent_record.id}/memory/blocks/{self.blocks[0].label}/content",
+            json={"content": "x" * 100000},
+        )
+
+        assert response.status_code == 400
+        assert "char limit" in response.json()["detail"].lower()

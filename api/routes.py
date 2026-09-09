@@ -34,7 +34,7 @@ from api.schemas import (
     SystemInstructionsResponse,
     UpdateBlockContentRequest,
 )
-from memory.block_crud import DuplicateBlockError, create_block, get_blocks, update_block
+from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, DuplicateBlockError, create_block, get_blocks, update_block
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import load_messages
 
@@ -235,7 +235,12 @@ async def update_block_content(
     deps: AgentDeps = Depends(get_agent_deps),
 ) -> MemoryBlockResponse:
     """Update the content of a memory block."""
-    block = await update_block(deps, label, body.content)
+    try:
+        block = await update_block(deps, label, body.content)
+    except BlockNotFoundError as e:
+        raise HTTPException(status_code=404, detail=f"Block {label!r} not found") from e
+    except ContentExceedsLimitError as e:
+        raise HTTPException(status_code=400, detail=f"Content exceeds char limit") from e
     return MemoryBlockResponse.from_record(block)
 
 

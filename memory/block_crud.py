@@ -29,6 +29,14 @@ class DuplicateBlockError(Exception):
     """Raised when attempting to create a block with a label that already exists for the agent."""
 
 
+class BlockNotFoundError(Exception):
+    """Raised when a block with the given label doesn't exist for the agent."""
+
+
+class ContentExceedsLimitError(Exception):
+    """Raised when new content exceeds the block's char_limit."""
+
+
 # --- Internal helpers ---
 
 async def _persist(deps: AgentDeps, commit: bool, record: MemoryBlockRecord | None = None) -> None:
@@ -88,10 +96,10 @@ async def update_block(
     if block is None:
         block = await get_block(deps.session, deps.agent_id, label)
         if block is None:
-            raise ValueError("block not found")
+            raise BlockNotFoundError("block not found")
 
     if len(content) > block.char_limit:
-        raise ValueError("new content exceeds char limit")
+        raise ContentExceedsLimitError("new content exceeds char limit")
 
     block.content = content
     await _persist(deps, commit, block)
@@ -144,7 +152,7 @@ async def delete_block(deps: AgentDeps, label: str, commit: bool = True) -> None
     """Remove block. Raises if block doesn't exist (fail loudly)."""
     block = await get_block(deps.session, deps.agent_id, label)
     if block is None:
-        raise ValueError("block not found")
+        raise BlockNotFoundError("block not found")
 
     await deps.session.delete(block)
     await _persist(deps, commit)

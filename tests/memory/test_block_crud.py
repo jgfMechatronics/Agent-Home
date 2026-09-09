@@ -23,6 +23,8 @@ from memory.block_crud import (
     create_block,
     delete_block,
     reorder_blocks,
+    BlockNotFoundError,
+    ContentExceedsLimitError,
 )
 
 
@@ -167,7 +169,7 @@ async def test_update_block_enforces_char_limit(multi_tenant_with_deps: dict):
     
     oversized_content = "x" * (human_block.char_limit + 1)
     
-    with pytest.raises(ValueError, match="new content exceeds char limit"):
+    with pytest.raises(ContentExceedsLimitError, match="new content exceeds char limit"):
         await update_block(deps, "human", oversized_content)
 
 
@@ -274,10 +276,10 @@ async def test_delete_block_removes_block(multi_tenant_with_deps: dict):
     pytest.param(delete_block, ("nonexistent",), id="delete_block"),
 ])
 async def test_write_op_raises_on_nonexistent_block(multi_tenant_with_deps: dict, operation, args):
-    """Write operations should raise ValueError when block doesn't exist."""
+    """Write operations should raise BlockNotFoundError when block doesn't exist."""
     deps = multi_tenant_with_deps["deps_a"]
     
-    with pytest.raises(ValueError, match="block not found"):
+    with pytest.raises(BlockNotFoundError, match="block not found"):
         await operation(deps, *args)
 
 
