@@ -20,12 +20,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
-from agent.types import AgentAppState, AgentConfig, AgentDeps
+from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings
 from agent.runner import run_stateful_agent
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps
 from api.schemas import (
     AgentMetadataResponse,
-    BlockSettingsSchema,
     CoreMemoryResponse,
     CreateAgentRequest,
     CreateMemoryBlockRequest,
