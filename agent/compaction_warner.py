@@ -19,7 +19,7 @@ from messages.messages import format_system_alert
 from agent.types import AgentDeps
 
 
-COMPACTION_WARNING_THRESHOLD_FRACTION = 0.90
+COMPACTION_WARNING_THRESHOLD_FRACTION = 0.85
 
 COMPACTION_WARNING_TEXT = format_system_alert("""\
 You are nearing compaction. Oldest messages at the beginning of your context will soon be evicted.
