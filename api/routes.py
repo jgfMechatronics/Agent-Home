@@ -253,6 +253,31 @@ async def update_block_content(
     return MemoryBlockResponse.from_record(block)
 
 
+@router.get("/{agent_id}/memory/blocks/{label}/settings")
+async def get_block_settings(
+    agent_id: str,
+    label: str,
+    session: AsyncSession = Depends(get_session_dep),
+) -> BlockSettings:
+    """Get settings/metadata for a memory block."""
+    block = await get_block(session, agent_id, label)
+    if block is None:
+        raise HTTPException(status_code=404, detail=f"Block {label!r} not found")
+    return BlockSettings.from_record(block)
+
+
+@router.put("/{agent_id}/memory/blocks/{label}/settings")
+async def put_block_settings(
+    agent_id: str,
+    label: str,
+    settings: BlockSettings,
+    deps: AgentDeps = Depends(get_agent_deps),
+) -> BlockSettings:
+    """Update settings/metadata for a memory block."""
+    block = await update_block_settings(deps, label, settings)
+    return BlockSettings.from_record(block)
+
+
 @router.post("/{agent_id}/cancel", status_code=202)
 async def cancel_agent_run(
     agent_id: str,
