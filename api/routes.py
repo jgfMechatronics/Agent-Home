@@ -228,8 +228,13 @@ async def create_memory_block(
     deps: AgentDeps = Depends(get_agent_deps),
 ) -> MemoryBlockResponse:
     """Create a new memory block for an agent."""
+    settings = BlockSettings(
+        label=body.label,
+        description=body.description,
+        char_limit=body.char_limit,
+    )
     try:
-        block = await create_block(deps, body.label, body.content, body.description, body.char_limit)
+        block = await create_block(deps, settings, body.content)
     except DuplicateBlockError as e:
         raise HTTPException(status_code=400, detail=f"Duplicate block: {e}") from e
     return MemoryBlockResponse.from_record(block)

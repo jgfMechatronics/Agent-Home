@@ -108,25 +108,23 @@ async def update_block(
 
 async def create_block(
     deps: AgentDeps,
-    label: str,
+    settings: BlockSettings,
     content: str = "",
-    description: str = "",
-    char_limit: int = 20000,
-    position: int | None = None,
     commit: bool = True,
 ) -> MemoryBlockRecord:
     """
     Create new block.
     
-    If position is None, appends to end (max existing position + 1).
+    If settings.position is None, appends to end (max existing position + 1).
     Raises if label already exists for this agent.
     """
     # Check for duplicate label
-    existing = await get_block(deps.session, deps.agent_id, label)
+    existing = await get_block(deps.session, deps.agent_id, settings.label)
     if existing is not None:
-        raise DuplicateBlockError(f"block with label '{label}' already exists")
+        raise DuplicateBlockError(f"block with label '{settings.label}' already exists")
 
     # Auto-assign position if not specified
+    position = settings.position
     if position is None:
         stmt = select(func.max(MemoryBlockRecord.position)).where(
             MemoryBlockRecord.agent_id == deps.agent_id
@@ -137,10 +135,10 @@ async def create_block(
 
     block = MemoryBlockRecord(
         agent_id=deps.agent_id,
-        label=label,
+        label=settings.label,
         content=content,
-        description=description,
-        char_limit=char_limit,
+        description=settings.description,
+        char_limit=settings.char_limit,
         position=position,
     )
     deps.session.add(block)
@@ -209,7 +207,20 @@ async def update_block_settings(
         settings: New settings to apply (settings.label may differ for rename)
         commit: Whether to commit transaction
     
+    If settings.position is None, keeps the current position (no change).
+    
     Raises BlockNotFoundError if block doesn't exist.
     TODO: Add validation for label conflicts, position conflicts, etc.
     """
-    raise NotImplementedError("update_block_settings not yet implemented")
+    block = await get_block(deps.session, deps.agent_id, label)
+    if block is None:
+        raise BlockNotFoundError(f"block with label '{label}' not found")
+    
+    block.label = settings.label
+    block.description = settings.description
+    block.char_limit = settings.char_limit
+    if settings.position is not None:
+        block.position = settings.position
+    
+    await _persist(deps, commit, block)
+    return block

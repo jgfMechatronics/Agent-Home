@@ -10,7 +10,7 @@ from datetime import datetime
 
 from typing import Literal, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_ai.models.anthropic import AnthropicModelName
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -122,11 +122,14 @@ class BlockSettings(BaseModel):
     
     Used for both API requests/responses and as helper function parameter.
     Shared type so API layer and data layer speak the same language.
+    
+    Defaults align with create_block's defaults so BlockSettings() with just a label
+    produces the same behavior as the old create_block(label=...) call.
     """
-    label: str
-    description: str
-    char_limit: int
-    position: int
+    label: str = Field(min_length=1)
+    description: str = ""
+    char_limit: int = Field(default=20000, gt=0)
+    position: int | None = Field(default=None, ge=0)
 
     @classmethod
     def from_record(cls, block: "MemoryBlockRecord") -> "BlockSettings":
