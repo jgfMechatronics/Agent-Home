@@ -4,13 +4,7 @@ Tests is_compaction_needed and compact functions.
 
 compact(deps, total_tokens) receives the total_tokens from the API response.
 It estimates system prompt tokens from char count, calculates message tokens,
-and advances context_window_start to hit the target percentage.
-
-TODO: We may want to change compaction target calculation to be relative to tokens free for messages
-as opposed to relative to total tokens. With the current impl the compaction gets progressively more
-aggressive as system prompt grows. It would probably be preferable for compactions to just get more and more
-frequent as the system prompt gets problematically large as opposed to more and more aggressive 
-where they're basically deleting all messages.
+and advances context_window_start to retain the target fraction of current message tokens.
 """
 import logging
 import pytest
@@ -211,17 +205,17 @@ class TestCompactEdgeCases(CompactTestBase):
         # Should remain 0 — nothing to compact
         assert self.agent.context_window_start == 0
 
-    async def test_targets_percentage_of_limit(self, session: AsyncSession):
-        """compact targets compaction_target_fraction of soft_compaction_limit.
-        
-        Setup: 400 char prompt ≈ 100 tokens, 20 messages, total_tokens=2100
-        → message_tokens = 2100 - 100 = 2000, avg = 100 tok/msg
-        
-        Target: 50% of 2000 limit = 1000 tokens
-        System prompt = 100, so message budget = 900 tokens = ~9 messages
-        Should keep ~8-10 messages (well above the 4-message guard)
+    async def test_targets_percentage_of_message_tokens(self, session: AsyncSession):
+        """compact retains compaction_target_fraction of current message tokens.
+
+        Setup: 400 char prompt ≈ 100 sys_tokens, 20 messages, total_tokens=2100
+        → msg_tokens = 2100 - 100 = 2000, avg = 100 tok/msg
+
+        Target: 50% of 2000 msg_tokens = 1000 msg_tokens → keep 10 messages.
+        The soft_compaction_limit is deliberately set high (10000) to confirm the target
+        is relative to message tokens, not the limit.
         """
-        await self._setup(session, limit=2000, target=0.5, msg_count=20, total_tokens=2100)
+        await self._setup(session, limit=10000, target=0.5, msg_count=20, total_tokens=2100)
         
         await compact(self.deps, total_tokens=self.total_tokens)
         
@@ -232,8 +226,8 @@ class TestCompactEdgeCases(CompactTestBase):
         # Count messages still in context (seq_id >= context_window_start)
         in_context = [m for m in self.messages if m.seq_id >= self.agent.context_window_start]
         
-        # Clear of the 4-message guard — tests percentage targeting, not the guard
-        assert 8 <= len(in_context) <= 10
+        # Expect exactly 10 (50% of 20); allow ±1 for integer rounding
+        assert 9 <= len(in_context) <= 11
 
 
 class TestCompactToolPairAtomicity:

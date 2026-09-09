@@ -33,8 +33,8 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     """Advance context_window_start to reduce context size.
     
     Estimates system prompt tokens from character count, calculates average
-    tokens per message, and advances the pointer to hit the target percentage
-    of soft_compaction_limit.
+    tokens per message, and advances the pointer to retain the target fraction
+    of current message tokens.
     
     Guarantees:
     - Never evicts the most recent 4 messages
@@ -59,8 +59,12 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     avg_tokens_per_msg = msg_tokens / len(messages)
     if avg_tokens_per_msg <= 0:
         return  # System prompt dominates token budget — can't estimate, skip this turn
-    target_tokens = deps.config.compaction_target_fraction * deps.config.soft_compaction_limit
-    n_msg_to_keep = max(MIN_MESSAGES_AFTER_COMPACTION, int((target_tokens - sys_tokens) / avg_tokens_per_msg))
+    # Target a fraction of the current message tokens rather than a fraction of the total limit.
+    # This keeps compaction aggression constant as core memory grows — larger core means more frequent
+    # compaction (fires sooner) but not more aggressive compaction (always retains the same fraction
+    # of message history).
+    target_msg_tokens = deps.config.compaction_target_fraction * msg_tokens
+    n_msg_to_keep = max(MIN_MESSAGES_AFTER_COMPACTION, int(target_msg_tokens / avg_tokens_per_msg))
 
     if n_msg_to_keep >= len(messages):
         return

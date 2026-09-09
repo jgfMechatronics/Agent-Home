@@ -75,7 +75,7 @@ class AgentConfig(BaseModel):
     - soft_compaction_limit: Token threshold for triggering compaction
     
     Optional fields:
-    - compaction_target_fraction: Target context size after compaction as fraction of soft_compaction_limit
+    - compaction_target_fraction: Fraction of current message tokens to retain after compaction (not a fraction of soft_compaction_limit)
     - is_deletable: Whether agent can be deleted (default False)
     - retries: how many times the agent can retry a failed tool call
     - thinking_enabled
