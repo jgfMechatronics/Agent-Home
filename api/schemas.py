@@ -3,7 +3,7 @@ Pydantic request/response schemas for the API layer.
 """
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 
 from agent.types import AgentConfig
 
@@ -32,10 +32,10 @@ class CreateAgentRequest(BaseModel):
 
 
 class CreateMemoryBlockRequest(BaseModel):
-    label: str = Field(min_length=1)
+    label: str
     content: str = ""
     description: str = ""
-    char_limit: int = Field(default=20000, gt=0)
+    char_limit: int = 20000
 
 
 class UpdateBlockContentRequest(BaseModel):
