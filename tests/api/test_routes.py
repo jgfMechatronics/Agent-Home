@@ -421,8 +421,7 @@ _PUT_ENDPOINT_PARAMS = [
     # Memory block routes
     ("/agents/{agent_id}/memory/blocks/some-label/content", {"content": "new content"}),
     ("/agents/{agent_id}/memory/blocks/some-label/settings", {"description": "new desc"}),
-    # TODO: Add when implemented
-    # ("/agents/{agent_id}/memory/blocks/order", ["label1", "label2"]),
+    ("/agents/{agent_id}/memory/blocks/order", ["label1", "label2"]),
 ]
 
 
@@ -753,3 +752,28 @@ class TestUpdateBlockSettings(_MemoryBlockEndpointBase):
         )
 
         assert response.status_code == 422  # FastAPI validation, not our 400
+
+
+class TestReorderBlocks(_MemoryBlockEndpointBase):
+    """Tests for PUT /agents/{agent_id}/memory/blocks/order"""
+
+    crud_patch_target = "api.routes.reorder_blocks"
+    crud_attr_name = "mock_reorder_blocks"
+
+    async def test_calls_reorder_blocks_and_returns_204(self, client: AsyncClient):
+        """Successful reorder calls reorder_blocks helper and returns 204 No Content."""
+        new_order = ["human", "persona", "system"]
+        self.mock_reorder_blocks.return_value = None  # reorder_blocks returns None
+
+        response = await client.put(
+            f"/agents/{self.agent_record.id}/memory/blocks/order",
+            json=new_order,
+        )
+
+        assert response.status_code == 204
+        assert response.content == b""  # No content
+        # Verify route called helper with correct args
+        self.mock_reorder_blocks.assert_called_once()
+        call_args = self.mock_reorder_blocks.call_args
+        assert call_args.args[0].agent_id == self.agent_record.id  # deps
+        assert call_args.args[1] == new_order  # labels in order

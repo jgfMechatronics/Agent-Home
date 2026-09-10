@@ -41,6 +41,7 @@ from memory.block_crud import (
     create_block,
     get_block,
     get_blocks,
+    reorder_blocks,
     update_block,
     update_block_settings,
 )
@@ -282,6 +283,16 @@ async def put_block_settings(
     """Update settings/metadata for a memory block."""
     block = await update_block_settings(deps, label, settings)
     return BlockSettings.from_record(block)
+
+
+@router.put("/{agent_id}/memory/blocks/order", status_code=204)
+async def put_block_order(
+    agent_id: str,
+    labels_in_order: list[str],
+    deps: AgentDeps = Depends(get_agent_deps),
+) -> None:
+    """Reorder memory blocks by specifying labels in desired order."""
+    await reorder_blocks(deps, labels_in_order)
 
 
 @router.post("/{agent_id}/cancel", status_code=202)
