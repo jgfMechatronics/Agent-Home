@@ -215,6 +215,9 @@ async def update_block_settings(
     if block is None:
         raise BlockNotFoundError(f"block with label '{label}' not found")
     
+    if settings.char_limit < len(block.content):
+        raise ContentExceedsLimitError("new char_limit is less than current content length")
+    
     block.label = settings.label
     block.description = settings.description
     block.char_limit = settings.char_limit
