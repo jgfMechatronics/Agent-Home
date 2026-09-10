@@ -3,6 +3,8 @@ Tests for block CRUD (memory/block_crud.py)
 
 Read operations take (session, agent_id) — no lock required.
 Write operations take (deps) — proves caller holds per-agent lock.
+
+TODO: These should be grouped into test classes for consistency with rest of code base
 """
 import asyncio
 
@@ -188,6 +190,89 @@ async def test_update_block_accepts_prefetched_block(multi_tenant_with_deps: dic
     assert result.content == new_content
     assert result is persona  # Same object, not a fresh fetch
     spy.assert_not_called()
+
+
+class TestUpdateBlockSettings:
+    """Tests for update_block_settings helper."""
+    
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, multi_tenant_with_deps: dict):
+        """Common setup: extract deps and target block."""
+        self.deps = multi_tenant_with_deps["deps_a"]
+        self.blocks = multi_tenant_with_deps["blocks_a"]
+        self.target = self.blocks[0]  # persona at position 0
+    
+    async def test_modifies_all_fields(self):
+        """update_block_settings should update label, description, char_limit, and position."""
+        original_label = self.target.label
+        
+        new_settings = BlockSettings(
+            label="persona_renamed",
+            description="New description",
+            char_limit=5000,
+            position=99,
+        )
+        result = await update_block_settings(self.deps, original_label, new_settings)
+        
+        # Return value matches expected settings
+        assert BlockSettings.from_record(result) == new_settings
+        
+        # Old label gone, new label exists with correct settings
+        assert await get_block(self.deps.session, self.deps.agent_id, original_label) is None
+        fetched = await get_block(self.deps.session, self.deps.agent_id, "persona_renamed")
+        assert BlockSettings.from_record(fetched) == new_settings
+
+    async def test_position_none_keeps_current(self):
+        """When settings.position is None, should keep the block's current position."""
+        original_position = self.target.position
+        
+        new_settings = BlockSettings(
+            label=self.target.label,
+            description="Changed description",
+            char_limit=self.target.char_limit,
+            position=None,  # Explicitly None — should keep current
+        )
+        result = await update_block_settings(self.deps, self.target.label, new_settings)
+        
+        # Position preserved, other fields updated
+        expected = new_settings.model_copy(update={"position": original_position})
+        assert BlockSettings.from_record(result) == expected
+        
+        # DB matches
+        fetched = await get_block(self.deps.session, self.deps.agent_id, self.target.label)
+        assert BlockSettings.from_record(fetched) == expected
+
+    async def test_duplicate_label_raises(self):
+        """Renaming to an existing label should raise IntegrityError."""
+        # Try to rename "persona" to "human" (which exists)
+        new_settings = BlockSettings(label="human", description="", char_limit=20000)
+        
+        with pytest.raises(IntegrityError):
+            await update_block_settings(self.deps, "persona", new_settings)
+
+    async def test_duplicate_position_raises(self):
+        """Setting position to one already used should raise IntegrityError."""
+        # "persona" is at position 0, "human" is at position 1
+        # Try to move "human" to position 0
+        new_settings = BlockSettings(label="human", description="", char_limit=20000, position=0)
+        
+        with pytest.raises(IntegrityError):
+            await update_block_settings(self.deps, "human", new_settings)
+
+    async def test_rejects_char_limit_below_content_length(self):
+        """Reducing char_limit below current content length should raise ContentExceedsLimitError."""
+        # First, put some content in the block
+        await update_block(self.deps, self.target.label, "x" * 100)
+        
+        # Now try to reduce char_limit below content length — should fail
+        new_settings = BlockSettings(
+            label=self.target.label,
+            description=self.target.description,
+            char_limit=10,  # Less than 100 chars of content
+        )
+        
+        with pytest.raises(ContentExceedsLimitError):
+            await update_block_settings(self.deps, self.target.label, new_settings)
 
 
 # --- create_block tests ---
