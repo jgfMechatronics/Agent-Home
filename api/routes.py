@@ -236,11 +236,11 @@ async def create_memory_block(
             char_limit=body.char_limit,
         )
     except ValidationError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid block settings: {e}") from e
+        raise HTTPException(status_code=422, detail=f"Invalid block settings: {e}") from e
     try:
         block = await create_block(deps, settings, body.content)
     except DuplicateBlockError as e:
-        raise HTTPException(status_code=400, detail=f"Duplicate block: {e}") from e
+        raise HTTPException(status_code=422, detail=f"Duplicate block: {e}") from e
     return MemoryBlockResponse.from_record(block)
 
 
@@ -255,7 +255,7 @@ async def update_block_content(
     try:
         block = await update_block(deps, label, body.content)
     except ContentExceedsLimitError as e:
-        raise HTTPException(status_code=400, detail=f"Content exceeds char limit") from e
+        raise HTTPException(status_code=422, detail=f"Content exceeds char limit") from e
     return MemoryBlockResponse.from_record(block)
 
 
