@@ -569,6 +569,18 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
         assert response.status_code == 400
         assert response.json()["detail"] == "Duplicate block: block with label 'notes' already exists"
 
+    async def test_returns_400_for_invalid_settings(self, client: AsyncClient):
+        """Returns 400 when BlockSettings validation fails (e.g., char_limit <= 0)."""
+        invalid_body = {**self._VALID_BODY, "char_limit": 0}
+
+        response = await client.post(
+            f"/agents/{self.agent_record.id}/memory/blocks",
+            json=invalid_body,
+        )
+
+        assert response.status_code == 400
+        assert "Invalid block settings" in response.json()["detail"]
+
     async def test_returns_500_for_unexpected_error(self, client: AsyncClient):
         """
         Route propagates unexpected exceptions to the app-level handler, returning 500.

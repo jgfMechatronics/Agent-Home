@@ -15,6 +15,7 @@ from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.sse import EventSourceResponse, ServerSentEvent
+from pydantic import ValidationError
 from pydantic_ai import Agent, AgentRunResultEvent
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -228,11 +229,14 @@ async def create_memory_block(
     deps: AgentDeps = Depends(get_agent_deps),
 ) -> MemoryBlockResponse:
     """Create a new memory block for an agent."""
-    settings = BlockSettings(
-        label=body.label,
-        description=body.description,
-        char_limit=body.char_limit,
-    )
+    try:
+        settings = BlockSettings(
+            label=body.label,
+            description=body.description,
+            char_limit=body.char_limit,
+        )
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid block settings: {e}") from e
     try:
         block = await create_block(deps, settings, body.content)
     except DuplicateBlockError as e:
