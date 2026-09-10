@@ -38,6 +38,7 @@ from api.schemas import (
 from memory.block_crud import (
     ContentExceedsLimitError,
     DuplicateBlockError,
+    InvalidBlockOrderListError,
     create_block,
     get_block,
     get_blocks,
@@ -292,7 +293,10 @@ async def put_block_order(
     deps: AgentDeps = Depends(get_agent_deps),
 ) -> None:
     """Reorder memory blocks by specifying labels in desired order."""
-    await reorder_blocks(deps, labels_in_order)
+    try:
+        await reorder_blocks(deps, labels_in_order)
+    except InvalidBlockOrderListError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.post("/{agent_id}/cancel", status_code=202)

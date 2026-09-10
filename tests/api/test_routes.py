@@ -33,7 +33,7 @@ from agent.crud import create_agent_record
 from conftest import make_deps, SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
-from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, DuplicateBlockError
+from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, DuplicateBlockError, InvalidBlockOrderListError
 
 
 # --- Test Classes ---
@@ -777,3 +777,15 @@ class TestReorderBlocks(_MemoryBlockEndpointBase):
         call_args = self.mock_reorder_blocks.call_args
         assert call_args.args[0].agent_id == self.agent_record.id  # deps
         assert call_args.args[1] == new_order  # labels in order
+
+    async def test_returns_422_for_invalid_label_list(self, client: AsyncClient):
+        """Returns 422 when label list doesn't match agent's blocks."""
+        self.mock_reorder_blocks.side_effect = InvalidBlockOrderListError("missing labels: {'system'}")
+
+        response = await client.put(
+            f"/agents/{self.agent_record.id}/memory/blocks/order",
+            json=["persona", "human"],  # missing "system". Note the input here doesn't really matter as the helper is mocked
+        )
+
+        assert response.status_code == 422
+        assert "missing labels" in response.json()["detail"]

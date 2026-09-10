@@ -29,6 +29,7 @@ from memory.block_crud import (
     reorder_blocks,
     BlockNotFoundError,
     ContentExceedsLimitError,
+    InvalidBlockOrderListError,
 )
 
 
@@ -400,7 +401,7 @@ async def test_reorder_blocks_validates_label_list(multi_tenant_with_deps: dict,
     """reorder_blocks should reject lists that don't exactly match agent's blocks."""
     deps = multi_tenant_with_deps["deps_a"]
     
-    with pytest.raises(ValueError, match=error_match):
+    with pytest.raises(InvalidBlockOrderListError, match=error_match):
         await reorder_blocks(deps, incomplete_list)
 
 

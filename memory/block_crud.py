@@ -37,6 +37,10 @@ class ContentExceedsLimitError(Exception):
     """Raised when new content exceeds the block's char_limit."""
 
 
+class InvalidBlockOrderListError(Exception):
+    """Raised when the label list for reorder doesn't match the agent's blocks."""
+
+
 # --- Internal helpers ---
 
 async def _persist(deps: AgentDeps, commit: bool, record: MemoryBlockRecord | None = None) -> None:
@@ -175,7 +179,7 @@ async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str], commit: bo
             errors.append(f"missing labels: {missing}")
         if unknown:
             errors.append(f"unknown labels: {unknown}")
-        raise ValueError("; ".join(errors))
+        raise InvalidBlockOrderListError("; ".join(errors))
 
     # Build label -> block map for efficient lookup
     blocks_by_label = {b.label: b for b in blocks}
