@@ -210,7 +210,6 @@ async def update_block_settings(
     If settings.position is None, keeps the current position (no change).
     
     Raises BlockNotFoundError if block doesn't exist.
-    TODO: Add validation for label conflicts, position conflicts, etc.
     """
     block = await get_block(deps.session, deps.agent_id, label)
     if block is None:
