@@ -21,6 +21,7 @@ from memory.block_crud import (
     get_blocks,
     get_block,
     update_block,
+    update_block_settings,
     create_block,
     delete_block,
     reorder_blocks,
@@ -274,13 +275,14 @@ async def test_delete_block_removes_block(multi_tenant_with_deps: dict):
 
 @pytest.mark.parametrize("operation,args", [
     pytest.param(update_block, ("nonexistent", "content"), id="update_block"),
+    pytest.param(update_block_settings, ("nonexistent", BlockSettings(label="new")), id="update_block_settings"),
     pytest.param(delete_block, ("nonexistent",), id="delete_block"),
 ])
 async def test_write_op_raises_on_nonexistent_block(multi_tenant_with_deps: dict, operation, args):
     """Write operations should raise BlockNotFoundError when block doesn't exist."""
     deps = multi_tenant_with_deps["deps_a"]
     
-    with pytest.raises(BlockNotFoundError, match="block not found"):
+    with pytest.raises(BlockNotFoundError, match="not found"):
         await operation(deps, *args)
 
 
@@ -336,9 +338,10 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     
     # Perform all write operations on Agent A
     await update_block(deps_a, "persona", "Modified A's persona")
+    await update_block_settings(deps_a, "human", BlockSettings(label="human_renamed", description="new desc", char_limit=5000))
     await create_block(deps_a, BlockSettings(label="new_block"), content="New for A")
     await delete_block(deps_a, "system")  # Agent A has system block
-    await reorder_blocks(deps_a, ["human", "persona", "new_block"])
+    await reorder_blocks(deps_a, ["human_renamed", "persona", "new_block"])
     # All writes commit via deps_a's session, which expires ALL records in the session (including deps_b's)
     # In prod, seperate agents have seperate sessions
     await deps_b.session.refresh(deps_b._agent_record)
@@ -354,6 +357,7 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
 
 @pytest.mark.parametrize("write_op,call_args,returns_record", [
     pytest.param(update_block, ("persona", "new content"), True, id="update_block"),
+    pytest.param(update_block_settings, ("persona", BlockSettings(label="persona_new", description="new")), True, id="update_block_settings"),
     pytest.param(create_block, (BlockSettings(label="new_block"),), True, id="create_block"),
     pytest.param(delete_block, ("persona",), False, id="delete_block"),
     pytest.param(reorder_blocks, (["system", "human", "persona"],), False, id="reorder_blocks"),
@@ -382,6 +386,13 @@ async def test_write_ops_commit_and_refresh_by_default(multi_tenant_with_deps, w
         lambda deps: get_block(deps.session, deps.agent_id, "persona"),
         lambda block: block.content == "modified",
         id="update_block",
+    ),
+    pytest.param(
+        update_block_settings,
+        ("persona", BlockSettings(label="persona_renamed", description="new desc")),
+        lambda deps: get_block(deps.session, deps.agent_id, "persona_renamed"),
+        lambda block: block is not None and block.description == "new desc",
+        id="update_block_settings",
     ),
     pytest.param(
         create_block,

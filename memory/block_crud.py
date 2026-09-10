@@ -96,7 +96,7 @@ async def update_block(
     if block is None:
         block = await get_block(deps.session, deps.agent_id, label)
         if block is None:
-            raise BlockNotFoundError("block not found")
+            raise BlockNotFoundError(f"block with label '{label}' not found")
 
     if len(content) > block.char_limit:
         raise ContentExceedsLimitError("new content exceeds char limit")
@@ -150,7 +150,7 @@ async def delete_block(deps: AgentDeps, label: str, commit: bool = True) -> None
     """Remove block. Raises if block doesn't exist (fail loudly)."""
     block = await get_block(deps.session, deps.agent_id, label)
     if block is None:
-        raise BlockNotFoundError("block not found")
+        raise BlockNotFoundError(f"block with label '{label}' not found")
 
     await deps.session.delete(block)
     await _persist(deps, commit)
