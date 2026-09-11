@@ -14,7 +14,7 @@ Commands:
     create -q <name> Create agent with defaults (skip wizard)
     use <agent_id>   Set active agent for subsequent commands
     chat <message>   Send message to active agent (streaming)
-    history          View message history for active agent
+    history [-b]     View message history (--brief for condensed)
     info             View agent info
     memory           View core memory blocks (read-only)
     recompile        Trigger system prompt recompilation
@@ -281,6 +281,8 @@ async def cmd_create(state: CLIState, client: httpx.AsyncClient, args: list[str]
         data = response.json()
         
         if state.headless:
+            # Include use hint in headless output
+            data["hint"] = f"/use {data['id']}"
             output_json(state, data)
         else:
             output(state, f"Created agent: {data['name']}")
@@ -497,10 +499,12 @@ async def process_sse_event(
 
 
 async def cmd_history(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
-    """View message history."""
+    """View message history. Use --brief for condensed output (saves tokens)."""
     if not state.active_agent_id:
         output_error(state, "No active agent. Use '/use <agent_id>' first.")
         return
+    
+    brief_mode = "--brief" in args or "-b" in args
     
     try:
         response = await client.get(
@@ -511,7 +515,29 @@ async def cmd_history(state: CLIState, client: httpx.AsyncClient, args: list[str
         data = response.json()
         
         if state.headless:
-            output_json(state, data)
+            if brief_mode:
+                # Condensed output: just role and text content
+                brief_messages = []
+                for msg in data.get("messages", []):
+                    try:
+                        inner = json.loads(msg.get("content", "{}"))
+                    except (json.JSONDecodeError, TypeError):
+                        inner = {}
+                    kind = inner.get("kind") or msg.get("kind", "unknown")
+                    parts = inner.get("parts") or msg.get("parts", [])
+                    role = "user" if kind == "request" else "assistant"
+                    
+                    # Extract text content only
+                    text_parts = [
+                        p.get("content", "")
+                        for p in parts
+                        if p.get("part_kind") in ("text", "user-prompt")
+                    ]
+                    if text_parts:
+                        brief_messages.append({"role": role, "content": " ".join(text_parts)})
+                output_json(state, {"messages": brief_messages, "count": len(brief_messages)})
+            else:
+                output_json(state, data)
         else:
             messages = data.get("messages", [])
             if not messages:
@@ -869,7 +895,7 @@ Commands (prefix with /):
     /create -q <n>   Create agent with defaults (quick mode)
     /agents          List all agents on the server
     /use <agent_id>  Set active agent for subsequent commands
-    /history         View message history for active agent
+    /history [-b]    View message history (--brief for condensed)
     /info            View agent info
     /memory          View core memory blocks (read-only)
     /newblock        Create a new memory block (interactive)
