@@ -101,8 +101,9 @@ def default_agent_config() -> dict:
     """Return default AgentConfig for new agents."""
     return {
         "model_name": DEFAULT_MODEL,
-        "tool_names": [],  # No tools for basic testing
+        "tool_names": ["memory_replace", "memory_insert"],
         "soft_compaction_limit": DEFAULT_SOFT_COMPACTION_LIMIT,
+        "thinking_enabled": True,
     }
 
 
@@ -534,7 +535,7 @@ async def process_sse_event(
         if event_type == "PartStartEvent":
             part = data.get("part", {})
             part_kind = part.get("part_kind")
-            content = part.get("content", "")
+            content = part.get("content") or ""
             if part_kind == "thinking":
                 stream_state.in_thinking = True
                 stream_state.accumulated_thinking += content
@@ -543,7 +544,7 @@ async def process_sse_event(
                 stream_state.accumulated_text += content
         elif event_type == "PartDeltaEvent":
             delta = data.get("delta", {})
-            content = delta.get("content_delta", "")
+            content = delta.get("content_delta") or ""
             if stream_state.in_thinking:
                 stream_state.accumulated_thinking += content
             else:
