@@ -892,11 +892,11 @@ async def cmd_content(state: CLIState, client: httpx.AsyncClient, args: list[str
         return
     
     label = args[0]
-    base = f"{state.server_url}/agents/{state.active_agent_id}/memory/blocks/{label}/content"
+    block_url = f"{state.server_url}/agents/{state.active_agent_id}/memory/blocks/{label}"
     await _edit_and_put(
         state, client,
-        get_url=base,
-        put_url=base,
+        get_url=block_url,  # GET full block, extract content
+        put_url=f"{block_url}/content",  # PUT to /content endpoint
         is_json=False,
         content_key="content",
         success_message=f"Block [{label}] content updated successfully.",
