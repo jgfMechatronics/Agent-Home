@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Throwaway CLI for live testing Agent Home server.
+CLI for Agent Home server.
+Primarily intended for testing and management activities.
+Agentic Coding displays nicer and is handled better with the ACP TUI.
+NOTE: Minimal HITL review/iteration
 
 Usage:
     python cli.py                    # Interactive mode
@@ -84,6 +87,7 @@ class CLIState:
     active_agent_id: str | None = None
     server_url: str = DEFAULT_SERVER_URL
     headless: bool = False
+    verbose: bool = False  # In headless mode: output raw JSON events instead of accumulated text
     invoker: str | None = None  # Set via --invoker; prepends agent header to chat messages
 
 
@@ -381,6 +385,25 @@ class _StreamState:
     in_thinking: bool = False
     had_thinking: bool = False
     response_started: bool = False
+    # For headless accumulated output
+    accumulated_thinking: str = ""
+    accumulated_text: str = ""
+    tool_calls: list[str] | None = None  # Track tool names called
+
+
+def _output_headless_accumulated(state: CLIState, stream_state: _StreamState) -> None:
+    """Output accumulated content in headless mode (called at stream end)."""
+    result: dict = {}
+    
+    if stream_state.accumulated_thinking:
+        result["thinking"] = stream_state.accumulated_thinking
+    if stream_state.tool_calls:
+        result["tools"] = stream_state.tool_calls
+    if stream_state.accumulated_text:
+        result["response"] = stream_state.accumulated_text
+    
+    if result:
+        output_json(state, result)
 
 
 async def process_sse_event(
@@ -392,12 +415,44 @@ async def process_sse_event(
     except json.JSONDecodeError:
         data = {"raw": data_str}
 
-    if state.headless:
-        # In headless mode, output all events as JSON
+    if state.headless and state.verbose:
+        # Verbose headless mode: output all events as JSON (old behavior)
         output_json(state, {"event": event_type, "data": data})
         return
 
-    # Interactive mode - format nicely
+    if state.headless:
+        # Headless mode: accumulate content, output at end
+        if event_type == "PartStartEvent":
+            part = data.get("part", {})
+            part_kind = part.get("part_kind")
+            content = part.get("content", "")
+            if part_kind == "thinking":
+                stream_state.in_thinking = True
+                stream_state.accumulated_thinking += content
+            elif part_kind == "text":
+                stream_state.in_thinking = False
+                stream_state.accumulated_text += content
+        elif event_type == "PartDeltaEvent":
+            delta = data.get("delta", {})
+            content = delta.get("content_delta", "")
+            if stream_state.in_thinking:
+                stream_state.accumulated_thinking += content
+            else:
+                stream_state.accumulated_text += content
+        elif event_type == "FunctionToolCallEvent":
+            part = data.get("part", {})
+            tool_name = part.get("tool_name", "unknown")
+            if stream_state.tool_calls is None:
+                stream_state.tool_calls = []
+            stream_state.tool_calls.append(tool_name)
+        elif event_type == "AgentRunResultEvent":
+            # Stream complete — output accumulated content
+            _output_headless_accumulated(state, stream_state)
+        elif event_type == "Error":
+            output_error(state, data.get("message", "Unknown error"))
+        return
+
+    # Interactive mode - format nicely with streaming output
     # Event types from pydantic-ai (verified via test_routes.py)
     if event_type == "PartStartEvent":
         part = data.get("part", {})
@@ -885,6 +940,7 @@ async def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Agent Home CLI")
     parser.add_argument("--headless", action="store_true", help="Headless mode (no prompts, structured output)")
+    parser.add_argument("--verbose", action="store_true", help="With --headless: output raw SSE events as JSON")
     parser.add_argument("--server", default=DEFAULT_SERVER_URL, help=f"Server URL (default: {DEFAULT_SERVER_URL})")
     parser.add_argument("--invoker", default=None, help="Invoker identity prepended to chat messages (e.g. 'Sonnet')")
     args = parser.parse_args()
@@ -894,6 +950,7 @@ async def main() -> None:
     state = CLIState(
         server_url=args.server,
         headless=args.headless,
+        verbose=args.verbose,
         invoker=invoker,
     )
     
