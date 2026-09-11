@@ -16,7 +16,8 @@ Commands:
     chat <message>    Send message to active agent (streaming)
     history [-b]      View message history (--brief for condensed)
     info              View agent info
-    memory            View core memory blocks (read-only)
+    list-blocks       List memory block names
+    show-blocks       View memory blocks with content preview
     newblock          Create a new memory block (interactive)
     content <label>   Edit memory block content in $EDITOR
     settings <label>  Edit memory block settings in $EDITOR
@@ -724,8 +725,34 @@ async def cmd_info(state: CLIState, client: httpx.AsyncClient, args: list[str]) 
         output_error(state, f"Request failed: {e}")
 
 
-async def cmd_memory(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
-    """View core memory blocks."""
+async def cmd_list_blocks(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
+    """List memory block names."""
+    if not state.active_agent_id:
+        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        return
+    
+    try:
+        response = await client.get(f"{state.server_url}/agents/{state.active_agent_id}/memory/blocks")
+        response.raise_for_status()
+        data = response.json()
+        blocks = data.get("blocks", [])
+        labels = [b.get("label", "unknown") for b in blocks]
+        
+        if state.headless:
+            output_json(state, {"blocks": labels, "count": len(labels)})
+        else:
+            if not labels:
+                output(state, "No memory blocks.")
+            else:
+                output(state, f"Memory blocks ({len(labels)}): {', '.join(labels)}")
+    except httpx.HTTPStatusError as e:
+        output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
+    except httpx.RequestError as e:
+        output_error(state, f"Request failed: {e}")
+
+
+async def cmd_show_blocks(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
+    """View core memory blocks with content."""
     if not state.active_agent_id:
         output_error(state, "No active agent. Use '/use <agent_id>' first.")
         return
@@ -926,7 +953,8 @@ Commands (prefix with /):
     /use <agent_id>   Set active agent for subsequent commands
     /history [-b]     View message history (--brief for condensed)
     /info             View agent info
-    /memory           View core memory blocks (read-only)
+    /list-blocks      List memory block names
+    /show-blocks      View memory blocks with content preview
     /newblock         Create a new memory block (interactive)
     /content <label>  Edit memory block content in $EDITOR
     /settings <label> Edit memory block settings in $EDITOR
@@ -954,7 +982,8 @@ COMMANDS = {
     "use": cmd_use,
     "history": cmd_history,
     "info": cmd_info,
-    "memory": cmd_memory,
+    "list-blocks": cmd_list_blocks,
+    "show-blocks": cmd_show_blocks,
     "recompile": cmd_recompile,
     "instructions": cmd_instructions,
     "config": cmd_config,
