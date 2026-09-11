@@ -42,7 +42,6 @@ class UpdateBlockContentRequest(BaseModel):
     content: str
 
 
-
 # --- Response Schemas ---
 
 class AgentMetadataResponse(BaseModel):
