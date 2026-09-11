@@ -10,18 +10,21 @@ Usage:
     python cli.py --headless         # Headless mode (for agent use)
     
 Commands:
-    create [name]    Create a new agent (interactive config wizard)
-    create -q <name> Create agent with defaults (skip wizard)
-    use <agent_id>   Set active agent for subsequent commands
-    chat <message>   Send message to active agent (streaming)
-    history [-b]     View message history (--brief for condensed)
-    info             View agent info
-    memory           View core memory blocks (read-only)
-    recompile        Trigger system prompt recompilation
-    instructions     Edit system instructions in $EDITOR
-    config           Edit agent config in $EDITOR
-    help             Show this help
-    quit / exit      Exit CLI
+    create [name]     Create a new agent (interactive config wizard)
+    create -q <name>  Create agent with defaults (skip wizard)
+    use <agent_id>    Set active agent for subsequent commands
+    chat <message>    Send message to active agent (streaming)
+    history [-b]      View message history (--brief for condensed)
+    info              View agent info
+    memory            View core memory blocks (read-only)
+    newblock          Create a new memory block (interactive)
+    content <label>   Edit memory block content in $EDITOR
+    settings <label>  Edit memory block settings in $EDITOR
+    recompile         Trigger system prompt recompilation
+    instructions      Edit system instructions in $EDITOR
+    config            Edit agent config in $EDITOR
+    help              Show this help
+    quit / exit       Exit CLI
 """
 
 import argparse
@@ -178,6 +181,109 @@ def _edit_in_editor(content: str, suffix: str = ".txt") -> str | None:
     finally:
         # Clean up temp file
         os.unlink(temp_path)
+
+
+async def _edit_and_put(
+    state: CLIState,
+    client: httpx.AsyncClient,
+    *,
+    get_url: str,
+    put_url: str,
+    is_json: bool,
+    content_key: str | None = None,
+    success_message: str,
+) -> None:
+    """Common workflow: GET content, edit in $EDITOR, PUT back with retry on failure.
+    
+    Args:
+        get_url: URL to GET current content from
+        put_url: URL to PUT updated content to
+        is_json: If True, edit as JSON (.json suffix, parse before PUT)
+        content_key: If set, extract this key from GET response and wrap PUT body with it.
+                     If None, use entire response body for editing.
+        success_message: Message to display on successful update
+    """
+    if not state.active_agent_id:
+        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        return
+    
+    if state.headless:
+        output_error(state, "Editor commands not available in headless mode.")
+        return
+    
+    editor = _get_editor()
+    if not editor:
+        output_error(state, "No editor available. Set $EDITOR or install nano/vi.")
+        return
+    
+    # GET current content
+    try:
+        response = await client.get(get_url)
+        response.raise_for_status()
+        data = response.json()
+        
+        if content_key:
+            raw_content = data.get(content_key, "")
+            original = raw_content if not is_json else json.dumps(raw_content, indent=2)
+        else:
+            original = json.dumps(data, indent=2) if is_json else str(data)
+    except httpx.HTTPStatusError as e:
+        output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
+        return
+    except httpx.RequestError as e:
+        output_error(state, f"Request failed: {e}")
+        return
+    
+    # Edit loop - keep trying until success or user gives up
+    edited = original
+    suffix = ".json" if is_json else ".txt"
+    
+    while True:
+        edited = _edit_in_editor(edited, suffix=suffix)
+        if edited is None:
+            output(state, "Edit cancelled.")
+            return
+        
+        if edited == original:
+            output(state, "No changes made.")
+            return
+        
+        # Parse JSON if needed
+        if is_json:
+            try:
+                parsed = json.loads(edited)
+            except json.JSONDecodeError as e:
+                output_error(state, f"Invalid JSON: {e}")
+                output(state, "Press Enter to re-edit, or Ctrl+C to abort.")
+                try:
+                    input()
+                except (KeyboardInterrupt, EOFError):
+                    output(state, "\nAborted.")
+                    return
+                continue
+        else:
+            parsed = edited
+        
+        # Build request body
+        body = {content_key: parsed} if content_key else parsed
+        
+        # PUT the updated content
+        try:
+            response = await client.put(put_url, json=body)
+            response.raise_for_status()
+            output(state, success_message)
+            return
+        except httpx.HTTPStatusError as e:
+            output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
+            output(state, "Press Enter to re-edit, or Ctrl+C to abort.")
+            try:
+                input()
+            except (KeyboardInterrupt, EOFError):
+                output(state, "\nAborted.")
+                return
+        except httpx.RequestError as e:
+            output_error(state, f"Request failed: {e}")
+            return
 
 
 # --- Commands ---
@@ -675,141 +781,28 @@ async def cmd_recompile(state: CLIState, client: httpx.AsyncClient, args: list[s
 
 async def cmd_instructions(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """Edit system instructions in $EDITOR."""
-    if not state.active_agent_id:
-        output_error(state, "No active agent. Use '/use <agent_id>' first.")
-        return
-    
-    if state.headless:
-        output_error(state, "Editor commands not available in headless mode.")
-        return
-    
-    if not _get_editor():
-        output_error(state, "No editor available. Set $EDITOR or install nano/vi.")
-        return
-    
-    # GET current instructions
-    try:
-        response = await client.get(
-            f"{state.server_url}/agents/{state.active_agent_id}/system-instructions"
-        )
-        response.raise_for_status()
-        data = response.json()
-        original = data.get("system_instructions", "")
-    except httpx.HTTPStatusError as e:
-        output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
-        return
-    except httpx.RequestError as e:
-        output_error(state, f"Request failed: {e}")
-        return
-    
-    # Edit loop - keep trying until success or user gives up
-    edited = original
-    while True:
-        edited = _edit_in_editor(edited, suffix=".txt")
-        if edited is None:
-            output(state, "Edit cancelled.")
-            return
-        
-        if edited == original:
-            output(state, "No changes made.")
-            return
-        
-        # PUT the updated instructions
-        try:
-            response = await client.put(
-                f"{state.server_url}/agents/{state.active_agent_id}/system-instructions",
-                json={"system_instructions": edited},
-            )
-            response.raise_for_status()
-            output(state, "System instructions updated successfully.")
-            return
-        except httpx.HTTPStatusError as e:
-            output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
-            output(state, "Press Enter to re-edit, or Ctrl+C to abort.")
-            try:
-                input()
-            except (KeyboardInterrupt, EOFError):
-                output(state, "\nAborted.")
-                return
-        except httpx.RequestError as e:
-            output_error(state, f"Request failed: {e}")
-            return
+    base = f"{state.server_url}/agents/{state.active_agent_id}/system-instructions"
+    await _edit_and_put(
+        state, client,
+        get_url=base,
+        put_url=base,
+        is_json=False,
+        content_key="system_instructions",
+        success_message="System instructions updated successfully.",
+    )
 
 
 async def cmd_config(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """Edit agent config in $EDITOR."""
-    if not state.active_agent_id:
-        output_error(state, "No active agent. Use '/use <agent_id>' first.")
-        return
-    
-    if state.headless:
-        output_error(state, "Editor commands not available in headless mode.")
-        return
-    
-    if not _get_editor():
-        output_error(state, "No editor available. Set $EDITOR or install nano/vi.")
-        return
-    
-    # GET current config
-    try:
-        response = await client.get(
-            f"{state.server_url}/agents/{state.active_agent_id}/config"
-        )
-        response.raise_for_status()
-        config = response.json()
-        original = json.dumps(config, indent=2)
-    except httpx.HTTPStatusError as e:
-        output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
-        return
-    except httpx.RequestError as e:
-        output_error(state, f"Request failed: {e}")
-        return
-    
-    # Edit loop - keep trying until success or user gives up
-    edited = original
-    while True:
-        edited = _edit_in_editor(edited, suffix=".json")
-        if edited is None:
-            output(state, "Edit cancelled.")
-            return
-        
-        if edited == original:
-            output(state, "No changes made.")
-            return
-        
-        # Parse the edited JSON
-        try:
-            config_data = json.loads(edited)
-        except json.JSONDecodeError as e:
-            output_error(state, f"Invalid JSON: {e}")
-            output(state, "Press Enter to re-edit, or Ctrl+C to abort.")
-            try:
-                input()
-            except (KeyboardInterrupt, EOFError):
-                output(state, "\nAborted.")
-                return
-            continue
-        
-        # PUT the updated config
-        try:
-            response = await client.put(
-                f"{state.server_url}/agents/{state.active_agent_id}/config",
-                json=config_data,
-            )
-            response.raise_for_status()
-            output(state, "Config updated successfully.")
-            return
-        except httpx.HTTPStatusError as e:
-            output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
-            output(state, "Press Enter to re-edit, or Ctrl+C to abort.")
-            try:
-                input()
-            except (KeyboardInterrupt, EOFError):
-                output(state, "\nAborted.")
-                return
-        except httpx.RequestError as e:
-            output_error(state, f"Request failed: {e}")
-            return
+    base = f"{state.server_url}/agents/{state.active_agent_id}/config"
+    await _edit_and_put(
+        state, client,
+        get_url=base,
+        put_url=base,
+        is_json=True,
+        content_key=None,
+        success_message="Config updated successfully.",
+    )
 
 
 async def cmd_newblock(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
@@ -864,6 +857,42 @@ async def cmd_newblock(state: CLIState, client: httpx.AsyncClient, args: list[st
         output_error(state, f"Request failed: {e}")
 
 
+async def cmd_content(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
+    """Edit memory block content in $EDITOR."""
+    if not args:
+        output_error(state, "Usage: /content <label>")
+        return
+    
+    label = args[0]
+    base = f"{state.server_url}/agents/{state.active_agent_id}/memory/blocks/{label}/content"
+    await _edit_and_put(
+        state, client,
+        get_url=base,
+        put_url=base,
+        is_json=False,
+        content_key="content",
+        success_message=f"Block [{label}] content updated successfully.",
+    )
+
+
+async def cmd_settings(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
+    """Edit memory block settings in $EDITOR."""
+    if not args:
+        output_error(state, "Usage: /settings <label>")
+        return
+    
+    label = args[0]
+    base = f"{state.server_url}/agents/{state.active_agent_id}/memory/blocks/{label}/settings"
+    await _edit_and_put(
+        state, client,
+        get_url=base,
+        put_url=base,
+        is_json=True,
+        content_key=None,
+        success_message=f"Block [{label}] settings updated successfully.",
+    )
+
+
 async def cmd_agents(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """List all agents on the server."""
     try:
@@ -891,19 +920,21 @@ def cmd_help(state: CLIState) -> None:
     """Show help."""
     help_text = """
 Commands (prefix with /):
-    /create          Create a new agent (interactive config wizard)
-    /create -q <n>   Create agent with defaults (quick mode)
-    /agents          List all agents on the server
-    /use <agent_id>  Set active agent for subsequent commands
-    /history [-b]    View message history (--brief for condensed)
-    /info            View agent info
-    /memory          View core memory blocks (read-only)
-    /newblock        Create a new memory block (interactive)
-    /recompile       Trigger system prompt recompilation
-    /instructions    Edit system instructions in $EDITOR
-    /config          Edit agent config in $EDITOR
-    /help            Show this help
-    /quit or /exit   Exit CLI
+    /create           Create a new agent (interactive config wizard)
+    /create -q <n>    Create agent with defaults (quick mode)
+    /agents           List all agents on the server
+    /use <agent_id>   Set active agent for subsequent commands
+    /history [-b]     View message history (--brief for condensed)
+    /info             View agent info
+    /memory           View core memory blocks (read-only)
+    /newblock         Create a new memory block (interactive)
+    /content <label>  Edit memory block content in $EDITOR
+    /settings <label> Edit memory block settings in $EDITOR
+    /recompile        Trigger system prompt recompilation
+    /instructions     Edit system instructions in $EDITOR
+    /config           Edit agent config in $EDITOR
+    /help             Show this help
+    /quit or /exit    Exit CLI
 
 Default: Any text without / prefix is sent as a chat message.
 
@@ -928,6 +959,8 @@ COMMANDS = {
     "instructions": cmd_instructions,
     "config": cmd_config,
     "newblock": cmd_newblock,
+    "content": cmd_content,
+    "settings": cmd_settings,
 }
 
 
