@@ -339,6 +339,30 @@ class TestGetMemoryBlocks:
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
 
+class TestGetMemoryBlock:
+    """GET /agents/{agent_id}/memory/blocks/{label} — single memory block."""
+
+    async def test_returns_single_block(self, client: AsyncClient, agent_with_blocks: dict):
+        """Returns the requested memory block."""
+        agent = agent_with_blocks["agent"]
+        block = agent_with_blocks["blocks"][0]
+
+        response = await client.get(f"/agents/{agent.id}/memory/blocks/{block.label}")
+
+        assert response.status_code == 200
+        actual = MemoryBlockResponse.model_validate(response.json())
+        expected = MemoryBlockResponse.from_record(block)
+        assert actual == expected
+
+    async def test_returns_404_for_nonexistent_block(self, client: AsyncClient, agent_record: AgentRecord):
+        """Returns 404 when block label doesn't exist."""
+        response = await client.get(f"/agents/{agent_record.id}/memory/blocks/nonexistent")
+
+        assert response.status_code == 404
+
+    # 404 for unknown agent tested via parametrized test_get_endpoints_return_404_for_unknown_agent
+
+
 @pytest.mark.xfail(reason="get_messages endpoint format TBD — will be reworked once coding CLI/harness is selected")
 class TestGetMessages:
     """
@@ -431,6 +455,7 @@ class TestNotFound:
     @pytest.mark.parametrize("path", [
         "/agents/{agent_id}",
         "/agents/{agent_id}/memory/blocks",
+        "/agents/{agent_id}/memory/blocks/some-label",
         "/agents/{agent_id}/messages",
         "/agents/{agent_id}/config",
         "/agents/{agent_id}/system-instructions",

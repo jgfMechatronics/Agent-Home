@@ -224,6 +224,19 @@ async def get_memory_blocks(
     return CoreMemoryResponse(blocks=[MemoryBlockResponse.from_record(b) for b in blocks])
 
 
+@router.get("/{agent_id}/memory/blocks/{label}")
+async def get_memory_block(
+    agent_id: str,
+    label: str,
+    session: AsyncSession = Depends(get_session_dep),
+) -> MemoryBlockResponse:
+    """Return a single memory block by label."""
+    block = await get_block(session, agent_id, label)
+    if block is None:
+        raise HTTPException(status_code=404, detail=f"Block {label!r} not found")
+    return MemoryBlockResponse.from_record(block)
+
+
 @router.post("/{agent_id}/memory/blocks", status_code=201)
 async def create_memory_block(
     agent_id: str,
