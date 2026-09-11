@@ -18,7 +18,7 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 # create default dir for db
-DEFAULT_DB_DIR="$HOME/.agent-home"
+DEFAULT_DB_DIR="$HOME/agent-home"
 if [[ ! -d "$DEFAULT_DB_DIR" ]]; then
     mkdir -p "$DEFAULT_DB_DIR"
     echo "created $DEFAULT_DB_DIR"
@@ -39,7 +39,7 @@ fi
 # Start server
 cd "$SCRIPT_DIR"
 echo "Starting server... stdout: $LOG_FILE  stderr: $ERR_FILE"
-nohup uv run uvicorn main:app --host 127.0.0.1 --port 8000 > "$LOG_FILE" 2> "$ERR_FILE" &
+nohup uv run uvicorn main:app --host 127.0.0.1 --port 8080 > "$LOG_FILE" 2> "$ERR_FILE" &
 echo $! > "$PID_FILE"
 echo "Server started (PID $(cat "$PID_FILE"))"
 
