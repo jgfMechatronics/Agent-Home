@@ -47,6 +47,7 @@ import httpx
 DEFAULT_SERVER_URL = "http://localhost:8000"
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_SOFT_COMPACTION_LIMIT = 80000
+DEFAULT_MEMORY_TOOLS = ["memory_replace", "memory_insert"]
 
 _AGENTS_JSON = Path(__file__).parent.parent.parent / "LettaTelegramLocal" / "agents.json"
 
@@ -101,7 +102,7 @@ def default_agent_config() -> dict:
     """Return default AgentConfig for new agents."""
     return {
         "model_name": DEFAULT_MODEL,
-        "tool_names": ["memory_replace", "memory_insert"],
+        "tool_names": DEFAULT_MEMORY_TOOLS,
         "soft_compaction_limit": DEFAULT_SOFT_COMPACTION_LIMIT,
         "thinking_enabled": True,
     }
