@@ -19,7 +19,7 @@ from pydantic_ai.exceptions import ModelRetry
 
 from agent.crud import get_all_agents
 from agent.types import AgentDeps
-from memory.block_crud import get_block, update_block
+from memory.block_crud import get_block, update_block, ContentExceedsLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ async def memory_replace(
     # handles char limit check and persistence
     try:
         await update_block(deps, label, new_content, commit=False, block=block)
-    except ValueError as e:
+    except ContentExceedsLimitError as e:
         raise ModelRetry(str(e))
     
     # Compute and return snippet
@@ -218,7 +218,7 @@ async def memory_insert(
     # handles char limit check and persistence
     try:
         await update_block(deps, label, new_content, commit=False, block=block)
-    except ValueError as e:
+    except ContentExceedsLimitError as e:
         raise ModelRetry(str(e))
     
     return _compute_snippet(new_content, insert_pos, content)
