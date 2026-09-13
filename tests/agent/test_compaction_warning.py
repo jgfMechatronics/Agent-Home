@@ -17,7 +17,7 @@ from pydantic_ai.models.test import TestModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction import compact
-from agent.compaction_warner import COMPACTION_WARNING_TEXT, CompactionWarner
+from agent.compaction_warner import COMPACTION_WARNING_TEXT, COMPACTION_WARNING_THRESHOLD_FRACTION,CompactionWarner
 from agent.factory import AgentFactory
 from agent.runner import run_stateful_agent
 from agent.types import AgentAppState, AgentConfig
@@ -154,14 +154,10 @@ class TestCompactionWarnerIntegration:
         assert self.agent_record.compaction_warning_fired is True
 
 
-# Expected threshold fraction — tests will fail if implementation constant diverges.
-# This makes the dependency explicit rather than hiding it in magic numbers.
-EXPECTED_WARNING_THRESHOLD = 0.90
-
 SMALL_COMPACT_LIMIT = 100
 LARGE_COMPACT_LIMIT = 1000
-SMALL_THRESHOLD = int(SMALL_COMPACT_LIMIT * EXPECTED_WARNING_THRESHOLD)
-LARGE_THRESHOLD = int(LARGE_COMPACT_LIMIT * EXPECTED_WARNING_THRESHOLD)
+SMALL_THRESHOLD = int(SMALL_COMPACT_LIMIT * COMPACTION_WARNING_THRESHOLD_FRACTION)
+LARGE_THRESHOLD = int(LARGE_COMPACT_LIMIT * COMPACTION_WARNING_THRESHOLD_FRACTION)
 
 
 @pytest.mark.asyncio
@@ -179,7 +175,7 @@ class TestCompactionWarnerUnit:
         (0, SMALL_COMPACT_LIMIT, False),                      # Zero tokens
     ])
     async def test_threshold_boundary(self, tokens: int, soft_limit: int, should_warn: bool):
-        """Verify exact threshold calculation: warn iff tokens >= soft_limit * EXPECTED_WARNING_THRESHOLD."""
+        """Verify exact threshold calculation: warn iff tokens >= soft_limit * COMPACTION_WARNING_THRESHOLD_FRACTION."""
         # Mock the minimal context needed by after_model_request
         mock_config = MagicMock()
         mock_config.soft_compaction_limit = soft_limit
