@@ -367,6 +367,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
                 "Adjacent duplication is unlikely to naturally occur. "
                 f"Duplication occurred at seq_ids: [0, 1]. Content: {_LONG_DUP_PART_CONTENT!r}"
             ),
+            duplicate_content=_LONG_DUP_PART_CONTENT,
         )],
         id="adjacent_duplicate_long",
     ),
@@ -386,6 +387,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
                 "Adjacent duplication is unlikely to naturally occur. "
                 "Duplication occurred at seq_ids: [0, 1]. Content: 'ok'"
             ),
+            duplicate_content="ok",
         )],
         id="adjacent_duplicate_short",
     ),
@@ -408,6 +410,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
                 "Higher length content is less likely to naturally recur. "
                 f"Duplication occurred at seq_ids: [0, 5]. Content: {_LONG_DUP_PART_CONTENT!r}"
             ),
+            duplicate_content=_LONG_DUP_PART_CONTENT,
         )],
         id="non_adjacent_duplicate_long",
     ),
@@ -457,6 +460,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
                     "Adjacent duplication is unlikely to naturally occur. "
                     f"Duplication occurred at seq_ids: [0, 1]. Content: {_LONG_THINKING_TEXT!r}"
                 ),
+                duplicate_content=_LONG_THINKING_TEXT,
             ),
         ],
         id="adjacent_duplicate_thinking",
@@ -495,6 +499,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
                     "Adjacent duplication is unlikely to naturally occur. "
                     f"Duplication occurred at seq_ids: [0, 1]. Content: {_LONG_THINKING_TEXT!r}"
                 ),
+                duplicate_content=_LONG_THINKING_TEXT,
             ),
         ],
         id="adjacent_duplicate_thinking_with_unique_text",
@@ -823,13 +828,48 @@ _ISSUE_A = IntegrityIssue(check_type="adjacent_duplicate", severity=WARN, seq_id
 _ISSUE_B = IntegrityIssue(check_type="seq_id_gap", severity=ERROR, seq_ids=[5, 7], details="test B")
 _DISMISSAL_A = Dismissal(check_type="adjacent_duplicate", seq_ids=[111, 396], reason="Known false positive")
 
+_WHITELISTED_CONTENT = "[INTER AGENT MESSAGE. If you want to reply, use the 'send_message' tool. From: Haiku]\n💙"
+_CONTENT_DUP_ISSUE = IntegrityIssue(
+    check_type="content_duplicate",
+    severity=ERROR,
+    seq_ids=[42, 1884],
+    details=f"High length duplicate content detected. Duplication occurred at seq_ids: [42, 1884]. Content: {_WHITELISTED_CONTENT!r}",
+    duplicate_content=_WHITELISTED_CONTENT,
+)
+_CONTENT_DISMISSAL = Dismissal(check_type="content_duplicate", content=_WHITELISTED_CONTENT, reason="Inter-agent headers repeat legitimately")
+
 _FILTER_TEST_CASES = [
     # input issues, dismissals, expected filter result
-    pytest.param([_ISSUE_A], [_DISMISSAL_A], [], id="matching_dismissal_filters"),
+    pytest.param([_ISSUE_A], [_DISMISSAL_A], [], id="seq_ids_matching_dismissal_filters"),
     pytest.param([_ISSUE_A, _ISSUE_B], [_DISMISSAL_A], [_ISSUE_B], id="selective_filtering_keeps_unrelated"),
     pytest.param([_ISSUE_A, _ISSUE_B], [], [_ISSUE_A, _ISSUE_B], id="empty_dismissals_keeps_all"),
     pytest.param([], [_DISMISSAL_A], [], id="empty_issues_returns_empty"),
+    # Content-based dismissal cases
+    pytest.param([_CONTENT_DUP_ISSUE], [_CONTENT_DISMISSAL], [], id="content_dismissal_filters_matching_issue"),
+    pytest.param([_CONTENT_DUP_ISSUE, _ISSUE_A], [_CONTENT_DISMISSAL], [_ISSUE_A], id="content_dismissal_keeps_unrelated"),
 ]
+
+
+class TestDismissal:
+    """Tests for Dismissal.__post_init__ validation."""
+
+    def test_seq_ids_only_valid(self):
+        Dismissal(check_type="seq_id_gap", seq_ids=[1, 2], reason="x")  # no exception
+
+    def test_content_only_valid(self):
+        Dismissal(check_type="content_duplicate", content="some text", reason="x")  # no exception
+
+    def test_neither_set_valid(self):
+        Dismissal(check_type="content_duplicate", reason="x")  # no exception — valid, just never matches
+
+    def test_both_set_raises(self):
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            Dismissal(check_type="content_duplicate", seq_ids=[1, 2], content="text", reason="x")
+
+    def test_content_on_non_content_duplicate_raises(self):
+        with pytest.raises(ValueError, match="content matching is only supported"):
+            Dismissal(check_type="seq_id_gap", content="text", reason="x")
+
 
 class TestFilterDismissedIssues:
     """Tests for filter_dismissed_issues()."""
@@ -857,6 +897,12 @@ class TestFilterDismissedIssues:
         """Issues are kept when dismissal doesn't match exactly."""
         result = filter_dismissed_issues([_ISSUE_A], [dismissal])
         assert result == [_ISSUE_A]
+
+    def test_content_dismissal_wrong_content_keeps_issue(self):
+        """Content dismissal with non-matching content does not filter the issue."""
+        dismissal = Dismissal(check_type="content_duplicate", content="different content", reason="x")
+        result = filter_dismissed_issues([_CONTENT_DUP_ISSUE], [dismissal])
+        assert result == [_CONTENT_DUP_ISSUE]
 
 
 class TestLoadDismissals:
@@ -888,3 +934,22 @@ class TestLoadDismissals:
         result = load_dismissals(path, self._AGENT_ID)
         
         assert result == []
+
+    def test_loads_content_based_dismissal(self, tmp_path):
+        """Content-based dismissal entries round-trip correctly."""
+        config = {self._AGENT_ID: [asdict(_CONTENT_DISMISSAL)]}
+        path = tmp_path / "dismissals.json"
+        path.write_text(json.dumps(config))
+
+        result = load_dismissals(path, self._AGENT_ID)
+
+        assert result == [_CONTENT_DISMISSAL]
+
+    def test_both_set_raises_on_load(self, tmp_path):
+        """Invalid dismissal with both seq_ids and content set raises on load."""
+        config = {self._AGENT_ID: [{"check_type": "content_duplicate", "seq_ids": [1, 2], "content": "text", "reason": "bad"}]}
+        path = tmp_path / "dismissals.json"
+        path.write_text(json.dumps(config))
+
+        with pytest.raises(Exception, match="mutually exclusive"):
+            load_dismissals(path, self._AGENT_ID)

@@ -41,6 +41,7 @@ class IntegrityIssue:
     severity: Severity
     seq_ids: list[int]  # seq_ids involved in the issue
     details: str  # human-readable description
+    duplicate_content: str | None = None  # raw duplicate content, populated for content_duplicate issues
 
 
 def _check_seq_id_consecutive(records: Sequence[MessageRecord]) -> list[IntegrityIssue]:
@@ -269,6 +270,7 @@ def _find_issues_in_suspect_parts(
                 severity=severity,
                 seq_ids=bad_seq_ids,
                 details=detail_preamble + f" Duplication occurred at seq_ids: {bad_seq_ids}. Content: {content_preview!r}",
+                duplicate_content=raw_content,
             ))
 
     return integrity_issues
@@ -447,10 +449,37 @@ async def check_agent_integrity(
 
 @dataclass
 class Dismissal:
-    """A user-acknowledged false positive to filter from results."""
+    """A user-acknowledged false positive to filter from results.
+
+    Two match modes — exactly one must be set:
+    - seq_ids: dismiss this specific issue occurrence by check_type + seq_ids
+    - content: dismiss any content_duplicate issue whose duplicate_content exactly matches
+    """
     check_type: str
-    seq_ids: list[int]
     reason: str  # Why this was dismissed (for future reference)
+    seq_ids: list[int] | None = None
+    content: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.seq_ids is not None and self.content is not None:
+            raise ValueError(
+                f"Dismissal for check_type={self.check_type!r}: seq_ids and content are mutually exclusive — set one or the other, not both."
+            )
+        if self.content is not None and self.check_type != "content_duplicate":
+            raise ValueError(
+                f"Dismissal: content matching is only supported for check_type='content_duplicate', got {self.check_type!r}."
+            )
+
+
+def _dismissal_matches(issue: IntegrityIssue, d: Dismissal) -> bool:
+    """Return True if the dismissal covers this issue."""
+    if issue.check_type != d.check_type:
+        return False
+    if d.seq_ids is not None and issue.seq_ids == d.seq_ids:
+        return True
+    if d.content is not None and issue.duplicate_content == d.content:
+        return True
+    return False
 
 
 def filter_dismissed_issues(
@@ -460,10 +489,7 @@ def filter_dismissed_issues(
     """Remove issues that match a dismissal entry."""
     return [
         issue for issue in issues
-        if not any(
-            issue.check_type == d.check_type and issue.seq_ids == d.seq_ids
-            for d in dismissals
-        )
+        if not any(_dismissal_matches(issue, d) for d in dismissals)
     ]
 
 
