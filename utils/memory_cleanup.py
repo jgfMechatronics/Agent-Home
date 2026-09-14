@@ -7,10 +7,10 @@ Provides workflows for agents to clean up their memory blocks:
 
 Usage:
     python -m utils.memory_cleanup full <agent_name> <label1> <label2> ...
-    python -m utils.memory_cleanup put <agent_name> <label1> <label2> ...
+    python -m utils.memory_cleanup put <agent_name> <session_dir> <label1> <label2> ...
 
 Environment variables (via .env):
-    MEMORY_CLEANUP_WORKING_DIR: Base folder for cleanup sessions
+    MEMORY_CLEANUP_WORKING_DIR: Base folder for cleanup sessions (used by 'full' command)
     MEMORY_CLEANUP_SKILL_PATH: Path to the cleanup skill file
 """
 import os
@@ -56,14 +56,17 @@ def validate_labels(labels: list[str]) -> None:
 
 # --- File I/O Helpers ---
 
-def get_session_dir(working_dir: Path, agent_name: str) -> Path:
-    """Get or create the session directory for an agent cleanup.
+def create_session_dir(working_dir: Path, agent_name: str) -> Path:
+    """Create a new session directory for an agent cleanup.
     
     Creates: <working_dir>/<date>-<agent-name>/
+    
+    Raises:
+        FileExistsError: If session directory already exists (prevents overwriting).
     """
     date_str = datetime.now().strftime("%Y-%m-%d")
     session_dir = working_dir / f"{date_str}-{agent_name}"
-    session_dir.mkdir(parents=True, exist_ok=True)
+    session_dir.mkdir(parents=True, exist_ok=False)
     return session_dir
 
 
@@ -236,7 +239,7 @@ def run_cleanup_flow(
     print(f"Swapped in cleanup skill, recompiled.")
     
     # Dump blocks to files
-    session_dir = get_session_dir(working_dir, agent_name)
+    session_dir = create_session_dir(working_dir, agent_name)
     blocks = get_blocks(client, agent_id, labels)
     dump_to_files(session_dir, blocks, create_backups=True)
     print(f"\nBlocks dumped to: {session_dir}")
@@ -263,7 +266,7 @@ def put_blocks_from_files(
     client: httpx.Client,
     agent_name: str,
     labels: list[str],
-    working_dir: Path,
+    session_dir: Path,
 ) -> None:
     """Put blocks from files (recovery/resume flow).
     
@@ -274,12 +277,11 @@ def put_blocks_from_files(
         client: HTTP client for API calls
         agent_name: Name of the agent
         labels: Memory block labels to update
-        working_dir: Base directory for cleanup sessions
+        session_dir: Path to the session directory containing edited files
     """
     validate_labels(labels)
     agent_id = _get_agent_id(client, agent_name)
     
-    session_dir = get_session_dir(working_dir, agent_name)
     if not session_dir.exists():
         raise FileNotFoundError(f"Session directory not found: {session_dir}")
     
@@ -292,26 +294,29 @@ def put_blocks_from_files(
 
 def main() -> None:
     """CLI entry point."""
-    if len(sys.argv) < 4:
+    if len(sys.argv) < 2:
         print(__doc__)
-        print("\nError: Not enough arguments")
-        print("Usage: python -m utils.memory_cleanup <full|put> <agent_name> <label1> [label2 ...]")
         sys.exit(1)
     
     command = sys.argv[1]
-    agent_name = sys.argv[2]
-    labels = sys.argv[3:]
-    
-    # Read config from env (module-level defaults used if not set)
-    working_dir = WORKING_DIR
-    skill_path = CLEANUP_SKILL_PATH
     
     try:
         with httpx.Client(base_url=SERVER_URL) as client:
             if command == "full":
-                run_cleanup_flow(client, agent_name, labels, working_dir, skill_path)
+                if len(sys.argv) < 4:
+                    print("Usage: python -m utils.memory_cleanup full <agent_name> <label1> [label2 ...]")
+                    sys.exit(1)
+                agent_name = sys.argv[2]
+                labels = sys.argv[3:]
+                run_cleanup_flow(client, agent_name, labels, WORKING_DIR, CLEANUP_SKILL_PATH)
             elif command == "put":
-                put_blocks_from_files(client, agent_name, labels, working_dir)
+                if len(sys.argv) < 5:
+                    print("Usage: python -m utils.memory_cleanup put <agent_name> <session_dir> <label1> [label2 ...]")
+                    sys.exit(1)
+                agent_name = sys.argv[2]
+                session_dir = Path(sys.argv[3])
+                labels = sys.argv[4:]
+                put_blocks_from_files(client, agent_name, labels, session_dir)
             else:
                 print(f"Unknown command: {command}")
                 print("Use 'full' for complete flow or 'put' to just update blocks from files")

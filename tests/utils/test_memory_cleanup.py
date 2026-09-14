@@ -12,6 +12,7 @@ from agent.types import AgentDeps, BlockSettings
 from memory.block_crud import create_block
 from utils.memory_cleanup import (
     ValidationError,
+    create_session_dir,
     dump_to_files,
     load_from_files,
     run_cleanup_flow,
@@ -41,11 +42,32 @@ class TestValidateLabels:
         validate_labels([])
 
 
+class TestSessionDir:
+    """Tests for create_session_dir function."""
+    
+    def test_create_session_dir_creates_directory(self, tmp_path: Path):
+        """Should create directory with <date>-<agent_name> format."""
+        session_dir = create_session_dir(tmp_path, "TestAgent")
+        
+        assert session_dir.is_dir()
+        assert session_dir.parent == tmp_path
+        assert "TestAgent" in session_dir.name
+        # Should start with date-like pattern (YYYY-MM-DD)
+        assert session_dir.name[4] == "-" and session_dir.name[7] == "-"
+    
+    def test_create_session_dir_raises_if_exists(self, tmp_path: Path):
+        """Should raise FileExistsError if session dir already exists."""
+        create_session_dir(tmp_path, "TestAgent")
+        
+        with pytest.raises(FileExistsError):
+            create_session_dir(tmp_path, "TestAgent")
+
+
 class TestDumpToFiles:
     """Tests for dump_to_files function."""
     
-    def test_creates_editable_files(self, tmp_path: Path):
-        """Should create .txt files for each block."""
+    def test_creates_files(self, tmp_path: Path):
+        """Should create .txt files for each block. Integration test verifies editability"""
         blocks = {"persona": "I am Opus", "ephemera": "Recent events"}
         
         dump_to_files(tmp_path, blocks, create_backups=False)
@@ -136,7 +158,6 @@ class TestLoadFromFiles:
         assert result == {"persona": "exists", "ephemera": "created"}
 
 
-
 # --- Integration Test ---
 
 class TestRunCleanupFlowIntegration:
@@ -178,12 +199,12 @@ class TestRunCleanupFlowIntegration:
 
     def test_full_cleanup_flow(self, tmp_path, cleanup_skill_file):
         """Full flow: swap skill, dump blocks, simulate edit, put, restore."""
-        
         # Mock input() to simulate user pressing Enter after "editing"
         def mock_input_and_edit(prompt):
-            # Simulate agent editing the files
-            date_str = datetime.now().strftime('%Y-%m-%d')
-            session_dir = tmp_path / f"{date_str}-{self.agent_name}"
+            # Find the session dir that was created by run_cleanup_flow
+            session_dirs = list(tmp_path.glob(f"*-{self.agent_name}"))
+            assert len(session_dirs) == 1, f"Expected 1 session dir, found {session_dirs}"
+            session_dir = session_dirs[0]
             for label in self.cleanup_labels:
                 (session_dir / f"{label}.txt").write_text(f"Edited {label}")
             return ""  # Simulate pressing Enter
