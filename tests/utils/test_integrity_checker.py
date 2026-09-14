@@ -892,16 +892,17 @@ class TestFilterDismissedIssues:
             Dismissal(check_type="adjacent_duplicate", seq_ids=[396, 111], reason="x"),
             id="reversed_seq_ids",
         ),
-        pytest.param(
-            Dismissal(check_type="content_duplicate", content="different content", reason="x"),
-            id="content_dismissal_wrong_content",
-        ),
     ])
     def test_non_matching_dismissal_keeps_issue(self, dismissal: Dismissal):
         """Issues are kept when dismissal doesn't match exactly."""
-        issue = _ISSUE_A if dismissal.check_type != "content_duplicate" else _CONTENT_DUP_ISSUE
-        result = filter_dismissed_issues([issue], [dismissal])
-        assert result == [issue]
+        result = filter_dismissed_issues([_ISSUE_A], [dismissal])
+        assert result == [_ISSUE_A]
+
+    def test_content_dismissal_wrong_content_keeps_issue(self):
+        """Content dismissal with non-matching content does not filter the issue."""
+        dismissal = Dismissal(check_type="content_duplicate", content="different content", reason="x")
+        result = filter_dismissed_issues([_CONTENT_DUP_ISSUE], [dismissal])
+        assert result == [_CONTENT_DUP_ISSUE]
 
 
 class TestLoadDismissals:
