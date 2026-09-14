@@ -82,7 +82,7 @@ def dump_to_files(session_dir: Path, blocks: dict[str, str]) -> None:
         blocks: Dict mapping label -> content
     """
     backup_dir = session_dir / "backups"
-    backup_dir.mkdir(exist_ok=True)
+    backup_dir.mkdir(exist_ok=False)
     
     for label, content in blocks.items():
         # Write editable file
