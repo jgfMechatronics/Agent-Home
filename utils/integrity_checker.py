@@ -255,7 +255,7 @@ def _find_issues_in_suspect_parts(
             severity = ERROR
             detail_preamble = "High length duplicate content detected. Higher length content is less likely to naturally recur."
         else:
-            # Short content that didn't occur adjacently. Natural repetition, not suspicious.
+            # Short content that didn't occur adjacently. Likely natural repetition, not that sus.
             severity = NO_ERROR
 
         if severity != NO_ERROR:
