@@ -130,18 +130,18 @@ def prompt_for_labels() -> list[str]:
     """Prompt user for memory block labels to clean up.
     
     Returns:
-        List of label strings (whitespace-separated input)
+        List of label strings (comma-separated input, whitespace trimmed)
         
     Raises:
         ValueError: If no labels provided
     """
-    print("\nEnter memory block labels to clean up (space-separated):")
+    print("\nEnter memory block labels to clean up (comma-separated):")
     raw = input("> ").strip()
     
     if not raw:
         raise ValueError("No labels provided")
     
-    return raw.split()
+    return [label.strip() for label in raw.split(",")]
 
 
 # --- HTTP Helpers ---

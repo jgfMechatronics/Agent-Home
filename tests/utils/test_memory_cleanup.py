@@ -46,9 +46,14 @@ class TestValidateLabels:
 class TestPromptForLabels:
     """Tests for prompt_for_labels function."""
     
-    def test_parses_space_separated_input(self):
-        """Should parse space-separated labels."""
-        with patch("builtins.input", return_value="persona ephemera working-memory"):
+    @pytest.mark.parametrize("input_str", [
+        "persona,ephemera,working-memory",
+        "persona, ephemera, working-memory",
+        "persona ,ephemera ,working-memory",
+    ])
+    def test_parses_comma_separated_input(self, input_str):
+        """Should parse comma-separated labels, trimming whitespace."""
+        with patch("builtins.input", return_value=input_str):
             with patch("builtins.print"):
                 result = prompt_for_labels()
         
