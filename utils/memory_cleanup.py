@@ -138,9 +138,9 @@ def load_from_files(
 
 # --- HTTP Helpers ---
 
-def _get_agent_id(agent_name: str) -> str:
+def _get_agent_id(client: httpx.Client, agent_name: str) -> str:
     """Resolve agent name to ID via API."""
-    response = httpx.get(f"{SERVER_URL}/agents")
+    response = client.get("/agents")
     response.raise_for_status()
     agents = response.json()
     
@@ -151,57 +151,57 @@ def _get_agent_id(agent_name: str) -> str:
     raise ValueError(f"Agent not found: {agent_name}")
 
 
-def get_blocks(agent_id: str, labels: list[str]) -> dict[str, str]:
+def get_blocks(client: httpx.Client, agent_id: str, labels: list[str]) -> dict[str, str]:
     """Fetch memory block contents from server."""
     blocks = {}
     for label in labels:
-        response = httpx.get(f"{SERVER_URL}/agents/{agent_id}/memory/blocks/{label}")
+        response = client.get(f"/agents/{agent_id}/memory/blocks/{label}")
         response.raise_for_status()
         blocks[label] = response.json()["content"]
     return blocks
 
 
-def put_blocks(agent_id: str, blocks: dict[str, str]) -> None:
+def put_blocks(client: httpx.Client, agent_id: str, blocks: dict[str, str]) -> None:
     """Update memory block contents on server."""
     for label, content in blocks.items():
-        response = httpx.put(
-            f"{SERVER_URL}/agents/{agent_id}/memory/blocks/{label}/content",
+        response = client.put(
+            f"/agents/{agent_id}/memory/blocks/{label}/content",
             json={"content": content}
         )
         response.raise_for_status()
 
 
-def get_skill(agent_id: str) -> str:
+def get_skill(client: httpx.Client, agent_id: str) -> str:
     """Get current active-skill content."""
-    response = httpx.get(f"{SERVER_URL}/agents/{agent_id}/memory/blocks/active-skill")
+    response = client.get(f"/agents/{agent_id}/memory/blocks/active-skill")
     response.raise_for_status()
     return response.json()["content"]
 
 
-def put_skill(agent_id: str, content: str) -> None:
+def put_skill(client: httpx.Client, agent_id: str, content: str) -> None:
     """Update active-skill content."""
-    response = httpx.put(
-        f"{SERVER_URL}/agents/{agent_id}/memory/blocks/active-skill/content",
+    response = client.put(
+        f"/agents/{agent_id}/memory/blocks/active-skill/content",
         json={"content": content}
     )
     response.raise_for_status()
 
 
-def restore_skill(agent_id: str, original_skill: str) -> None:
+def restore_skill(client: httpx.Client, agent_id: str, original_skill: str) -> None:
     """Restore original skill and recompile."""
-    put_skill(agent_id, original_skill)
-    recompile(agent_id)
+    put_skill(client, agent_id, original_skill)
+    recompile(client, agent_id)
 
 
-def recompile(agent_id: str) -> None:
+def recompile(client: httpx.Client, agent_id: str) -> None:
     """Trigger system prompt recompilation."""
-    response = httpx.post(f"{SERVER_URL}/agents/{agent_id}/memory/recompile")
+    response = client.post(f"/agents/{agent_id}/memory/recompile")
     response.raise_for_status()
 
 
 # --- Main Flows ---
 
-def run_cleanup_flow(agent_name: str, labels: list[str]) -> None:
+def run_cleanup_flow(client: httpx.Client, agent_name: str, labels: list[str]) -> None:
     """Run the full cleanup flow.
     
     1. Validate labels
@@ -212,22 +212,23 @@ def run_cleanup_flow(agent_name: str, labels: list[str]) -> None:
     6. Restore original skill
     
     Args:
+        client: HTTP client for API calls
         agent_name: Name of the agent
         labels: Memory block labels to clean up
     """
     validate_labels(labels)
-    agent_id = _get_agent_id(agent_name)
+    agent_id = _get_agent_id(client, agent_name)
     
     # Save current skill and swap in cleanup skill
-    original_skill = get_skill(agent_id)
+    original_skill = get_skill(client, agent_id)
     cleanup_skill = CLEANUP_SKILL_PATH.read_text()
-    put_skill(agent_id, cleanup_skill)
-    recompile(agent_id)
+    put_skill(client, agent_id, cleanup_skill)
+    recompile(client, agent_id)
     print(f"Swapped in cleanup skill, recompiled.")
     
     # Dump blocks to files
     session_dir = get_session_dir(agent_name)
-    blocks = get_blocks(agent_id, labels)
+    blocks = get_blocks(client, agent_id, labels)
     dump_to_files(session_dir, blocks, create_backups=True)
     print(f"\nBlocks dumped to: {session_dir}")
     print(f"  Editable: {', '.join(f'{l}.txt' for l in labels)}")
@@ -240,34 +241,35 @@ def run_cleanup_flow(agent_name: str, labels: list[str]) -> None:
     
     # Put updated blocks
     updated_blocks = load_from_files(session_dir, labels, prompt_on_missing=True)
-    put_blocks(agent_id, updated_blocks)
+    put_blocks(client, agent_id, updated_blocks)
     print(f"Updated {len(updated_blocks)} blocks.")
     
     # Restore original skill
-    restore_skill(agent_id, original_skill)
+    restore_skill(client, agent_id, original_skill)
     print("Restored original skill, recompiled.")
     print("\nCleanup complete!")
 
 
-def put_blocks_from_files(agent_name: str, labels: list[str]) -> None:
+def put_blocks_from_files(client: httpx.Client, agent_name: str, labels: list[str]) -> None:
     """Put blocks from files (recovery/resume flow).
     
     Use this if the full flow was interrupted after dumping but before putting,
     or to re-apply edits.
     
     Args:
+        client: HTTP client for API calls
         agent_name: Name of the agent
         labels: Memory block labels to update
     """
     validate_labels(labels)
-    agent_id = _get_agent_id(agent_name)
+    agent_id = _get_agent_id(client, agent_name)
     
     session_dir = get_session_dir(agent_name)
     if not session_dir.exists():
         raise FileNotFoundError(f"Session directory not found: {session_dir}")
     
     updated_blocks = load_from_files(session_dir, labels, prompt_on_missing=True)
-    put_blocks(agent_id, updated_blocks)
+    put_blocks(client, agent_id, updated_blocks)
     print(f"Updated {len(updated_blocks)} blocks from {session_dir}")
 
 
@@ -288,14 +290,15 @@ def main() -> None:
     labels = sys.argv[3:]
     
     try:
-        if command == "full":
-            run_cleanup_flow(agent_name, labels)
-        elif command == "put":
-            put_blocks_from_files(agent_name, labels)
-        else:
-            print(f"Unknown command: {command}")
-            print("Use 'full' for complete flow or 'put' to just update blocks from files")
-            sys.exit(1)
+        with httpx.Client(base_url=SERVER_URL) as client:
+            if command == "full":
+                run_cleanup_flow(client, agent_name, labels)
+            elif command == "put":
+                put_blocks_from_files(client, agent_name, labels)
+            else:
+                print(f"Unknown command: {command}")
+                print("Use 'full' for complete flow or 'put' to just update blocks from files")
+                sys.exit(1)
     except ValidationError as e:
         print(f"Validation error: {e}")
         sys.exit(1)
