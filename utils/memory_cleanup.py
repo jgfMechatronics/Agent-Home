@@ -15,7 +15,6 @@ Environment variables (via .env):
 """
 import os
 import stat
-import sys
 from datetime import datetime
 from pathlib import Path
 
