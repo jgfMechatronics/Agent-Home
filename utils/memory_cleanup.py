@@ -15,6 +15,7 @@ Environment variables (via .env):
 """
 import os
 import stat
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -277,8 +278,6 @@ def put_blocks_from_files(client: httpx.Client, agent_name: str, labels: list[st
 
 def main() -> None:
     """CLI entry point."""
-    import sys
-    
     if len(sys.argv) < 4:
         print(__doc__)
         print("\nError: Not enough arguments")

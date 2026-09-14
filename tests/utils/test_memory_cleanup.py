@@ -5,7 +5,11 @@ from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
+from fastapi.testclient import TestClient
 
+import utils.memory_cleanup as cleanup_module
+from agent.types import AgentDeps, BlockSettings
+from memory.block_crud import create_block
 from utils.memory_cleanup import (
     ValidationError,
     dump_to_files,
@@ -144,34 +148,20 @@ class TestRunCleanupFlowIntegration:
     """
     
     @pytest_asyncio.fixture(autouse=True)
-    async def setup_agent_with_blocks(self, session, app):
-        """Create a real agent with memory blocks for testing."""
-        from agent.crud import create_agent_record
-        from agent.types import AgentConfig, AgentDeps, BlockSettings
-        from memory.block_crud import create_block
-        from fastapi.testclient import TestClient
-        
-        self.session = session
-        self.app = app
-        
-        # Create agent
-        config = AgentConfig(
-            model_name="claude-haiku-4-5-20251001",
-            tool_names=[],
-            soft_compaction_limit=1000,
-        )
-        self.agent = await create_agent_record(
-            session, "TestAgent", "Test instructions", config
-        )
+    async def setup(self, session, app, agent_with_blocks):
+        """Set up test with agent_with_blocks fixture plus skill block."""
+        self.agent = agent_with_blocks["agent"]
         self.agent_id = self.agent.id
+        self.agent_name = self.agent.name
         
-        # Create AgentDeps for block creation
+        # Grab block info before any commits (avoids ORM expiry issues)
+        self.cleanup_labels = [b.label for b in agent_with_blocks["blocks"]]
+        
+        # Add skill block for cleanup flow
+        self.skill_label = "active-skill"
+        self.skill_content = "Original skill content"
         deps = AgentDeps(session=session, agent_record=self.agent)
-        
-        # Create memory blocks including active-skill for the cleanup flow
-        await create_block(deps, BlockSettings(label="active-skill"), "Original skill content")
-        await create_block(deps, BlockSettings(label="persona"), "Original persona content")
-        await create_block(deps, BlockSettings(label="ephemera"), "Original ephemera content")
+        await create_block(deps, BlockSettings(label=self.skill_label), self.skill_content)
         await session.commit()
         
         # TestClient WITHOUT context manager = no lifespan run
@@ -188,8 +178,6 @@ class TestRunCleanupFlowIntegration:
 
     def test_full_cleanup_flow(self, tmp_path, cleanup_skill_file):
         """Full flow: swap skill, dump blocks, simulate edit, put, restore."""
-        import utils.memory_cleanup as cleanup_module
-        
         # Save original module config
         original_working_dir = cleanup_module.WORKING_DIR
         original_skill_path = cleanup_module.CLEANUP_SKILL_PATH
@@ -199,33 +187,29 @@ class TestRunCleanupFlowIntegration:
             cleanup_module.WORKING_DIR = tmp_path
             cleanup_module.CLEANUP_SKILL_PATH = cleanup_skill_file
             
-            # Get original skill content for comparison
-            resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/active-skill")
-            assert resp.status_code == 200, f"Failed to get skill: {resp.text}"
-            original_skill = resp.json()["content"]
-            
             # Mock input() to simulate user pressing Enter after "editing"
             def mock_input_and_edit(prompt):
                 # Simulate agent editing the files
-                session_dir = tmp_path / f"{cleanup_module.datetime.now().strftime('%Y-%m-%d')}-TestAgent"
-                (session_dir / "persona.txt").write_text("Edited persona content")
-                (session_dir / "ephemera.txt").write_text("Edited ephemera content")
+                date_str = cleanup_module.datetime.now().strftime('%Y-%m-%d')
+                session_dir = tmp_path / f"{date_str}-{self.agent_name}"
+                for label in self.cleanup_labels:
+                    (session_dir / f"{label}.txt").write_text(f"Edited {label}")
                 return ""  # Simulate pressing Enter
             
             with patch("builtins.input", side_effect=mock_input_and_edit):
                 with patch("builtins.print"):  # Suppress output
-                    run_cleanup_flow(self.test_client, "TestAgent", ["persona", "ephemera"])
+                    run_cleanup_flow(self.test_client, self.agent_name, self.cleanup_labels)
             
             # Verify blocks were updated
-            resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/persona")
-            assert resp.json()["content"] == "Edited persona content"
+            for label in self.cleanup_labels:
+                resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/{label}")
+                assert resp.json()["content"] == f"Edited {label}"
             
-            resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/ephemera")
-            assert resp.json()["content"] == "Edited ephemera content"
-            
-            # Verify skill was restored
-            resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/active-skill")
-            assert resp.json()["content"] == original_skill
+            # Verify skill was restored to original
+            resp = self.test_client.get(
+                f"/agents/{self.agent_id}/memory/blocks/{self.skill_label}"
+            )
+            assert resp.json()["content"] == self.skill_content
             
         finally:
             # Restore original module config
