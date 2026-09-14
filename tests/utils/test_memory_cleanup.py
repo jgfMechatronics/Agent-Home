@@ -200,7 +200,7 @@ class TestRunCleanupFlowIntegration:
 
     def test_full_cleanup_flow(self, tmp_path, cleanup_skill_file):
         """Full flow: swap skill, prompt for labels, dump, simulate edit, put, restore."""
-        # Mock input() to simulate user pressing Enter after "editing"
+        # Mock input() — edit files then confirm with "put updated"
         def mock_input_and_edit(prompt):
             # Find the session dir that was created by run_cleanup_flow
             session_dirs = list(tmp_path.glob(f"*-{self.agent_name}"))
@@ -208,7 +208,7 @@ class TestRunCleanupFlowIntegration:
             session_dir = session_dirs[0]
             for label in self.cleanup_labels:
                 (session_dir / f"{label}.txt").write_text(f"Edited {label}")
-            return ""  # Simulate pressing Enter
+            return "put updated"
         
         with patch("utils.memory_cleanup.prompt_for_labels", return_value=self.cleanup_labels):
             with patch("builtins.input", side_effect=mock_input_and_edit):

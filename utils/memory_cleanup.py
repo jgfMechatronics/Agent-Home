@@ -249,7 +249,18 @@ def run_cleanup_flow(
 
         # Pause for agent edit
         print("\n--- Agent can now edit the files ---")
-        input("Press Enter when editing is complete...")
+        print("When ready, type 'put updated' to write changes to server.")
+        print("Type 'abort' to cancel (original skill will be restored).")
+        
+        while True:
+            response = input("> ").strip().lower()
+            if response == "put updated":
+                break
+            elif response == "abort":
+                print("Aborted.")
+                return  # finally block still runs
+            else:
+                print("Invalid input. Type 'put updated' or 'abort'.")
         
         # Put updated blocks
         updated_blocks = load_from_files(session_dir, labels)
