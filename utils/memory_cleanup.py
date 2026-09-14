@@ -195,12 +195,6 @@ def put_skill(client: httpx.Client, agent_id: str, content: str) -> None:
     response.raise_for_status()
 
 
-def restore_skill(client: httpx.Client, agent_id: str, original_skill: str) -> None:
-    """Restore original skill and recompile."""
-    put_skill(client, agent_id, original_skill)
-    recompile(client, agent_id)
-
-
 def recompile(client: httpx.Client, agent_id: str) -> None:
     """Trigger system prompt recompilation."""
     response = client.post(f"/agents/{agent_id}/recompile_system_prompt")
@@ -237,34 +231,37 @@ def run_cleanup_flow(
     original_skill = get_skill(client, agent_id)
     cleanup_skill = skill_path.read_text()
     put_skill(client, agent_id, cleanup_skill)
-    recompile(client, agent_id)
-    print("Swapped in cleanup skill, recompiled.")
-    
-    # Prompt for labels (agent can now see cleanup guidance)
-    labels = prompt_for_labels()
-    validate_labels(labels)
-    
-    # Dump blocks to files
-    session_dir = create_session_dir(working_dir, agent_name)
-    blocks = get_blocks(client, agent_id, labels)
-    dump_to_files(session_dir, blocks)
-    print(f"\nBlocks dumped to: {session_dir}")
-    print(f"  Editable: {', '.join(f'{l}.txt' for l in labels)}")
-    print(f"  Backups:  backups/<label>-backup.txt (read-only)")
+    try:
+        recompile(client, agent_id)
+        print("Swapped in cleanup skill, recompiled.")
+        
+        # Prompt for labels (agent can now see cleanup guidance)
+        labels = prompt_for_labels()
+        validate_labels(labels)
+        
+        # Dump blocks to files
+        session_dir = create_session_dir(working_dir, agent_name)
+        blocks = get_blocks(client, agent_id, labels)
+        dump_to_files(session_dir, blocks)
+        print(f"\nBlocks dumped to: {session_dir}")
+        print(f"  Editable: {', '.join(f'{l}.txt' for l in labels)}")
+        print(f"  Backups:  backups/<label>-backup.txt (read-only)")
 
-    
-    # Pause for agent edit
-    print("\n--- Agent can now edit the files ---")
-    input("Press Enter when editing is complete...")
-    
-    # Put updated blocks
-    updated_blocks = load_from_files(session_dir, labels)
-    put_blocks(client, agent_id, updated_blocks)
-    print(f"Updated {len(updated_blocks)} blocks.")
-    
-    # Restore original skill
-    restore_skill(client, agent_id, original_skill)
-    print("Restored original skill, recompiled.")
+        # Pause for agent edit
+        print("\n--- Agent can now edit the files ---")
+        input("Press Enter when editing is complete...")
+        
+        # Put updated blocks
+        updated_blocks = load_from_files(session_dir, labels)
+        put_blocks(client, agent_id, updated_blocks)
+        print(f"Updated {len(updated_blocks)} blocks.")
+
+    finally:
+        # Restore original skill
+        put_skill(client, agent_id, original_skill)
+        recompile(client, agent_id)
+        print("Restored original skill, recompiled.")
+
     print("\nCleanup complete!")
 
 
