@@ -66,8 +66,8 @@ class TestSessionDir:
 class TestDumpToFiles:
     """Tests for dump_to_files function."""
     
-    def test_creates_editable_files(self, tmp_path: Path):
-        """Should create .txt files for each block."""
+    def test_creates_files(self, tmp_path: Path):
+        """Should create .txt files for each block. Editability confirmed by integration test"""
         blocks = {"persona": "I am Opus", "ephemera": "Recent events"}
         
         dump_to_files(tmp_path, blocks)
@@ -101,26 +101,18 @@ class TestLoadFromFiles:
         (tmp_path / "persona.txt").write_text("I am Opus")
         (tmp_path / "ephemera.txt").write_text("Recent events")
         
-        result = load_from_files(tmp_path, ["persona", "ephemera"], prompt_on_missing=False)
+        result = load_from_files(tmp_path, ["persona", "ephemera"])
         
         assert result == {"persona": "I am Opus", "ephemera": "Recent events"}
     
-    def test_raises_on_missing_file_no_prompt(self, tmp_path: Path):
-        """Should raise FileNotFoundError when file missing and no prompt."""
+    def test_raises_when_user_declines_retry(self, tmp_path: Path):
+        """Should raise FileNotFoundError when file missing and user declines."""
         (tmp_path / "persona.txt").write_text("exists")
         
-        with pytest.raises(FileNotFoundError, match="ephemera.txt"):
-            load_from_files(tmp_path, ["persona", "ephemera"], prompt_on_missing=False)
-    
-    def test_prompts_on_missing_file(self, tmp_path: Path):
-        """Should prompt user when file missing and prompt enabled."""
-        (tmp_path / "persona.txt").write_text("exists")
-        
-        # User says no to retry
         with patch("builtins.input", return_value="n"):
-            with patch("builtins.print"):  # Suppress warning output
-                with pytest.raises(FileNotFoundError):
-                    load_from_files(tmp_path, ["persona", "ephemera"], prompt_on_missing=True)
+            with patch("builtins.print"):
+                with pytest.raises(FileNotFoundError, match="ephemera.txt"):
+                    load_from_files(tmp_path, ["persona", "ephemera"])
     
     def test_retry_succeeds_when_file_created(self, tmp_path: Path):
         """Should succeed if file is created between retries."""
@@ -131,14 +123,13 @@ class TestLoadFromFiles:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                # Create the file before returning 'y'
                 (tmp_path / "ephemera.txt").write_text("created")
                 return "y"
             return "n"
         
         with patch("builtins.input", side_effect=create_file_on_first_call):
             with patch("builtins.print"):
-                result = load_from_files(tmp_path, ["persona", "ephemera"], prompt_on_missing=True)
+                result = load_from_files(tmp_path, ["persona", "ephemera"])
         
         assert result == {"persona": "exists", "ephemera": "created"}
 

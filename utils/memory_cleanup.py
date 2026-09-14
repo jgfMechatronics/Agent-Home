@@ -95,23 +95,20 @@ def dump_to_files(session_dir: Path, blocks: dict[str, str]) -> None:
         backup_file.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
 
 
-def load_from_files(
-    session_dir: Path,
-    labels: list[str],
-    prompt_on_missing: bool = True
-) -> dict[str, str]:
+def load_from_files(session_dir: Path, labels: list[str]) -> dict[str, str]:
     """Load memory block contents from files.
+    
+    Prompts user to retry if a file is missing.
     
     Args:
         session_dir: Directory to read files from
         labels: Labels to load
-        prompt_on_missing: If True, prompt user to retry when file is missing
         
     Returns:
         Dict mapping label -> content
         
     Raises:
-        FileNotFoundError: If a file is missing and user doesn't retry
+        FileNotFoundError: If a file is missing and user declines retry
     """
     blocks = {}
     
@@ -119,9 +116,6 @@ def load_from_files(
         file_path = session_dir / f"{label}.txt"
         
         while not file_path.exists():
-            if not prompt_on_missing:
-                raise FileNotFoundError(f"Missing file: {file_path}")
-            
             print(f"\nWarning: File not found: {file_path}")
             response = input("Retry after creating/restoring file? [y/N]: ").strip().lower()
             if response != 'y':
@@ -244,7 +238,7 @@ def run_cleanup_flow(
     input("Press Enter when editing is complete...")
     
     # Put updated blocks
-    updated_blocks = load_from_files(session_dir, labels, prompt_on_missing=True)
+    updated_blocks = load_from_files(session_dir, labels)
     put_blocks(client, agent_id, updated_blocks)
     print(f"Updated {len(updated_blocks)} blocks.")
     
@@ -277,7 +271,7 @@ def put_blocks_from_files(
     if not session_dir.exists():
         raise FileNotFoundError(f"Session directory not found: {session_dir}")
     
-    updated_blocks = load_from_files(session_dir, labels, prompt_on_missing=True)
+    updated_blocks = load_from_files(session_dir, labels)
     put_blocks(client, agent_id, updated_blocks)
     print(f"Updated {len(updated_blocks)} blocks from {session_dir}")
 
