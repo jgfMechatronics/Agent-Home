@@ -66,29 +66,22 @@ class TestSessionDir:
 class TestDumpToFiles:
     """Tests for dump_to_files function."""
     
-    def test_creates_files(self, tmp_path: Path):
-        """Should create .txt files for each block. Integration test verifies editability"""
+    def test_creates_editable_files(self, tmp_path: Path):
+        """Should create .txt files for each block."""
         blocks = {"persona": "I am Opus", "ephemera": "Recent events"}
         
-        dump_to_files(tmp_path, blocks, create_backups=False)
+        dump_to_files(tmp_path, blocks)
         
         assert (tmp_path / "persona.txt").read_text() == "I am Opus"
         assert (tmp_path / "ephemera.txt").read_text() == "Recent events"
     
-    def test_creates_backup_directory(self, tmp_path: Path):
-        """Should create backups/ subdirectory when backups enabled."""
+    def test_creates_readonly_backups(self, tmp_path: Path):
+        """Should create read-only backup files in backups/ subdirectory."""
         blocks = {"persona": "content"}
         
-        dump_to_files(tmp_path, blocks, create_backups=True)
+        dump_to_files(tmp_path, blocks)
         
         assert (tmp_path / "backups").is_dir()
-    
-    def test_creates_readonly_backups(self, tmp_path: Path):
-        """Backup files should be read-only."""
-        blocks = {"persona": "content"}
-        
-        dump_to_files(tmp_path, blocks, create_backups=True)
-        
         backup_file = tmp_path / "backups" / "persona-backup.txt"
         assert backup_file.exists()
         assert backup_file.read_text() == "content"
@@ -98,14 +91,6 @@ class TestDumpToFiles:
         assert not (mode & stat.S_IWUSR)  # No owner write
         assert not (mode & stat.S_IWGRP)  # No group write
         assert not (mode & stat.S_IWOTH)  # No other write
-    
-    def test_no_backups_when_disabled(self, tmp_path: Path):
-        """Should not create backups directory when disabled."""
-        blocks = {"persona": "content"}
-        
-        dump_to_files(tmp_path, blocks, create_backups=False)
-        
-        assert not (tmp_path / "backups").exists()
 
 
 class TestLoadFromFiles:

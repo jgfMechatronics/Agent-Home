@@ -70,25 +70,19 @@ def create_session_dir(working_dir: Path, agent_name: str) -> Path:
     return session_dir
 
 
-def dump_to_files(
-    session_dir: Path,
-    blocks: dict[str, str],
-    create_backups: bool = True
-) -> None:
+def dump_to_files(session_dir: Path, blocks: dict[str, str]) -> None:
     """Dump memory blocks to files in the session directory.
     
     Creates:
         <session_dir>/<label>.txt - Editable file
-        <session_dir>/backups/<label>-backup.txt - Read-only backup (if create_backups=True)
+        <session_dir>/backups/<label>-backup.txt - Read-only backup
     
     Args:
         session_dir: Directory to write files to
         blocks: Dict mapping label -> content
-        create_backups: Whether to create read-only backups
     """
-    if create_backups:
-        backup_dir = session_dir / "backups"
-        backup_dir.mkdir(exist_ok=True)
+    backup_dir = session_dir / "backups"
+    backup_dir.mkdir(exist_ok=True)
     
     for label, content in blocks.items():
         # Write editable file
@@ -96,11 +90,9 @@ def dump_to_files(
         edit_file.write_text(content)
         
         # Write read-only backup
-        if create_backups:
-            backup_file = backup_dir / f"{label}-backup.txt"
-            backup_file.write_text(content)
-            # Set read-only (remove write permissions)
-            backup_file.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+        backup_file = backup_dir / f"{label}-backup.txt"
+        backup_file.write_text(content)
+        backup_file.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
 
 
 def load_from_files(
@@ -241,7 +233,7 @@ def run_cleanup_flow(
     # Dump blocks to files
     session_dir = create_session_dir(working_dir, agent_name)
     blocks = get_blocks(client, agent_id, labels)
-    dump_to_files(session_dir, blocks, create_backups=True)
+    dump_to_files(session_dir, blocks)
     print(f"\nBlocks dumped to: {session_dir}")
     print(f"  Editable: {', '.join(f'{l}.txt' for l in labels)}")
     print(f"  Backups:  backups/<label>-backup.txt (read-only)")
