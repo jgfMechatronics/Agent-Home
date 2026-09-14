@@ -2,12 +2,12 @@
 import stat
 from pathlib import Path
 from unittest.mock import patch
+from datetime import datetime
 
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
-import utils.memory_cleanup as cleanup_module
 from agent.types import AgentDeps, BlockSettings
 from memory.block_crud import create_block
 from utils.memory_cleanup import (
@@ -178,40 +178,33 @@ class TestRunCleanupFlowIntegration:
 
     def test_full_cleanup_flow(self, tmp_path, cleanup_skill_file):
         """Full flow: swap skill, dump blocks, simulate edit, put, restore."""
-        # Save original module config
-        original_working_dir = cleanup_module.WORKING_DIR
-        original_skill_path = cleanup_module.CLEANUP_SKILL_PATH
         
-        try:
-            # Configure module to use test paths
-            cleanup_module.WORKING_DIR = tmp_path
-            cleanup_module.CLEANUP_SKILL_PATH = cleanup_skill_file
-            
-            # Mock input() to simulate user pressing Enter after "editing"
-            def mock_input_and_edit(prompt):
-                # Simulate agent editing the files
-                date_str = cleanup_module.datetime.now().strftime('%Y-%m-%d')
-                session_dir = tmp_path / f"{date_str}-{self.agent_name}"
-                for label in self.cleanup_labels:
-                    (session_dir / f"{label}.txt").write_text(f"Edited {label}")
-                return ""  # Simulate pressing Enter
-            
-            with patch("builtins.input", side_effect=mock_input_and_edit):
-                with patch("builtins.print"):  # Suppress output
-                    run_cleanup_flow(self.test_client, self.agent_name, self.cleanup_labels)
-            
-            # Verify blocks were updated
+        # Mock input() to simulate user pressing Enter after "editing"
+        def mock_input_and_edit(prompt):
+            # Simulate agent editing the files
+            date_str = datetime.now().strftime('%Y-%m-%d')
+            session_dir = tmp_path / f"{date_str}-{self.agent_name}"
             for label in self.cleanup_labels:
-                resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/{label}")
-                assert resp.json()["content"] == f"Edited {label}"
-            
-            # Verify skill was restored to original
-            resp = self.test_client.get(
-                f"/agents/{self.agent_id}/memory/blocks/{self.skill_label}"
-            )
-            assert resp.json()["content"] == self.skill_content
-            
-        finally:
-            # Restore original module config
-            cleanup_module.WORKING_DIR = original_working_dir
-            cleanup_module.CLEANUP_SKILL_PATH = original_skill_path
+                (session_dir / f"{label}.txt").write_text(f"Edited {label}")
+            return ""  # Simulate pressing Enter
+        
+        with patch("builtins.input", side_effect=mock_input_and_edit):
+            with patch("builtins.print"):  # Suppress output
+                run_cleanup_flow(
+                    self.test_client,
+                    self.agent_name,
+                    self.cleanup_labels,
+                    working_dir=tmp_path,
+                    skill_path=cleanup_skill_file,
+                )
+        
+        # Verify blocks were updated
+        for label in self.cleanup_labels:
+            resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/{label}")
+            assert resp.json()["content"] == f"Edited {label}"
+        
+        # Verify skill was restored to original
+        resp = self.test_client.get(
+            f"/agents/{self.agent_id}/memory/blocks/{self.skill_label}"
+        )
+        assert resp.json()["content"] == self.skill_content

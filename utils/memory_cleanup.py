@@ -56,13 +56,13 @@ def validate_labels(labels: list[str]) -> None:
 
 # --- File I/O Helpers ---
 
-def get_session_dir(agent_name: str) -> Path:
+def get_session_dir(working_dir: Path, agent_name: str) -> Path:
     """Get or create the session directory for an agent cleanup.
     
-    Creates: <WORKING_DIR>/<date>-<agent-name>/
+    Creates: <working_dir>/<date>-<agent-name>/
     """
     date_str = datetime.now().strftime("%Y-%m-%d")
-    session_dir = WORKING_DIR / f"{date_str}-{agent_name}"
+    session_dir = working_dir / f"{date_str}-{agent_name}"
     session_dir.mkdir(parents=True, exist_ok=True)
     return session_dir
 
@@ -202,7 +202,13 @@ def recompile(client: httpx.Client, agent_id: str) -> None:
 
 # --- Main Flows ---
 
-def run_cleanup_flow(client: httpx.Client, agent_name: str, labels: list[str]) -> None:
+def run_cleanup_flow(
+    client: httpx.Client,
+    agent_name: str,
+    labels: list[str],
+    working_dir: Path,
+    skill_path: Path,
+) -> None:
     """Run the full cleanup flow.
     
     1. Validate labels
@@ -216,19 +222,21 @@ def run_cleanup_flow(client: httpx.Client, agent_name: str, labels: list[str]) -
         client: HTTP client for API calls
         agent_name: Name of the agent
         labels: Memory block labels to clean up
+        working_dir: Base directory for cleanup sessions
+        skill_path: Path to the cleanup skill file
     """
     validate_labels(labels)
     agent_id = _get_agent_id(client, agent_name)
     
     # Save current skill and swap in cleanup skill
     original_skill = get_skill(client, agent_id)
-    cleanup_skill = CLEANUP_SKILL_PATH.read_text()
+    cleanup_skill = skill_path.read_text()
     put_skill(client, agent_id, cleanup_skill)
     recompile(client, agent_id)
     print(f"Swapped in cleanup skill, recompiled.")
     
     # Dump blocks to files
-    session_dir = get_session_dir(agent_name)
+    session_dir = get_session_dir(working_dir, agent_name)
     blocks = get_blocks(client, agent_id, labels)
     dump_to_files(session_dir, blocks, create_backups=True)
     print(f"\nBlocks dumped to: {session_dir}")
@@ -251,7 +259,12 @@ def run_cleanup_flow(client: httpx.Client, agent_name: str, labels: list[str]) -
     print("\nCleanup complete!")
 
 
-def put_blocks_from_files(client: httpx.Client, agent_name: str, labels: list[str]) -> None:
+def put_blocks_from_files(
+    client: httpx.Client,
+    agent_name: str,
+    labels: list[str],
+    working_dir: Path,
+) -> None:
     """Put blocks from files (recovery/resume flow).
     
     Use this if the full flow was interrupted after dumping but before putting,
@@ -261,11 +274,12 @@ def put_blocks_from_files(client: httpx.Client, agent_name: str, labels: list[st
         client: HTTP client for API calls
         agent_name: Name of the agent
         labels: Memory block labels to update
+        working_dir: Base directory for cleanup sessions
     """
     validate_labels(labels)
     agent_id = _get_agent_id(client, agent_name)
     
-    session_dir = get_session_dir(agent_name)
+    session_dir = get_session_dir(working_dir, agent_name)
     if not session_dir.exists():
         raise FileNotFoundError(f"Session directory not found: {session_dir}")
     
@@ -288,12 +302,16 @@ def main() -> None:
     agent_name = sys.argv[2]
     labels = sys.argv[3:]
     
+    # Read config from env (module-level defaults used if not set)
+    working_dir = WORKING_DIR
+    skill_path = CLEANUP_SKILL_PATH
+    
     try:
         with httpx.Client(base_url=SERVER_URL) as client:
             if command == "full":
-                run_cleanup_flow(client, agent_name, labels)
+                run_cleanup_flow(client, agent_name, labels, working_dir, skill_path)
             elif command == "put":
-                put_blocks_from_files(client, agent_name, labels)
+                put_blocks_from_files(client, agent_name, labels, working_dir)
             else:
                 print(f"Unknown command: {command}")
                 print("Use 'full' for complete flow or 'put' to just update blocks from files")
