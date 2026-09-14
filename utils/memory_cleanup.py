@@ -25,12 +25,17 @@ load_dotenv()
 
 # --- Configuration ---
 
-WORKING_DIR = Path(os.environ.get("MEMORY_CLEANUP_WORKING_DIR", "./memory_cleanup_sessions"))
-CLEANUP_SKILL_PATH = Path(os.environ.get("MEMORY_CLEANUP_SKILL_PATH", ""))
+def _require_env(name: str) -> str:
+    """Get required environment variable, raising if missing or empty."""
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise EnvironmentError(f"Required environment variable not set: {name}")
+    return value
+
+
 SERVER_URL = os.environ.get("AGENT_HOME_SERVER_URL", "http://localhost:8000")
 
 FORBIDDEN_LABELS = {"active-skill"}
-
 
 
 # --- Validation ---
@@ -65,7 +70,13 @@ def create_session_dir(working_dir: Path, agent_name: str) -> Path:
     """
     date_str = datetime.now().strftime("%Y-%m-%d")
     session_dir = working_dir / f"{date_str}-{agent_name}"
-    session_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        session_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        raise FileExistsError(
+            f"Session directory already exists: {session_dir}\n"
+            "Hint: Move/remove the existing directory, or use 'put --session-dir' to resume."
+        ) from None
     return session_dir
 
 
@@ -334,7 +345,9 @@ def main() -> None:
     
     with httpx.Client(base_url=SERVER_URL) as client:
         if args.command == "full":
-            run_cleanup_flow(client, args.agent, WORKING_DIR, CLEANUP_SKILL_PATH)
+            working_dir = Path(_require_env("MEMORY_CLEANUP_WORKING_DIR"))
+            skill_path = Path(_require_env("MEMORY_CLEANUP_SKILL_PATH"))
+            run_cleanup_flow(client, args.agent, working_dir, skill_path)
         elif args.command == "put":
             put_blocks_from_files(client, args.agent, args.labels, args.session_dir)
 

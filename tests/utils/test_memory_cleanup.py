@@ -201,6 +201,9 @@ class TestRunCleanupFlowIntegration:
     def test_full_cleanup_flow(self, tmp_path, cleanup_skill_file):
         """Full flow: swap skill, prompt for labels, dump, simulate edit, put, restore."""
         # Mock input() — edit files then confirm with "put updated"
+        # WARNING: This mock writes files AND returns confirmation in one call.
+        # Fragile if flow gains additional input() calls before "put updated".
+        # Can't write files beforehand — dump_to_files would overwrite them.
         def mock_input_and_edit(prompt):
             # Find the session dir that was created by run_cleanup_flow
             session_dirs = list(tmp_path.glob(f"*-{self.agent_name}"))
