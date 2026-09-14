@@ -134,6 +134,100 @@ class TestLoadFromFiles:
 
 
 # --- Integration Test ---
-# Note: Full integration test of run_cleanup_flow with TestClient is complex due to
-# async DB fixtures. The HTTP helpers are thin wrappers, so we test them via live testing
-# against a real server instead. Unit tests above cover the file I/O logic thoroughly.
+
+class TestRunCleanupFlowIntegration:
+    """Integration test for full cleanup flow against real app.
+    
+    Key insight: TestClient only runs lifespan when used as context manager.
+    Without context manager, it skips lifespan — we rely on override_db_session
+    fixture (autouse) to inject the test session into routes.
+    """
+    
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup_agent_with_blocks(self, session, app):
+        """Create a real agent with memory blocks for testing."""
+        from agent.crud import create_agent_record
+        from agent.types import AgentConfig, AgentDeps, BlockSettings
+        from memory.block_crud import create_block
+        from fastapi.testclient import TestClient
+        
+        self.session = session
+        self.app = app
+        
+        # Create agent
+        config = AgentConfig(
+            model_name="claude-haiku-4-5-20251001",
+            tool_names=[],
+            soft_compaction_limit=1000,
+        )
+        self.agent = await create_agent_record(
+            session, "TestAgent", "Test instructions", config
+        )
+        self.agent_id = self.agent.id
+        
+        # Create AgentDeps for block creation
+        deps = AgentDeps(session=session, agent_record=self.agent)
+        
+        # Create memory blocks including active-skill for the cleanup flow
+        await create_block(deps, BlockSettings(label="active-skill"), "Original skill content")
+        await create_block(deps, BlockSettings(label="persona"), "Original persona content")
+        await create_block(deps, BlockSettings(label="ephemera"), "Original ephemera content")
+        await session.commit()
+        
+        # TestClient WITHOUT context manager = no lifespan run
+        # override_db_session fixture handles routing to test session
+        # base_url required for TrustedHostMiddleware validation
+        self.test_client = TestClient(app, base_url="http://localhost")
+    
+    @pytest.fixture
+    def cleanup_skill_file(self, tmp_path):
+        """Create a temporary cleanup skill file."""
+        skill_file = tmp_path / "cleanup_skill.txt"
+        skill_file.write_text("You are in cleanup mode. Edit your memory blocks.")
+        return skill_file
+
+    def test_full_cleanup_flow(self, tmp_path, cleanup_skill_file):
+        """Full flow: swap skill, dump blocks, simulate edit, put, restore."""
+        import utils.memory_cleanup as cleanup_module
+        
+        # Save original module config
+        original_working_dir = cleanup_module.WORKING_DIR
+        original_skill_path = cleanup_module.CLEANUP_SKILL_PATH
+        
+        try:
+            # Configure module to use test paths
+            cleanup_module.WORKING_DIR = tmp_path
+            cleanup_module.CLEANUP_SKILL_PATH = cleanup_skill_file
+            
+            # Get original skill content for comparison
+            resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/active-skill")
+            assert resp.status_code == 200, f"Failed to get skill: {resp.text}"
+            original_skill = resp.json()["content"]
+            
+            # Mock input() to simulate user pressing Enter after "editing"
+            def mock_input_and_edit(prompt):
+                # Simulate agent editing the files
+                session_dir = tmp_path / f"{cleanup_module.datetime.now().strftime('%Y-%m-%d')}-TestAgent"
+                (session_dir / "persona.txt").write_text("Edited persona content")
+                (session_dir / "ephemera.txt").write_text("Edited ephemera content")
+                return ""  # Simulate pressing Enter
+            
+            with patch("builtins.input", side_effect=mock_input_and_edit):
+                with patch("builtins.print"):  # Suppress output
+                    run_cleanup_flow(self.test_client, "TestAgent", ["persona", "ephemera"])
+            
+            # Verify blocks were updated
+            resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/persona")
+            assert resp.json()["content"] == "Edited persona content"
+            
+            resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/ephemera")
+            assert resp.json()["content"] == "Edited ephemera content"
+            
+            # Verify skill was restored
+            resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/active-skill")
+            assert resp.json()["content"] == original_skill
+            
+        finally:
+            # Restore original module config
+            cleanup_module.WORKING_DIR = original_working_dir
+            cleanup_module.CLEANUP_SKILL_PATH = original_skill_path

@@ -195,7 +195,7 @@ def restore_skill(client: httpx.Client, agent_id: str, original_skill: str) -> N
 
 def recompile(client: httpx.Client, agent_id: str) -> None:
     """Trigger system prompt recompilation."""
-    response = client.post(f"/agents/{agent_id}/memory/recompile")
+    response = client.post(f"/agents/{agent_id}/recompile_system_prompt")
     response.raise_for_status()
 
 
