@@ -2,7 +2,6 @@
 import stat
 from pathlib import Path
 from unittest.mock import patch
-from datetime import datetime
 
 import pytest
 import pytest_asyncio
