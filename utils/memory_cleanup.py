@@ -325,18 +325,11 @@ def main() -> None:
     
     args = parser.parse_args()
     
-    try:
-        with httpx.Client(base_url=SERVER_URL) as client:
-            if args.command == "full":
-                run_cleanup_flow(client, args.agent, WORKING_DIR, CLEANUP_SKILL_PATH)
-            elif args.command == "put":
-                put_blocks_from_files(client, args.agent, args.labels, args.session_dir)
-    except ValidationError as e:
-        print(f"Validation error: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+    with httpx.Client(base_url=SERVER_URL) as client:
+        if args.command == "full":
+            run_cleanup_flow(client, args.agent, WORKING_DIR, CLEANUP_SKILL_PATH)
+        elif args.command == "put":
+            put_blocks_from_files(client, args.agent, args.labels, args.session_dir)
 
 
 if __name__ == "__main__":
