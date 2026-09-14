@@ -2,12 +2,12 @@
 Memory cleanup utility for Agent Home.
 
 Provides workflows for agents to clean up their memory blocks:
-1. run_cleanup_flow: Full flow with skill swap, dump, edit, restore
-2. put_blocks_from_files: Resume/recovery - just put edited files back
+1. run_cleanup_flow: Full flow with skill swap, prompt for labels, dump, edit, restore
+2. put_blocks_from_files: Resume/recovery - put edited files back
 
 Usage:
-    python -m utils.memory_cleanup full <agent_name> <label1> <label2> ...
-    python -m utils.memory_cleanup put <agent_name> <session_dir> <label1> <label2> ...
+    python -m utils.memory_cleanup full --agent <name>
+    python -m utils.memory_cleanup put --agent <name> --session-dir <path> --labels <label1> [label2 ...]
 
 Environment variables (via .env):
     MEMORY_CLEANUP_WORKING_DIR: Base folder for cleanup sessions (used by 'full' command)
@@ -126,6 +126,24 @@ def load_from_files(session_dir: Path, labels: list[str]) -> dict[str, str]:
     return blocks
 
 
+def prompt_for_labels() -> list[str]:
+    """Prompt user for memory block labels to clean up.
+    
+    Returns:
+        List of label strings (whitespace-separated input)
+        
+    Raises:
+        ValueError: If no labels provided
+    """
+    print("\nEnter memory block labels to clean up (space-separated):")
+    raw = input("> ").strip()
+    
+    if not raw:
+        raise ValueError("No labels provided")
+    
+    return raw.split()
+
+
 # --- HTTP Helpers ---
 
 def _get_agent_id(client: httpx.Client, agent_name: str) -> str:
@@ -194,27 +212,25 @@ def recompile(client: httpx.Client, agent_id: str) -> None:
 def run_cleanup_flow(
     client: httpx.Client,
     agent_name: str,
-    labels: list[str],
     working_dir: Path,
     skill_path: Path,
 ) -> None:
     """Run the full cleanup flow.
     
-    1. Validate labels
-    2. Swap in cleanup skill
-    3. Dump blocks to files
-    4. Pause for agent to edit
-    5. Put updated blocks
-    6. Restore original skill
+    1. Swap in cleanup skill (so agent can see cleanup guidance)
+    2. Prompt for labels to clean up
+    3. Validate labels
+    4. Dump blocks to files
+    5. Pause for agent to edit
+    6. Put updated blocks
+    7. Restore original skill
     
     Args:
         client: HTTP client for API calls
         agent_name: Name of the agent
-        labels: Memory block labels to clean up
         working_dir: Base directory for cleanup sessions
         skill_path: Path to the cleanup skill file
     """
-    validate_labels(labels)
     agent_id = _get_agent_id(client, agent_name)
     
     # Save current skill and swap in cleanup skill
@@ -222,7 +238,11 @@ def run_cleanup_flow(
     cleanup_skill = skill_path.read_text()
     put_skill(client, agent_id, cleanup_skill)
     recompile(client, agent_id)
-    print(f"Swapped in cleanup skill, recompiled.")
+    print("Swapped in cleanup skill, recompiled.")
+    
+    # Prompt for labels (agent can now see cleanup guidance)
+    labels = prompt_for_labels()
+    validate_labels(labels)
     
     # Dump blocks to files
     session_dir = create_session_dir(working_dir, agent_name)
@@ -280,33 +300,37 @@ def put_blocks_from_files(
 
 def main() -> None:
     """CLI entry point."""
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
+    import argparse
     
-    command = sys.argv[1]
+    parser = argparse.ArgumentParser(
+        description="Memory cleanup utility for Agent Home agents."
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    
+    # Full cleanup flow
+    full_parser = subparsers.add_parser(
+        "full",
+        help="Run full cleanup flow (swap skill, dump, edit, restore)"
+    )
+    full_parser.add_argument("--agent", required=True, help="Agent name")
+    
+    # Put blocks from files (recovery)
+    put_parser = subparsers.add_parser(
+        "put",
+        help="Put blocks from files (recovery/resume)"
+    )
+    put_parser.add_argument("--agent", required=True, help="Agent name")
+    put_parser.add_argument("--session-dir", required=True, type=Path, help="Session directory path")
+    put_parser.add_argument("--labels", required=True, nargs="+", help="Labels to update")
+    
+    args = parser.parse_args()
     
     try:
         with httpx.Client(base_url=SERVER_URL) as client:
-            if command == "full":
-                if len(sys.argv) < 4:
-                    print("Usage: python -m utils.memory_cleanup full <agent_name> <label1> [label2 ...]")
-                    sys.exit(1)
-                agent_name = sys.argv[2]
-                labels = sys.argv[3:]
-                run_cleanup_flow(client, agent_name, labels, WORKING_DIR, CLEANUP_SKILL_PATH)
-            elif command == "put":
-                if len(sys.argv) < 5:
-                    print("Usage: python -m utils.memory_cleanup put <agent_name> <session_dir> <label1> [label2 ...]")
-                    sys.exit(1)
-                agent_name = sys.argv[2]
-                session_dir = Path(sys.argv[3])
-                labels = sys.argv[4:]
-                put_blocks_from_files(client, agent_name, labels, session_dir)
-            else:
-                print(f"Unknown command: {command}")
-                print("Use 'full' for complete flow or 'put' to just update blocks from files")
-                sys.exit(1)
+            if args.command == "full":
+                run_cleanup_flow(client, args.agent, WORKING_DIR, CLEANUP_SKILL_PATH)
+            elif args.command == "put":
+                put_blocks_from_files(client, args.agent, args.labels, args.session_dir)
     except ValidationError as e:
         print(f"Validation error: {e}")
         sys.exit(1)

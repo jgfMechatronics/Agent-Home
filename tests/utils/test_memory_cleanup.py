@@ -15,6 +15,7 @@ from utils.memory_cleanup import (
     create_session_dir,
     dump_to_files,
     load_from_files,
+    prompt_for_labels,
     run_cleanup_flow,
     validate_labels,
 )
@@ -40,6 +41,25 @@ class TestValidateLabels:
     def test_empty_list_valid(self):
         """Empty list is valid (no forbidden labels)."""
         validate_labels([])
+
+
+class TestPromptForLabels:
+    """Tests for prompt_for_labels function."""
+    
+    def test_parses_space_separated_input(self):
+        """Should parse space-separated labels."""
+        with patch("builtins.input", return_value="persona ephemera working-memory"):
+            with patch("builtins.print"):
+                result = prompt_for_labels()
+        
+        assert result == ["persona", "ephemera", "working-memory"]
+    
+    def test_raises_on_empty_input(self):
+        """Should raise ValueError when no labels provided."""
+        with patch("builtins.input", return_value="   "):
+            with patch("builtins.print"):
+                with pytest.raises(ValueError, match="No labels provided"):
+                    prompt_for_labels()
 
 
 class TestSessionDir:
@@ -174,7 +194,7 @@ class TestRunCleanupFlowIntegration:
         return skill_file
 
     def test_full_cleanup_flow(self, tmp_path, cleanup_skill_file):
-        """Full flow: swap skill, dump blocks, simulate edit, put, restore."""
+        """Full flow: swap skill, prompt for labels, dump, simulate edit, put, restore."""
         # Mock input() to simulate user pressing Enter after "editing"
         def mock_input_and_edit(prompt):
             # Find the session dir that was created by run_cleanup_flow
@@ -185,15 +205,15 @@ class TestRunCleanupFlowIntegration:
                 (session_dir / f"{label}.txt").write_text(f"Edited {label}")
             return ""  # Simulate pressing Enter
         
-        with patch("builtins.input", side_effect=mock_input_and_edit):
-            with patch("builtins.print"):  # Suppress output
-                run_cleanup_flow(
-                    self.test_client,
-                    self.agent_name,
-                    self.cleanup_labels,
-                    working_dir=tmp_path,
-                    skill_path=cleanup_skill_file,
-                )
+        with patch("utils.memory_cleanup.prompt_for_labels", return_value=self.cleanup_labels):
+            with patch("builtins.input", side_effect=mock_input_and_edit):
+                with patch("builtins.print"):
+                    run_cleanup_flow(
+                        self.test_client,
+                        self.agent_name,
+                        working_dir=tmp_path,
+                        skill_path=cleanup_skill_file,
+                    )
         
         # Verify blocks were updated
         for label in self.cleanup_labels:
