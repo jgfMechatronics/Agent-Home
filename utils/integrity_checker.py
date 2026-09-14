@@ -233,8 +233,8 @@ def _find_issues_in_suspect_parts(
     part_hashes_suspected_of_duplication: list[str],
     part_hash_table: dict[str, list[PartAndMetadata]],
 ) -> list[IntegrityIssue]:
-    CONTENT_LENGTH_THRESHOLD = 35
-    SHORT_CONTENT_FREQ_THRESHOLD = 3
+    CONTENT_LENGTH_THRESHOLD = 75
+    CONTENT_PREVIEW_MAX = 700
     integrity_issues = []
 
     for suspect_hash in part_hashes_suspected_of_duplication:
@@ -254,22 +254,21 @@ def _find_issues_in_suspect_parts(
             # content is long enough that legit repetition by chance is very unlikely
             severity = ERROR
             detail_preamble = "High length duplicate content detected. Higher length content is less likely to naturally recur."
-        elif len(suspect_part_and_meta_list) >= SHORT_CONTENT_FREQ_THRESHOLD:
-            # Even though its short, this much repetition is suspicious
-            # NOTE: we may find we need an intermediate threshold or regex for stuff like "ok"
-            severity = WARN
-            detail_preamble = "Short length duplicate content detected with suspect frequency."
         else:
-            # Short content that didn't occur many times or adjacently. Not that sus
+            # Short content that didn't occur adjacently. Natural repetition, not suspicious.
             severity = NO_ERROR
 
         if severity != NO_ERROR:
             bad_seq_ids = [p.seq_id for p in suspect_part_and_meta_list]
+            raw_content = str(suspect_part_and_meta_list[0].part.content)
+            content_preview = raw_content[:CONTENT_PREVIEW_MAX]
+            if len(raw_content) > CONTENT_PREVIEW_MAX:
+                content_preview += f"... [truncated, {len(raw_content)} chars total]"
             integrity_issues.append(IntegrityIssue(
                 check_type="content_duplicate",
                 severity=severity,
                 seq_ids=bad_seq_ids,
-                details=detail_preamble + f" Duplication occurred at seq_ids: {bad_seq_ids}",
+                details=detail_preamble + f" Duplication occurred at seq_ids: {bad_seq_ids}. Content: {content_preview!r}",
             ))
 
     return integrity_issues

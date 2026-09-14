@@ -310,14 +310,15 @@ MODELMESSAGE_TIMESTAMP_TEST_CASES = [
 # Check 3: Content Duplicate Test Cases
 # ---------------------------------------------------------------------------
 
-_CONTENT_LENGTH_THRESHOLD = 35  # must match the threshold in the impl
+_CONTENT_LENGTH_THRESHOLD = 75  # must match the threshold in the impl
+_LONG_DUP_PART_CONTENT = "x" * (_CONTENT_LENGTH_THRESHOLD + 1)  # the part content string, for expected detail assertions
 
 # Pre-baked overrides dicts for use in make_message_sequence.
 # Each is computed once so both records get identical serialized content (simulating re-persistence).
 # UserPromptPart duplicates (ModelRequest)
 _EMPTY_DUP = {"type": "ModelRequest", "content": dump_msg_json(make_request(""))}
 _SHORT_DUP = {"type": "ModelRequest", "content": dump_msg_json(make_request("ok"))}
-_LONG_DUP  = {"type": "ModelRequest", "content": dump_msg_json(make_request("x" * (_CONTENT_LENGTH_THRESHOLD + 1)))}
+_LONG_DUP  = {"type": "ModelRequest", "content": dump_msg_json(make_request(_LONG_DUP_PART_CONTENT))}
 
 _ALERT_TEXT = format_system_alert("Unexpected big chungus detected")
 _SYSTEM_ALERT = {"type": "ModelRequest", "content": dump_msg_json(make_request(_ALERT_TEXT))}
@@ -334,7 +335,7 @@ def _make_thinking_and_text_response(thinking: str, text: str) -> ModelResponse:
 
 # Two variants with distinct timestamps so _check_modelmessage_timestamps doesn't
 # fire when these are placed in adjacent records for content-duplicate testing.
-_LONG_THINKING_TEXT = "x" * (_CONTENT_LENGTH_THRESHOLD + 1)
+_LONG_THINKING_TEXT = _LONG_DUP_PART_CONTENT  # same length as _LONG_DUP, reuse constant
 _LONG_THINKING_DUP_A = {
     "type": "ModelResponse",
     "content": dump_msg_json(_make_thinking_response(_LONG_THINKING_TEXT, _MSG_TS1)),
@@ -364,7 +365,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
             details=(
                 "Duplicate content found in adjacent messages. "
                 "Adjacent duplication is unlikely to naturally occur. "
-                "Duplication occurred at seq_ids: [0, 1]"
+                f"Duplication occurred at seq_ids: [0, 1]. Content: {_LONG_DUP_PART_CONTENT!r}"
             ),
         )],
         id="adjacent_duplicate_long",
@@ -383,7 +384,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
             details=(
                 "Duplicate content found in adjacent messages. "
                 "Adjacent duplication is unlikely to naturally occur. "
-                "Duplication occurred at seq_ids: [0, 1]"
+                "Duplication occurred at seq_ids: [0, 1]. Content: 'ok'"
             ),
         )],
         id="adjacent_duplicate_short",
@@ -405,7 +406,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
             details=(
                 "High length duplicate content detected. "
                 "Higher length content is less likely to naturally recur. "
-                "Duplication occurred at seq_ids: [0, 5]"
+                f"Duplication occurred at seq_ids: [0, 5]. Content: {_LONG_DUP_PART_CONTENT!r}"
             ),
         )],
         id="non_adjacent_duplicate_long",
@@ -420,25 +421,17 @@ CONTENT_DUPLICATE_TEST_CASES = [
         [],
         id="non_adjacent_duplicate_short_2x_no_issue",
     ),
-    # Non-adjacent, short content, 3 occurrences — WARN
+    # Non-adjacent, short content, 3 occurrences — no issue (short content repeating naturally is expected)
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
             {**_SHORT_DUP},
             {},              # unique
             {**_SHORT_DUP},  # 2nd
             {},              # unique
-            {**_SHORT_DUP},  # 3rd — crosses frequency threshold
+            {**_SHORT_DUP},  # 3rd — short content, non-adjacent: not suspicious
         ]),
-        [IntegrityIssue(
-            check_type="content_duplicate",
-            severity=WARN,
-            seq_ids=[0, 2, 4],
-            details=(
-                "Short length duplicate content detected with suspect frequency. "
-                "Duplication occurred at seq_ids: [0, 2, 4]"
-            ),
-        )],
-        id="non_adjacent_duplicate_short_3x_warn",
+        [],
+        id="non_adjacent_duplicate_short_3x_no_issue",
     ),
     # ThinkingPart: adjacent duplicate — verifies thinking block content is inspected at all
     pytest.param(
@@ -462,7 +455,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
                 details=(
                     "Duplicate content found in adjacent messages. "
                     "Adjacent duplication is unlikely to naturally occur. "
-                    "Duplication occurred at seq_ids: [0, 1]"
+                    f"Duplication occurred at seq_ids: [0, 1]. Content: {_LONG_THINKING_TEXT!r}"
                 ),
             ),
         ],
@@ -476,13 +469,13 @@ CONTENT_DUPLICATE_TEST_CASES = [
             {
                 "type": "ModelResponse",
                 "content": dump_msg_json(_make_thinking_and_text_response(
-                    "x" * (_CONTENT_LENGTH_THRESHOLD + 1), str(uuid4()),
+                    _LONG_THINKING_TEXT, str(uuid4()),
                 )),
             },
             {
                 "type": "ModelResponse",
                 "content": dump_msg_json(_make_thinking_and_text_response(
-                    "x" * (_CONTENT_LENGTH_THRESHOLD + 1), str(uuid4()),
+                    _LONG_THINKING_TEXT, str(uuid4()),
                 )),
             },
         ]),
@@ -500,7 +493,7 @@ CONTENT_DUPLICATE_TEST_CASES = [
                 details=(
                     "Duplicate content found in adjacent messages. "
                     "Adjacent duplication is unlikely to naturally occur. "
-                    "Duplication occurred at seq_ids: [0, 1]"
+                    f"Duplication occurred at seq_ids: [0, 1]. Content: {_LONG_THINKING_TEXT!r}"
                 ),
             ),
         ],
