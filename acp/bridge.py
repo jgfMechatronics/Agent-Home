@@ -185,6 +185,20 @@ def available_commands_update(session_id: str, commands: list[dict[str, Any]]) -
     })
 
 
+def nori_status_update(session_id: str, status: str) -> dict[str, Any]:
+    """Build a SessionInfoUpdate with Nori's observer-turn status marker.
+
+    Sending status="working" sets observer_turn_active in Nori, suppressing the
+    "Received update with no active local request" warning for unsolicited content
+    (history replay, background-polled inter-agent messages, etc.).
+    Sending status="idle" clears it and resets the warning state.
+    """
+    return session_update(session_id, {
+        "sessionUpdate": "session_info_update",
+        "_meta": {"nori": {"status": status}},
+    })
+
+
 # =============================================================================
 # Bridge State
 # =============================================================================
@@ -459,9 +473,14 @@ async def replay_history(state: BridgeState, session_id: str, client: httpx.Asyn
     # Limit to last N messages to avoid replaying entire history
     items = items[-HISTORY_REPLAY_LIMIT:]
 
-    latest_seq_id = _replay_message_items(session_id, items)
-    if latest_seq_id is not None:
-        state.last_message_seq_id = latest_seq_id
+    if items:
+        # Signal Nori that unsolicited content is coming so it doesn't show the
+        # "no active local request" warning or incorrectly start the run timer.
+        send(nori_status_update(session_id, "working"))
+        latest_seq_id = _replay_message_items(session_id, items)
+        send(nori_status_update(session_id, "idle"))
+        if latest_seq_id is not None:
+            state.last_message_seq_id = latest_seq_id
 
 
 async def _update_watermark(state: BridgeState, session_id: str, client: httpx.AsyncClient) -> None:
@@ -509,7 +528,9 @@ async def poll_for_new_messages(
             resp.raise_for_status()
             items = resp.json().get("messages", [])
             if items:
+                send(nori_status_update(session_id, "working"))
                 latest_seq_id = _replay_message_items(session_id, items)
+                send(nori_status_update(session_id, "idle"))
                 if latest_seq_id is not None:
                     state.last_message_seq_id = latest_seq_id
         except asyncio.CancelledError:
