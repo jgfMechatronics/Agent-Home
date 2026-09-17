@@ -19,6 +19,18 @@ from dataclasses import dataclass, field
 # ---------------------------------------------------------------------------
 
 @dataclass
+class UserPromptEvent:
+    """Emitted before RunStarted — carries the message that initiated the background run.
+
+    Allows the TUI to display what triggered the agent's turn (e.g. an inter-agent
+    message) before the agent starts responding, mirroring how user-initiated turns
+    show the prompt.
+    """
+    content: str
+    event_kind: str = field(default="user_prompt", init=False)
+
+
+@dataclass
 class RunStartedEvent:
     """Emitted before the first pydantic-ai event in a background run."""
     event_kind: str = field(default="run_started", init=False)
