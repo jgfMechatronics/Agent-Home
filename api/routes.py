@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
-from agent.streaming import RunCompletedEvent, RunStartedEvent, register_subscriber, unregister_subscriber
+from agent.streaming import RunCompletedEvent, RunStartedEvent, broadcast, register_subscriber, unregister_subscriber
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps
@@ -85,6 +85,7 @@ async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
 
 @router.post("/{agent_id}/messages", response_class=EventSourceResponse)
 async def handle_message(
+    request: Request,
     agent_id: str,
     body: MessageRequest,
     agent_and_deps: tuple[Agent, AgentDeps] = Depends(get_agent_and_deps),
@@ -94,13 +95,31 @@ async def handle_message(
     # AgentNotFoundError / AgentLockedError are translated to HTTP 404/503 by get_agent_and_deps
     agent, deps = agent_and_deps # This would be inside the try/except but cleanup assumes we have deps
 
+    # Callers that are already subscribed to /stream (e.g. the TUI bridge) set this
+    # header so we don't also broadcast to the pubsub and cause duplicates.
+    suppress = request.headers.get("X-Suppress-Broadcast", "").lower() == "true"
+
     try:
         agent_app_state = agent_app_state_reg[agent_id]
-        async for event in run_stateful_agent(agent=agent,
-                                              deps=deps, 
-                                              agent_app_state=agent_app_state,
-                                              user_prompt=body.message):
-            yield map_to_sse(event)
+        if not suppress:
+            await broadcast(agent_id, RunStartedEvent(prompt=body.message))
+        status = "success"
+        try:
+            async for event in run_stateful_agent(agent=agent,
+                                                  deps=deps,
+                                                  agent_app_state=agent_app_state,
+                                                  user_prompt=body.message):
+                yield map_to_sse(event)
+                if not suppress:
+                    await broadcast(agent_id, event)
+        except Exception:
+            status = "error"
+            raise
+        finally:
+            if agent_app_state_reg[agent_id].cancel_requested.is_set():
+                status = "cancelled"
+            if not suppress:
+                await broadcast(agent_id, RunCompletedEvent(status=status))
     except MCPConnError as e:
         logger.error("MCP connection error for agent %s: %s", agent_id, e)
         yield ServerSentEvent(
