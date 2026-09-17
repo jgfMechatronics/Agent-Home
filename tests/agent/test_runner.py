@@ -10,7 +10,7 @@ import asyncio
 import importlib.metadata
 import json
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
 # Third-party
@@ -280,6 +280,63 @@ class TestHandleMessage(_BaseRouteTest):
         assert events[0]["event"] == "SlashCommandResult"
         assert events[0]["data"]["name"] == "user_recompile"
         assert events[0]["data"]["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# Broadcast / suppress tests
+# ---------------------------------------------------------------------------
+
+class TestHandleMessageBroadcast(_BaseRouteTest):
+    """Tests for pubsub broadcasting from POST /agents/{agent_id}/messages.
+
+    Without X-Suppress-Broadcast: events are broadcast so other TUIs / the pubsub
+    stream can observe GC and other non-bridge-initiated runs.
+
+    With X-Suppress-Broadcast: true: no broadcast, because the bridge is already
+    consuming events directly via HTTP and is also subscribed to /stream.
+
+    Uses the same MINIMAL_STREAM fixture pattern as TestHandleMessage via
+    _BaseRouteTest + conftest make_mock_agent infrastructure.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, app: FastAPI, agent_record: AgentRecord):
+        self.agent_record = agent_record
+        with patch("api.routes.get_agent_and_deps", return_value=make_mock_agent(app, agent_record)):
+            yield
+
+    async def test_broadcasts_when_no_suppress_header(self, client: AsyncClient):
+        """Without suppress header, RunStartedEvent and RunCompletedEvent are broadcast."""
+        async def _stream(*args, **kwargs):
+            yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta="hi"))
+
+        with patch("api.routes.broadcast", new_callable=AsyncMock) as mock_broadcast, \
+             patch("api.routes.run_stateful_agent", side_effect=_stream):
+            async with client.stream("POST", f"/agents/{self.agent_record.id}/messages",
+                                     json={"message": "hello"}) as resp:
+                assert resp.status_code == 200
+                async for _ in resp.aiter_lines():
+                    pass
+
+        broadcast_types = [type(call.args[1]).__name__ for call in mock_broadcast.call_args_list]
+        assert "RunStartedEvent" in broadcast_types
+        assert "RunCompletedEvent" in broadcast_types
+
+    async def test_suppresses_broadcast_with_header(self, client: AsyncClient):
+        """With X-Suppress-Broadcast: true, broadcast is never called."""
+        async def _stream(*args, **kwargs):
+            yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta="hi"))
+
+        with patch("api.routes.broadcast", new_callable=AsyncMock) as mock_broadcast, \
+             patch("api.routes.run_stateful_agent", side_effect=_stream):
+            async with client.stream("POST", f"/agents/{self.agent_record.id}/messages",
+                                     json={"message": "hello"},
+                                     headers={"X-Suppress-Broadcast": "true"}) as resp:
+                assert resp.status_code == 200
+                async for _ in resp.aiter_lines():
+                    pass
+
+        mock_broadcast.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
