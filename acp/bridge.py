@@ -36,8 +36,8 @@ IDLE_DEBOUNCE_SECONDS = 5.0
 # Nori renders backtick-wrapped text as teal inline code, making these visually distinct.
 # TODO: remove markers and restore agent_thought_chunk calls once Nori supports thinking
 # display natively (tracked in upstream issue).
-THINKING_START_MARKER = "\n`━━━━━ THINKING ━━━━━`\n"
-THINKING_END_MARKER   = "\n`━━━━━ END THINKING ━━━━━`\n"
+THINKING_START_MARKER = "\n`━━━━━ THINKING ━━━━━`\n\n"
+THINKING_END_MARKER   = "\n\n`━━━━━ END THINKING ━━━━━`\n\n"
 
 
 # =============================================================================
