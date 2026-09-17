@@ -10,10 +10,11 @@ have full write access. Worth revisiting when we have bandwidth.
 
 TODO: We have some exception catching and mapping that doesn't use "raise ... from e", probably some places we want to add the chaining.
 """
+import asyncio
 import logging
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import ValidationError
 from pydantic_ai import Agent, AgentRunResultEvent
@@ -21,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
+from agent.streaming import RunCompletedEvent, RunStartedEvent, register_subscriber, unregister_subscriber
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps
@@ -113,6 +115,34 @@ async def handle_message(
             data={"message": f"\n\nUnexpected internal server error: '{type(e).__name__}: {str(e)}'"},
             event="Error",
         )
+
+
+@router.get("/{agent_id}/stream", response_class=EventSourceResponse)
+async def stream_agent_events(
+    agent_id: str,
+    request: Request,
+) -> AsyncGenerator[ServerSentEvent, None]:
+    """Long-lived SSE stream of all run events for agent_id, regardless of who initiated the run.
+
+    Emits synthetic RunStarted / RunCompleted bookend events plus the standard
+    pydantic-ai streaming events (PartStartEvent, PartDeltaEvent, etc.) in the
+    same SSE format as the /messages endpoint. Live-only — history is on /messages.
+    """
+    queue = register_subscriber(agent_id)
+    try:
+        while not await request.is_disconnected():
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
+            if isinstance(event, RunStartedEvent):
+                yield ServerSentEvent(data={}, event="RunStarted")
+            elif isinstance(event, RunCompletedEvent):
+                yield ServerSentEvent(data={"status": event.status}, event="RunCompleted")
+            else:
+                yield map_to_sse(event)
+    finally:
+        unregister_subscriber(agent_id, queue)
 
 
 @router.post("/{agent_id}/recompile_system_prompt")

@@ -324,6 +324,8 @@ async def _deliver_message(
     from agent.factory import AgentFactory, AgentLockedError
     from agent.runner import run_stateful_agent
     from db.connection import get_session
+    from agent.streaming import RunCompletedEvent, RunStartedEvent, broadcast
+
     try:
         async with get_session(engine) as session:
             factory = AgentFactory(agent_id, agent_app_state_reg, session)
@@ -331,8 +333,19 @@ async def _deliver_message(
                 async with factory.build_agent_and_deps(timeout=timeout) as (agent, deps):
                     # Lock is held — signal delivery confirmation
                     delivery_future.set_result(True)
-                    async for _ in run_stateful_agent(agent, deps, agent_app_state_reg[agent_id], user_prompt):
-                        pass
+
+                    await broadcast(agent_id, RunStartedEvent())
+                    status = "success"
+                    try:
+                        async for event in run_stateful_agent(agent, deps, agent_app_state_reg[agent_id], user_prompt):
+                            await broadcast(agent_id, event)
+                    except Exception:
+                        status = "error"
+                        raise
+                    finally:
+                        if agent_app_state_reg[agent_id].cancel_requested.is_set():
+                            status = "cancelled"
+                        await broadcast(agent_id, RunCompletedEvent(status=status))
             except AgentLockedError:
                 if not delivery_future.done():
                     delivery_future.set_result(False)
