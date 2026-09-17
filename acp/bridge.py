@@ -23,16 +23,6 @@ logger = logging.getLogger(__name__)
 # Maximum number of historical messages to replay when toad connects
 HISTORY_REPLAY_LIMIT = 40
 
-# Polling intervals: faster while agent activity is detected, slower when idle
-# NOTE: Polling is legacy fallback — prefer real-time streaming via /stream endpoint
-POLL_INTERVAL_ACTIVE = 0.5   # seconds — poll aggressively while observer turn is live
-POLL_INTERVAL_IDLE   = 2.0   # seconds — relaxed polling when nothing is happening
-
-# How long to wait after the last new message before sending status=idle.
-# Prevents the "working" indicator from collapsing immediately after streaming
-# already-buffered messages — gives the user time to see and react to the turn.
-IDLE_DEBOUNCE_SECONDS = 5.0
-
 # Real-time streaming reconnection settings
 STREAM_RECONNECT_BASE_DELAY = 1.0   # seconds — initial delay before reconnect
 STREAM_RECONNECT_MAX_DELAY = 30.0   # seconds — cap on exponential backoff
@@ -234,25 +224,16 @@ class BridgeState:
     # Accumulated usage for the current turn
     usage: dict[str, int] | None = None
 
-    # Watermark for history polling — seq_id of the last message seen from any source.
-    # Updated by replay_history, _update_watermark, and poll_for_new_messages.
+    # Watermark for history — seq_id of the last message seen from any source.
+    # Updated by replay_history and _update_watermark.
     last_message_seq_id: int | None = None
 
-    # True while a toad-initiated prompt stream is active — polling skips during this window
-    # to avoid racing with the live stream and double-sending notifications.
+    # True while a toad-initiated prompt stream is active — stream subscription skips
+    # forwarding during this window to avoid double-sending content.
     stream_active: bool = False
 
     # True while we are in observer-turn "working" state (status=working sent, idle not yet sent).
     observer_turn_active: bool = False
-
-    # Monotonic timestamp of the last time new messages were received from polling.
-    # Used to debounce the status=idle signal — we wait IDLE_DEBOUNCE_SECONDS after
-    # the last activity before collapsing the observer turn indicator.
-    last_activity_time: float | None = None
-
-    # Handle for the background polling task — kept so it can be cancelled on session restart.
-    # NOTE: Polling is legacy fallback; prefer real-time streaming via stream_task.
-    polling_task: asyncio.Task | None = field(default=None, repr=False)
 
     # Handle for the real-time SSE stream task — subscribes to /agents/{id}/stream
     stream_task: asyncio.Task | None = field(default=None, repr=False)
@@ -439,7 +420,6 @@ def _replay_message_items(session_id: str, items: list[dict[str, Any]]) -> int |
     serialized pydantic-ai ModelMessage JSON string.
 
     Returns the seq_id of the latest item, or None if items is empty.
-    Used by both replay_history (initial load) and poll_for_new_messages (incremental).
     """
     tool_call_args: dict[str, dict[str, Any]] = {}
     latest_seq_id: int | None = None
@@ -662,57 +642,6 @@ async def _process_stream_event(
         await process_sse_event(
             state, stream_state, session_id, event_type, data_str, usage_ignored
         )
-
-
-async def poll_for_new_messages(
-    state: BridgeState, session_id: str, client: httpx.AsyncClient
-) -> None:
-    """Background task: poll for new messages from non-toad sources.
-
-    Polling interval adapts to activity: POLL_INTERVAL_ACTIVE while an observer
-    turn is live, POLL_INTERVAL_IDLE otherwise.
-
-    The status=idle signal is debounced: we wait IDLE_DEBOUNCE_SECONDS after the
-    last new message before collapsing the observer turn indicator. This prevents
-    the "working" state from vanishing instantly after streaming already-buffered
-    messages — giving the user time to see and react to the turn.
-
-    Skips polling while a toad-initiated stream is active (stream_active=True) to
-    avoid racing with the live SSE stream.
-    """
-    while True:
-        interval = POLL_INTERVAL_ACTIVE if state.observer_turn_active else POLL_INTERVAL_IDLE
-        await asyncio.sleep(interval)
-
-        if state.stream_active or state.last_message_seq_id is None:
-            continue
-
-        # Debounce idle: if observer turn is active and we've been quiet long enough, close it.
-        if state.observer_turn_active and state.last_activity_time is not None:
-            if time.monotonic() - state.last_activity_time >= IDLE_DEBOUNCE_SECONDS:
-                send(nori_status_update(session_id, "idle"))
-                state.observer_turn_active = False
-
-        try:
-            resp = await client.get(
-                f"{state.server_url}/agents/{session_id}/messages",
-                params={"after_seq_id": state.last_message_seq_id},
-            )
-            resp.raise_for_status()
-            items = resp.json().get("messages", [])
-            if items:
-                if not state.observer_turn_active:
-                    send(nori_status_update(session_id, "working"))
-                    state.observer_turn_active = True
-                latest_seq_id = _replay_message_items(session_id, items)
-                state.last_activity_time = time.monotonic()
-                # idle is NOT sent here — debounced above after IDLE_DEBOUNCE_SECONDS of quiet
-                if latest_seq_id is not None:
-                    state.last_message_seq_id = latest_seq_id
-        except asyncio.CancelledError:
-            raise  # Let cancellation propagate cleanly
-        except Exception as e:
-            logger.warning("Poll failed: %s", e)
 
 
 async def send_available_commands(
