@@ -324,7 +324,7 @@ async def _deliver_message(
     from agent.factory import AgentFactory, AgentLockedError
     from agent.runner import run_stateful_agent
     from db.connection import get_session
-    from agent.streaming import RunCompletedEvent, RunStartedEvent, broadcast
+    from agent.streaming import RunCompletedEvent, RunStartedEvent, UserPromptEvent, broadcast
 
     try:
         async with get_session(engine) as session:
@@ -334,6 +334,7 @@ async def _deliver_message(
                     # Lock is held — signal delivery confirmation
                     delivery_future.set_result(True)
 
+                    await broadcast(agent_id, UserPromptEvent(content=user_prompt))
                     await broadcast(agent_id, RunStartedEvent())
                     status = "success"
                     try:
