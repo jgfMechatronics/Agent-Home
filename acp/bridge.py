@@ -621,11 +621,15 @@ async def _process_stream_event(
         return
 
     if event_type == "RunStarted":
-        # Agent run beginning — notify Nori
+        # Agent run beginning — notify Nori and display triggering prompt if present
         if not state.observer_turn_active:
             send(nori_status_update(session_id, "working"))
             state.observer_turn_active = True
-        logger.debug("RunStarted received")
+        # Display the prompt that triggered this run (for inter-agent messages)
+        prompt = data.get("prompt")
+        if prompt:
+            send(user_message_chunk(session_id, prompt))
+        logger.debug("RunStarted received, prompt=%s", "yes" if prompt else "no")
 
     elif event_type == "RunCompleted":
         # Agent run finished — notify Nori
