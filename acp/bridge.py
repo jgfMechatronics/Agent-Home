@@ -32,6 +32,13 @@ POLL_INTERVAL_IDLE   = 2.0   # seconds — relaxed polling when nothing is happe
 # already-buffered messages — gives the user time to see and react to the turn.
 IDLE_DEBOUNCE_SECONDS = 5.0
 
+# Thinking display markers — injected as regular message chunks so Nori renders them.
+# Nori renders backtick-wrapped text as teal inline code, making these visually distinct.
+# TODO: remove markers and restore agent_thought_chunk calls once Nori supports thinking
+# display natively (tracked in upstream issue).
+THINKING_START_MARKER = "\n`━━━━━ THINKING ━━━━━`\n"
+THINKING_END_MARKER   = "\n`━━━━━ END THINKING ━━━━━`\n"
+
 
 # =============================================================================
 # JSON-RPC Helpers
@@ -312,19 +319,26 @@ async def process_sse_event(
         
         if part_kind == "thinking":
             stream_state.in_thinking = True
+            send(agent_message_chunk(session_id, THINKING_START_MARKER))
             if content:
-                send(agent_thought_chunk(session_id, content))
+                send(agent_message_chunk(session_id, content))  # was: agent_thought_chunk
         elif part_kind == "text":
-            stream_state.in_thinking = False
+            stream_state.in_thinking = False  # safety fallback; PartEndEvent handles this normally
             if content:
                 send(agent_message_chunk(session_id, content))
-    
+
+    elif event_type == "PartEndEvent":
+        part = data.get("part", {})
+        if part.get("part_kind") == "thinking":
+            stream_state.in_thinking = False
+            send(agent_message_chunk(session_id, THINKING_END_MARKER))
+
     elif event_type == "PartDeltaEvent":
         delta = data.get("delta", {})
         content = delta.get("content_delta", "")
         if content:
             if stream_state.in_thinking:
-                send(agent_thought_chunk(session_id, content))
+                send(agent_message_chunk(session_id, content))  # was: agent_thought_chunk
             else:
                 send(agent_message_chunk(session_id, content))
     
@@ -457,7 +471,8 @@ def _replay_message_items(session_id: str, items: list[dict[str, Any]]) -> int |
                 if part_kind == "thinking":
                     content = part.get("content", "")
                     if content:
-                        send(agent_thought_chunk(session_id, content))
+                        # was: send(agent_thought_chunk(session_id, content))
+                        send(agent_message_chunk(session_id, THINKING_START_MARKER + content + THINKING_END_MARKER))
                 elif part_kind == "tool-call":
                     tool_call_id = part.get("tool_call_id", "")
                     tool_name = part.get("tool_name", "unknown")
