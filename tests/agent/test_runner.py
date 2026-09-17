@@ -10,7 +10,7 @@ import asyncio
 import importlib.metadata
 import json
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
 # Third-party
@@ -36,7 +36,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.tools import ToolDefinition
 
 # Local
 from messages.messages import format_system_alert
@@ -268,6 +270,73 @@ class TestHandleMessage(_BaseRouteTest):
         assert sse_events[0]["event"] == "PartStartEvent"
         assert sse_events[1]["event"] == "Error"
         assert sse_events[1]["data"]["message"] == "\n\nUnexpected internal server error: 'RuntimeError: something went wrong'"
+
+    async def test_slash_command_recompile_returns_result_sse_and_skips_agent(self, client: AsyncClient):
+        """/recompile bypasses the agent run entirely and returns a single SlashCommandResult SSE."""
+        with patch("api.routes.compile_system_prompt", new_callable=AsyncMock):
+            events = await stream_and_collect(client, self.agent_record.id, message="/recompile")
+
+        assert len(events) == 1
+        assert events[0]["event"] == "SlashCommandResult"
+        assert events[0]["data"]["name"] == "user_recompile"
+        assert events[0]["data"]["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# Broadcast / suppress tests
+# ---------------------------------------------------------------------------
+
+class TestHandleMessageBroadcast(_BaseRouteTest):
+    """Tests for pubsub broadcasting from POST /agents/{agent_id}/messages.
+
+    Without X-Suppress-Broadcast: events are broadcast so other TUIs / the pubsub
+    stream can observe GC and other non-bridge-initiated runs.
+
+    With X-Suppress-Broadcast: true: no broadcast, because the bridge is already
+    consuming events directly via HTTP and is also subscribed to /stream.
+
+    Uses the same MINIMAL_STREAM fixture pattern as TestHandleMessage via
+    _BaseRouteTest + conftest make_mock_agent infrastructure.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self, app: FastAPI, agent_record: AgentRecord):
+        self.agent_record = agent_record
+        with patch("api.routes.get_agent_and_deps", return_value=make_mock_agent(app, agent_record)):
+            yield
+
+    async def test_broadcasts_when_no_suppress_header(self, client: AsyncClient):
+        """Without suppress header, RunStartedEvent and RunCompletedEvent are broadcast."""
+        async def _stream(*args, **kwargs):
+            yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta="hi"))
+
+        with patch("api.routes.broadcast", new_callable=AsyncMock) as mock_broadcast, \
+             patch("api.routes.run_stateful_agent", side_effect=_stream):
+            async with client.stream("POST", f"/agents/{self.agent_record.id}/messages",
+                                     json={"message": "hello"}) as resp:
+                assert resp.status_code == 200
+                async for _ in resp.aiter_lines():
+                    pass
+
+        broadcast_types = [type(call.args[1]).__name__ for call in mock_broadcast.call_args_list]
+        assert "RunStartedEvent" in broadcast_types
+        assert "RunCompletedEvent" in broadcast_types
+
+    async def test_suppresses_broadcast_with_header(self, client: AsyncClient):
+        """With X-Suppress-Broadcast: true, broadcast is never called."""
+        async def _stream(*args, **kwargs):
+            yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta="hi"))
+
+        with patch("api.routes.broadcast", new_callable=AsyncMock) as mock_broadcast, \
+             patch("api.routes.run_stateful_agent", side_effect=_stream):
+            async with client.stream("POST", f"/agents/{self.agent_record.id}/messages",
+                                     json={"message": "hello"},
+                                     headers={"X-Suppress-Broadcast": "true"}) as resp:
+                assert resp.status_code == 200
+                async for _ in resp.aiter_lines():
+                    pass
+
+        mock_broadcast.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1243,3 +1312,89 @@ async def test_empty_model_response_parts_does_not_crash():
     Fix: `messages[-1].parts[-1] if (messages and messages[-1].parts) else None`.
     """
     pytest.fail("not yet implemented")
+
+# ---- MCP schema snapshotting ----
+
+_EXPECTED_MCP_SCHEMA = ToolDefinition(
+    name="mcp_read_file",
+    description="Read a file from disk.",
+    parameters_json_schema={
+        "additionalProperties": False,
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+        "type": "object",
+    },
+)
+
+_EXPECTED_LOCAL_SCHEMA = ToolDefinition(
+    name="local_dummy",
+    description="A local function tool.",
+    parameters_json_schema={
+        "additionalProperties": False,
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+        "type": "object",
+    },
+    return_schema={"type": "string"},
+)
+
+
+async def _mcp_completion_stream(messages: list, info: AgentInfo) -> None:
+    """Minimal FunctionModel stream: plain text completion, no tool calls."""
+    yield FunctionModelTestAgent.COMPLETION_TEXT
+
+
+@pytest.fixture
+def in_process_mcp_toolset():
+    """Real in-process FastMCP server exposing a known tool — no HTTP, no mocking."""
+    from fastmcp import FastMCP
+
+    mcp = FastMCP("test-mcp-server")
+
+    @mcp.tool()
+    def mcp_read_file(path: str) -> str:
+        """Read a file from disk."""
+        return f"contents of {path}"
+
+    return MCPToolset(mcp)
+
+
+class TestMCPToolSchemaSnapshotting(_BaseRouteTest):
+    """Integration test: MCP tool schemas flow through run_stateful_agent to persist_messages.
+
+    Uses a real in-process FastMCP server (MCPToolsetClient accepts FastMCP directly —
+    mcp.py line 1973), so the full chain runs without mocking MCPToolset internals.
+    Asserts that both MCP and function tool schemas reach persist_messages after the fix.
+    """
+
+    @pytest.fixture(autouse=True)
+    def mcp_agent_setup(self, agent_record, in_process_mcp_toolset):
+        self._agent_record = agent_record
+
+        async def local_dummy(ctx: RunContext, text: str) -> str:
+            """A local function tool."""
+            return text
+
+        agent = Agent(
+            FunctionModel(stream_function=_mcp_completion_stream),
+            tools=[local_dummy],
+            toolsets=[in_process_mcp_toolset],
+        )
+
+        self._test_agent = agent
+
+    async def test_mcp_and_function_schemas_reach_persist_messages(self):
+        """Both MCP and function tool schemas must appear in every persist_messages call."""
+        deps = make_deps(_make_mock_session(), self._agent_record)
+
+        async for _ in run_stateful_agent(self._test_agent, deps, AgentAppState(), "hello"):
+            pass
+
+        assert self.mock_persist_messages.called, "persist_messages must be called at least once"
+        for call in self.mock_persist_messages.call_args_list:
+            # checking this type buys us a lot in terms of guarentees from other unit tests, I think
+            schemas = call.kwargs["tool_schemas"]
+            assert all(isinstance(s, ToolDefinition) for s in schemas)
+            assert sorted(schemas, key=lambda s: s.name) == sorted(
+                [_EXPECTED_MCP_SCHEMA, _EXPECTED_LOCAL_SCHEMA], key=lambda s: s.name
+            )
