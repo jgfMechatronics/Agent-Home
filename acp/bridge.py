@@ -735,6 +735,7 @@ async def handle_session_prompt(
             "POST",
             f"{state.server_url}/agents/{session_id}/messages",
             json={"message": user_message},
+            headers={"X-Suppress-Broadcast": "true"},  # Bridge receives via HTTP response, not pubsub
             timeout=300.0,
         ) as http_response:
             if http_response.status_code != 200:
