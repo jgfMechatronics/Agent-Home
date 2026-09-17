@@ -37,7 +37,7 @@ IDLE_DEBOUNCE_SECONDS = 5.0
 # TODO: remove markers and restore agent_thought_chunk calls once Nori supports thinking
 # display natively (tracked in upstream issue).
 THINKING_START_MARKER = "\n`━━━━━ THINKING ━━━━━`\n\n"
-THINKING_END_MARKER   = "\n\n`━━━━━ END THINKING ━━━━━`\n\n"
+THINKING_END_MARKER   = "\n\n`━━━━━ END THINKING ━━━━━`\n\n\n"
 
 
 # =============================================================================
