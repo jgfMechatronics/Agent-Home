@@ -692,6 +692,7 @@ async def handle_session_prompt(
 
 async def handle_session_cancel(state: BridgeState, msg: dict[str, Any], client: httpx.AsyncClient) -> None:
     """Handle session/cancel notification — POST cancel to Agent Home."""
+    logger.debug("session/cancel received from Nori")
     if not state.agent_id:
         logger.warning("session/cancel received but no agent_id configured — ignoring")
         return
