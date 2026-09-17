@@ -759,20 +759,13 @@ async def handle_session_new(
     # Send available slash commands for client discovery
     await send_available_commands(state, session_id, client)
 
-    # Cancel any existing background tasks (e.g. reconnect), then start fresh
+    # Cancel any existing stream task (e.g. reconnect), then start fresh
     if state.stream_task is not None:
         state.stream_task.cancel()
-    if state.polling_task is not None:
-        state.polling_task.cancel()
 
-    # Start real-time event stream subscription (primary mechanism)
+    # Start real-time event stream subscription
     state.stream_task = asyncio.create_task(
         subscribe_to_agent_stream(state, session_id, client)
-    )
-    # Keep polling as fallback for messages that arrived before stream connected
-    # TODO: Consider removing polling once streaming is proven stable
-    state.polling_task = asyncio.create_task(
-        poll_for_new_messages(state, session_id, client)
     )
 
 
