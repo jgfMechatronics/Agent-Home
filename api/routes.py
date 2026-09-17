@@ -251,7 +251,7 @@ async def stream_agent_events(
             except asyncio.TimeoutError:
                 continue
             if isinstance(event, RunStartedEvent):
-                yield ServerSentEvent(data={}, event="RunStarted")
+                yield ServerSentEvent(data={"prompt": event.prompt}, event="RunStarted")
             elif isinstance(event, RunCompletedEvent):
                 yield ServerSentEvent(data={"status": event.status}, event="RunCompleted")
             else:

@@ -51,16 +51,48 @@ class TestProcessStreamEvent:
         assert call_arg["params"]["update"]["_meta"]["nori"]["status"] == "working"
 
     @pytest.mark.asyncio
+    async def test_run_started_with_prompt_emits_user_message(self, state: BridgeState, stream_state: StreamState):
+        """RunStarted with prompt should send working status then user_message_chunk."""
+        with patch("acp.bridge.send") as mock_send:
+            await _process_stream_event(
+                state, stream_state, SESSION_ID, "RunStarted", '{"prompt": "Hello from another agent!"}'
+            )
+
+        assert state.observer_turn_active is True
+        assert mock_send.call_count == 2
+        # First call: status=working
+        first_call = mock_send.call_args_list[0][0][0]
+        assert first_call["params"]["update"]["_meta"]["nori"]["status"] == "working"
+        # Second call: user_message_chunk with prompt
+        second_call = mock_send.call_args_list[1][0][0]
+        assert second_call["params"]["update"]["sessionUpdate"] == "user_message_chunk"
+        assert second_call["params"]["update"]["content"]["text"] == "Hello from another agent!"
+
+    @pytest.mark.asyncio
     async def test_run_started_skipped_if_already_active(self, state: BridgeState, stream_state: StreamState):
-        """RunStarted should not double-send if already in working state."""
+        """RunStarted should not double-send status if already in working state."""
         state.observer_turn_active = True
         with patch("acp.bridge.send") as mock_send:
             await _process_stream_event(
                 state, stream_state, SESSION_ID, "RunStarted", "{}"
             )
 
-        # Should not send anything since already active
+        # Should not send anything since already active and no prompt
         mock_send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_run_started_with_prompt_still_emits_if_already_active(self, state: BridgeState, stream_state: StreamState):
+        """RunStarted with prompt should still emit user_message_chunk even if already active."""
+        state.observer_turn_active = True
+        with patch("acp.bridge.send") as mock_send:
+            await _process_stream_event(
+                state, stream_state, SESSION_ID, "RunStarted", '{"prompt": "Hello!"}'
+            )
+
+        # Should emit user_message_chunk but not status (already active)
+        mock_send.assert_called_once()
+        call_arg = mock_send.call_args[0][0]
+        assert call_arg["params"]["update"]["sessionUpdate"] == "user_message_chunk"
 
     @pytest.mark.asyncio
     async def test_run_completed_sends_idle_status(self, state: BridgeState, stream_state: StreamState):

@@ -334,7 +334,7 @@ async def _deliver_message(
                     # Lock is held — signal delivery confirmation
                     delivery_future.set_result(True)
 
-                    await broadcast(agent_id, RunStartedEvent())
+                    await broadcast(agent_id, RunStartedEvent(prompt=user_prompt))
                     status = "success"
                     try:
                         async for event in run_stateful_agent(agent, deps, agent_app_state_reg[agent_id], user_prompt):
