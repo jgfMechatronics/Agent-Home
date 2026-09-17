@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 HISTORY_REPLAY_LIMIT = 40
 
 # Polling intervals: faster while agent activity is detected, slower when idle
+# NOTE: Polling is legacy fallback — prefer real-time streaming via /stream endpoint
 POLL_INTERVAL_ACTIVE = 0.5   # seconds — poll aggressively while observer turn is live
 POLL_INTERVAL_IDLE   = 2.0   # seconds — relaxed polling when nothing is happening
 
@@ -31,6 +32,10 @@ POLL_INTERVAL_IDLE   = 2.0   # seconds — relaxed polling when nothing is happe
 # Prevents the "working" indicator from collapsing immediately after streaming
 # already-buffered messages — gives the user time to see and react to the turn.
 IDLE_DEBOUNCE_SECONDS = 5.0
+
+# Real-time streaming reconnection settings
+STREAM_RECONNECT_BASE_DELAY = 1.0   # seconds — initial delay before reconnect
+STREAM_RECONNECT_MAX_DELAY = 30.0   # seconds — cap on exponential backoff
 
 # Thinking display markers — injected as regular message chunks so Nori renders them.
 # Nori renders backtick-wrapped text as teal inline code, making these visually distinct.
@@ -246,7 +251,11 @@ class BridgeState:
     last_activity_time: float | None = None
 
     # Handle for the background polling task — kept so it can be cancelled on session restart.
+    # NOTE: Polling is legacy fallback; prefer real-time streaming via stream_task.
     polling_task: asyncio.Task | None = field(default=None, repr=False)
+
+    # Handle for the real-time SSE stream task — subscribes to /agents/{id}/stream
+    stream_task: asyncio.Task | None = field(default=None, repr=False)
 
 
 # =============================================================================
@@ -540,6 +549,121 @@ async def _update_watermark(state: BridgeState, session_id: str, client: httpx.A
         logger.warning("Watermark update failed: %s", e)
 
 
+# =============================================================================
+# Real-time Event Streaming
+# =============================================================================
+
+async def subscribe_to_agent_stream(
+    state: BridgeState, session_id: str, client: httpx.AsyncClient
+) -> None:
+    """Background task: subscribe to real-time SSE stream from Agent Home.
+
+    Connects to GET /agents/{id}/stream and processes events as they arrive:
+    - RunStarted: send status=working to Nori
+    - Content events (PartStartEvent, PartDeltaEvent, etc.): forward to Nori
+    - RunCompleted: send status=idle to Nori
+
+    Automatically reconnects on disconnect with exponential backoff.
+    Skips forwarding while a toad-initiated stream is active (stream_active=True)
+    to avoid double-sending content from user-initiated runs.
+    """
+    reconnect_delay = STREAM_RECONNECT_BASE_DELAY
+
+    while True:
+        try:
+            logger.debug("Connecting to agent stream: %s", session_id)
+            async with client.stream(
+                "GET",
+                f"{state.server_url}/agents/{session_id}/stream",
+                timeout=None,  # Long-lived connection, no timeout
+            ) as response:
+                if response.status_code != 200:
+                    logger.warning("Stream connect failed: %d", response.status_code)
+                    await asyncio.sleep(reconnect_delay)
+                    reconnect_delay = min(reconnect_delay * 2, STREAM_RECONNECT_MAX_DELAY)
+                    continue
+
+                # Connected successfully — reset backoff
+                reconnect_delay = STREAM_RECONNECT_BASE_DELAY
+                logger.debug("Stream connected")
+
+                # Process SSE events
+                stream_state = StreamState()
+                current_event_type: str | None = None
+                current_data_lines: list[str] = []
+
+                async for line in response.aiter_lines():
+                    line = line.strip()
+
+                    if line.startswith("event:"):
+                        current_event_type = line[6:].strip()
+                    elif line.startswith("data:"):
+                        current_data_lines.append(line[5:].strip())
+                    elif line == "" and current_event_type:
+                        # End of event — process it
+                        data_str = "\n".join(current_data_lines)
+                        await _process_stream_event(
+                            state, stream_state, session_id, current_event_type, data_str
+                        )
+                        current_event_type = None
+                        current_data_lines = []
+
+        except asyncio.CancelledError:
+            logger.debug("Stream subscription cancelled")
+            raise  # Let cancellation propagate cleanly
+        except Exception as e:
+            logger.warning("Stream error: %s, reconnecting in %.1fs", e, reconnect_delay)
+            await asyncio.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 2, STREAM_RECONNECT_MAX_DELAY)
+
+
+async def _process_stream_event(
+    state: BridgeState,
+    stream_state: StreamState,
+    session_id: str,
+    event_type: str,
+    data_str: str,
+) -> None:
+    """Process a single event from the agent stream.
+
+    Handles RunStarted/RunCompleted for status updates, and delegates
+    content events to process_sse_event for forwarding to Nori.
+    """
+    # Skip forwarding if a user-initiated stream is active — that stream
+    # handles its own forwarding and we don't want to double-send.
+    if state.stream_active:
+        return
+
+    try:
+        data = json.loads(data_str) if data_str else {}
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse stream event data: %s", data_str[:100])
+        return
+
+    if event_type == "RunStarted":
+        # Agent run beginning — notify Nori
+        if not state.observer_turn_active:
+            send(nori_status_update(session_id, "working"))
+            state.observer_turn_active = True
+        logger.debug("RunStarted received")
+
+    elif event_type == "RunCompleted":
+        # Agent run finished — notify Nori
+        status = data.get("status", "success")
+        logger.debug("RunCompleted received: status=%s", status)
+        if state.observer_turn_active:
+            send(nori_status_update(session_id, "idle"))
+            state.observer_turn_active = False
+
+    else:
+        # Content event — forward via existing event processor
+        # Note: usage dict not needed here since we're observing, not responding to a prompt
+        usage_ignored: dict[str, int] = {}
+        await process_sse_event(
+            state, stream_state, session_id, event_type, data_str, usage_ignored
+        )
+
+
 async def poll_for_new_messages(
     state: BridgeState, session_id: str, client: httpx.AsyncClient
 ) -> None:
@@ -635,9 +759,18 @@ async def handle_session_new(
     # Send available slash commands for client discovery
     await send_available_commands(state, session_id, client)
 
-    # Cancel any existing polling task (e.g. reconnect), then start fresh
+    # Cancel any existing background tasks (e.g. reconnect), then start fresh
+    if state.stream_task is not None:
+        state.stream_task.cancel()
     if state.polling_task is not None:
         state.polling_task.cancel()
+
+    # Start real-time event stream subscription (primary mechanism)
+    state.stream_task = asyncio.create_task(
+        subscribe_to_agent_stream(state, session_id, client)
+    )
+    # Keep polling as fallback for messages that arrived before stream connected
+    # TODO: Consider removing polling once streaming is proven stable
     state.polling_task = asyncio.create_task(
         poll_for_new_messages(state, session_id, client)
     )
