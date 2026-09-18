@@ -224,10 +224,6 @@ class BridgeState:
     # Accumulated usage for the current turn
     usage: dict[str, int] | None = None
 
-    # Watermark for history — seq_id of the last message seen from any source.
-    # Updated by replay_history and _update_watermark.
-    last_message_seq_id: int | None = None
-
     # True while a toad-initiated prompt stream is active — stream subscription skips
     # forwarding during this window to avoid double-sending content.
     stream_active: bool = False
@@ -482,7 +478,7 @@ def _replay_message_items(session_id: str, items: list[dict[str, Any]]) -> int |
 
 
 async def replay_history(state: BridgeState, session_id: str, client: httpx.AsyncClient) -> None:
-    """Fetch agent's in-context messages, replay as session/update notifications, update watermark."""
+    """Fetch agent's in-context messages and replay as session/update notifications."""
     try:
         resp = await client.get(f"{state.server_url}/agents/{session_id}/messages")
         resp.raise_for_status()
@@ -499,34 +495,8 @@ async def replay_history(state: BridgeState, session_id: str, client: httpx.Asyn
         # Signal Nori that unsolicited content is coming so it doesn't show the
         # "no active local request" warning or incorrectly start the run timer.
         send(nori_status_update(session_id, "working"))
-        latest_seq_id = _replay_message_items(session_id, items)
+        _replay_message_items(session_id, items)
         send(nori_status_update(session_id, "idle"))
-        if latest_seq_id is not None:
-            state.last_message_seq_id = latest_seq_id
-
-
-async def _update_watermark(state: BridgeState, session_id: str, client: httpx.AsyncClient) -> None:
-    """Silently advance the watermark after a toad-initiated turn.
-
-    Fetches messages after the current watermark and updates last_message_seq_id
-    WITHOUT sending any notifications — the live stream already delivered those.
-    Prevents the background poller from re-sending the same turn as notifications.
-    """
-    if state.last_message_seq_id is None:
-        return
-    try:
-        resp = await client.get(
-            f"{state.server_url}/agents/{session_id}/messages",
-            params={"after_seq_id": state.last_message_seq_id},
-        )
-        resp.raise_for_status()
-        items = resp.json().get("messages", [])
-        if items:
-            latest_seq_id = items[-1].get("seq_id")
-            if latest_seq_id is not None:
-                state.last_message_seq_id = latest_seq_id
-    except Exception as e:
-        logger.warning("Watermark update failed: %s", e)
 
 
 # =============================================================================
@@ -686,7 +656,7 @@ async def handle_session_new(
     # Send response first so client knows session is ready
     send(response(msg["id"], {"sessionId": session_id}))
 
-    # Replay history as session/update notifications and set initial watermark
+    # Replay history as session/update notifications
     await replay_history(state, session_id, client)
 
     # Send available slash commands for client discovery
@@ -727,8 +697,8 @@ async def handle_session_prompt(
         send(error_response(msg["id"], -32602, "Empty prompt"))
         return
     
-    # Pause background polling for the duration of this stream — we'll update the
-    # watermark silently afterward to prevent the poller from re-sending these events.
+    # Mark stream as active so the SSE subscription knows to skip forwarding
+    # (we're already streaming directly to Nori via the HTTP response).
     state.stream_active = True
     try:
         async with client.stream(
@@ -747,9 +717,6 @@ async def handle_session_prompt(
 
             # Stream events as ACP notifications
             usage = await process_sse_stream(state, http_response, session_id)
-
-        # Advance watermark past this turn so the poller doesn't re-send it
-        await _update_watermark(state, session_id, client)
 
     except httpx.RequestError as e:
         send(error_response(msg["id"], -32000, f"Request failed: {e}"))
