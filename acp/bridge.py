@@ -653,11 +653,11 @@ async def handle_session_new(
     
     session_id = state.agent_id
 
-    # Send response first so client knows session is ready
+    # Send response with session ID (same ID advertised in initialize for auto-load).
+    # NOTE: We previously replayed conversation history here via session/update
+    # notifications, but that's non-conforming to ACP — history belongs in session/load.
+    # Could consider a similar fallback for failed session/load in the future.
     send(response(msg["id"], {"sessionId": session_id}))
-
-    # Replay history as session/update notifications
-    await replay_history(state, session_id, client)
 
     # Send available slash commands for client discovery
     await send_available_commands(state, session_id, client)
