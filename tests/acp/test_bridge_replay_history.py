@@ -103,44 +103,23 @@ async def test_replay_history_works_with_fewer_items():
 
 
 @pytest.mark.asyncio
-async def test_replay_history_updates_watermark_to_last_seq_id():
-    """Watermark is updated to the seq_id of the last replayed message."""
+async def test_replay_history_handles_empty_messages():
+    """Empty message list doesn't crash and sends no notifications."""
     state = BridgeState()
     state.server_url = "http://localhost:8000"
 
-    # Create items with seq_ids 10-69
-    all_items = [message_item(i, i + 10) for i in range(60)]
-
     mock_response = Mock()
-    mock_response.json.return_value = {"messages": all_items}
+    mock_response.json.return_value = {"messages": []}
     mock_response.raise_for_status.return_value = None
     
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_response)
 
-    with patch("acp.bridge.send"):
+    with patch("acp.bridge.send") as mock_send:
         await replay_history(state, SESSION_ID, mock_client)
 
-    # Watermark should be updated to the seq_id of the last item (69)
-    assert state.last_message_seq_id == 69
-
-
-@pytest.mark.asyncio
-async def test_replay_history_handles_empty_messages():
-    """Empty message list doesn't crash."""
-    state = BridgeState()
-    state.server_url = "http://localhost:8000"
-
-    mock_client = AsyncMock()
-    mock_response = AsyncMock()
-    mock_response.json.return_value = {"messages": []}
-    mock_client.get.return_value = mock_response
-
-    with patch("acp.bridge.send"):
-        await replay_history(state, SESSION_ID, mock_client)
-
-    # Watermark should not be updated (no items)
-    assert state.last_message_seq_id is None
+    # No sends for empty message list (no working/idle status either)
+    mock_send.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -152,9 +131,9 @@ async def test_replay_history_handles_fetch_error():
     mock_client = AsyncMock()
     mock_client.get.side_effect = Exception("Network error")
 
-    with patch("acp.bridge.send"):
+    with patch("acp.bridge.send") as mock_send:
         # Should not raise
         await replay_history(state, SESSION_ID, mock_client)
 
-    # Watermark should not be updated on error
-    assert state.last_message_seq_id is None
+    # No sends on error
+    mock_send.assert_not_called()
