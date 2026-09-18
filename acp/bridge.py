@@ -395,9 +395,10 @@ async def process_sse_event(
 
 async def handle_initialize(state: BridgeState, msg: dict[str, Any]) -> None:
     """Handle initialize request."""
-    send(response(msg["id"], {
+    # Build response with session auto-load capability
+    init_response: dict[str, Any] = {
         "agentCapabilities": {
-            "loadSession": False,
+            "loadSession": True,
             "promptCapabilities": {
                 "audio": False,
                 "embeddedContent": False,
@@ -406,7 +407,22 @@ async def handle_initialize(state: BridgeState, msg: dict[str, Any]) -> None:
         },
         "authMethods": [],
         "protocolVersion": 1,
-    }))
+    }
+    
+    # If we have an agent_id configured, advertise it for auto-load.
+    # Nori checks _meta.nori.remoteControl.activeSessionId and, if present
+    # with loadSession=true, skips session/list and goes straight to session/load.
+    if state.agent_id:
+        init_response["_meta"] = {
+            "nori": {
+                "remoteControl": {
+                    "version": 1,
+                    "activeSessionId": state.agent_id,
+                }
+            }
+        }
+    
+    send(response(msg["id"], init_response))
 
 
 def _replay_message_items(session_id: str, items: list[dict[str, Any]]) -> int | None:
@@ -672,6 +688,47 @@ async def handle_session_new(
     )
 
 
+async def handle_session_load(
+    state: BridgeState, msg: dict[str, Any], client: httpx.AsyncClient
+) -> None:
+    """Handle session/load request — load conversation history for a session.
+    
+    Per ACP spec: stream all history as session/update notifications FIRST,
+    then send the session/load response. The client (Nori) waits for the response
+    before considering the session ready for prompts.
+    """
+    params = msg.get("params", {})
+    session_id = params.get("sessionId")
+    
+    if not session_id:
+        send(error_response(msg["id"], -32602, "Missing sessionId"))
+        return
+    
+    # Verify this is the session we expect (we only support one session per agent)
+    if session_id != state.agent_id:
+        send(error_response(msg["id"], -32000, f"Unknown session: {session_id}"))
+        return
+    
+    # Stream history as session/update notifications
+    await replay_history(state, session_id, client)
+    
+    # Send available slash commands for client discovery
+    await send_available_commands(state, session_id, client)
+    
+    # Cancel any existing stream task, then start fresh
+    if state.stream_task is not None:
+        state.stream_task.cancel()
+    
+    # Start real-time event stream subscription
+    state.stream_task = asyncio.create_task(
+        subscribe_to_agent_stream(state, session_id, client)
+    )
+    
+    # IMPORTANT: Response goes AFTER all history is streamed.
+    # This signals to Nori that the session is ready for prompts.
+    send(response(msg["id"], {}))
+
+
 async def handle_session_prompt(
     state: BridgeState, msg: dict[str, Any], client: httpx.AsyncClient
 ) -> None:
@@ -757,6 +814,8 @@ async def dispatch(state: BridgeState, msg: dict[str, Any], client: httpx.AsyncC
         await handle_initialize(state, msg)
     elif method == "session/new":
         await handle_session_new(state, msg, client)
+    elif method == "session/load":
+        await handle_session_load(state, msg, client)
     elif method == "session/prompt":
         asyncio.create_task(handle_session_prompt(state, msg, client))
     elif method == "session/cancel":
