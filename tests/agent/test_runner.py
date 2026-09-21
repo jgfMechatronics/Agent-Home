@@ -1251,28 +1251,57 @@ async def _mcp_completion_stream(messages: list, info: AgentInfo) -> None:
     yield FunctionModelTestAgent.COMPLETION_TEXT
 
 
-class TestMCPToolSchemaSnapshotting(_BaseRouteTest):
-    """Integration test: correct toolsets flow through run_stateful_agent to persist_messages.
+class TestMCPTools(_BaseRouteTest):
+    """Integration tests for MCP toolset functionality.
 
-    Verifies that agent.toolsets (containing both FunctionToolset and MCPToolset) are passed
-    to persist_messages on every call. Schema extraction from toolsets is an internal detail
-    of persist_messages, tested in test_messages.py.
+    Tests both that toolsets flow correctly through the runner and that
+    MCP tools can be called and return results.
     """
 
-    @pytest.fixture(autouse=True)
-    def mcp_agent_setup(self, agent_record, in_process_mcp_toolset):
-        self._agent_record = agent_record
-        self._test_agent = Agent(
-            FunctionModel(stream_function=_mcp_completion_stream),
+    # Constants for MCP tool call test
+    MCP_TOOL_NAME = "mcp_read_file"
+    MCP_TOOL_ARGS = '{"path": "/test/file.txt"}'
+    MCP_TOOL_CALL_ID = "mcp-call-1"
+    MCP_EXPECTED_RETURN = "contents of /test/file.txt"
+
+    @staticmethod
+    async def _tool_call_stream(messages: list, info: AgentInfo) -> None:
+        """FunctionModel stream that calls the MCP tool, then completes."""
+        if len(messages) == 1:  # First invocation: emit tool call
+            yield DeltaToolCalls({0: DeltaToolCall(
+                name=TestMCPTools.MCP_TOOL_NAME,
+                json_args=TestMCPTools.MCP_TOOL_ARGS,
+                tool_call_id=TestMCPTools.MCP_TOOL_CALL_ID,
+            )})
+        else:  # Second invocation (after tool return): emit completion
+            yield FunctionModelTestAgent.COMPLETION_TEXT
+
+    def _build_agent(self, stream_fn, in_process_mcp_toolset):
+        """Build test agent with specified stream function."""
+        return Agent(
+            FunctionModel(stream_function=stream_fn),
             tools=[local_dummy_tool],
             toolsets=[in_process_mcp_toolset],
         )
 
-    async def test_mcp_and_function_toolsets_reach_persist_messages(self):
-        """Both FunctionToolset and MCPToolset must be present in every persist_messages call."""
-        deps = make_deps(_make_mock_session(), self._agent_record)
+    @pytest.fixture
+    def deps(self, agent_record):
+        """AgentDeps with mock session for runner tests."""
+        return make_deps(_make_mock_session(), agent_record)
 
-        async for _ in run_stateful_agent(self._test_agent, deps, AgentAppState(), "hello"):
+    @pytest.fixture
+    def completion_agent(self, in_process_mcp_toolset):
+        """Agent that completes without tool calls."""
+        return self._build_agent(_mcp_completion_stream, in_process_mcp_toolset)
+
+    @pytest.fixture
+    def tool_call_agent(self, in_process_mcp_toolset):
+        """Agent that calls the MCP tool then completes."""
+        return self._build_agent(self._tool_call_stream, in_process_mcp_toolset)
+
+    async def test_toolsets_reach_persist_messages(self, deps, completion_agent):
+        """Both FunctionToolset and MCPToolset must be present in every persist_messages call."""
+        async for _ in run_stateful_agent(completion_agent, deps, AgentAppState(), "hello"):
             pass
 
         assert self.mock_persist_messages.called, "persist_messages must be called at least once"
@@ -1283,6 +1312,20 @@ class TestMCPToolSchemaSnapshotting(_BaseRouteTest):
             assert len(function_toolsets) == 1, "Expected exactly one FunctionToolset"
             assert len(mcp_toolsets) == 1, "Expected exactly one MCPToolset"
             assert len(toolsets) == 2, "Expected exactly two toolsets total"
+
+    async def test_mcp_tool_call_returns_expected_result(self, deps, tool_call_agent):
+        """MCP tool can be called and returns expected result through the runner."""
+        events = []
+        async for event in run_stateful_agent(tool_call_agent, deps, AgentAppState(), "hello"):
+            events.append(event)
+
+        # Find the tool result event and verify the MCP tool returned correctly
+        tool_result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
+        assert len(tool_result_events) == 1, "Expected exactly one tool result event"
+
+        result_event = tool_result_events[0]
+        assert result_event.part.tool_name == self.MCP_TOOL_NAME
+        assert result_event.part.content == self.MCP_EXPECTED_RETURN
 
 
 class TestMCPConnectionError(_BaseRouteTest):
