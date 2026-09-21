@@ -10,9 +10,6 @@ Or with uv:
     uv run python -m mcp_tools.fs_proxy
 """
 import argparse
-import json
-import os
-import tempfile
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -26,7 +23,6 @@ if TYPE_CHECKING:
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8080
-DEFAULT_WORKSPACE = "/workspace/git/misc/test"
 
 # Allowlist of Desktop Commander tools to expose.
 # Everything else is excluded — keeps context lean and avoids junk tools.
@@ -83,37 +79,21 @@ async def _warmup_lifespan(server: "FastMCPProxy"):
     yield
 
 
-def create_fs_proxy(workspace_path: str = DEFAULT_WORKSPACE):
+def create_fs_proxy():
     """Create a FastMCP proxy for the Desktop Commander MCP server.
-
-    Desktop Commander reads config.json from its working directory. We pre-write
-    a config scoping filesystem access to workspace_path via allowedDirectories,
-    then pass that directory as cwd to the subprocess.
 
     Only tools in _ALLOWED_TOOLS are exposed — the rest are hidden via allowlist
     to keep context lean and exclude DC-internal/junk tools.
 
-    Args:
-        workspace_path: Directory to scope file operations to.
-
     Returns:
         FastMCP proxy server instance.
     """
-    config_dir = tempfile.mkdtemp(prefix="dc-proxy-")
-    config = {
-        "allowedDirectories": [workspace_path],
-        "telemetryEnabled": False,
-    }
-    with open(os.path.join(config_dir, "config.json"), "w") as f:
-        json.dump(config, f)
-
     proxy = create_proxy(
         {
             "mcpServers": {
                 "desktop-commander": {
                     "command": "npx",
                     "args": ["-y", "@wonderwhy-er/desktop-commander@0.2.47", "--no-onboarding"],
-                    "cwd": config_dir,
                 }
             }
         },
@@ -155,17 +135,10 @@ def main():
         default="ellm-dev",
         help="Hostname to allow in Host header validation (default: ellm-dev). Should match this container's name on the Docker network.",
     )
-    parser.add_argument(
-        "--workspace",
-        type=str,
-        default=DEFAULT_WORKSPACE,
-        help=f"Directory to scope file operations to via allowedDirectories (default: {DEFAULT_WORKSPACE})",
-    )
     args = parser.parse_args()
 
-    proxy = create_fs_proxy(args.workspace)
+    proxy = create_fs_proxy()
     print(f"Starting Desktop Commander MCP proxy on http://{args.host}:{args.port}/mcp")
-    print(f"Allowed directory: {args.workspace}")
     print(f"Allowed host: {args.allowed_host}")
     proxy.run(
         transport="streamable-http",
