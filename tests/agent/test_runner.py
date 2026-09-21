@@ -176,7 +176,7 @@ class TestHandleMessage(_BaseRouteTest):
             async def _mock_dep():
                 if raise_exc is not None:
                     raise raise_exc
-                yield make_mock_agent(events, raises_mid_stream), make_deps(self.mock_session, agent_record)
+                yield make_mock_agent(events, raises_mid_stream), AgentDeps(session=self.mock_session, agent_record=agent_record)
 
             app.dependency_overrides[get_agent_and_deps] = _mock_dep
 
@@ -419,7 +419,7 @@ class FunctionModelTestAgent:
 
         async def _make_agent_and_deps():
             async with agent_app_state.lock:
-                yield self._agent, make_deps(mock_session, agent_record)
+                yield self._agent, AgentDeps(session=mock_session, agent_record=agent_record)
                 agent_app_state.cancel_requested.clear()
 
         app.dependency_overrides[get_agent_and_deps] = _make_agent_and_deps

@@ -45,7 +45,7 @@ async def agent_with_precompiled_prompt(session: AsyncSession):
     )
     session.add(agent)
     await session.flush()
-    return {"agent": agent, "deps": make_deps(session, agent)}
+    return {"agent": agent, "deps": AgentDeps(session=session, agent_record=agent)}
 
 
 # --- Helper ---
@@ -193,7 +193,7 @@ async def test_exact_compiled_format(session: AsyncSession, agent_record: AgentR
     session.add_all([block_a, block_b])
     await session.flush()
 
-    deps = make_deps(session, agent_record)
+    deps = AgentDeps(session=session, agent_record=agent_record)
     await compile_system_prompt(deps)
 
     expected = (
@@ -266,7 +266,7 @@ async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession
     session.add_all([block_a, block_b])
     await session.flush()
 
-    deps_a = make_deps(session, agent_a)
+    deps_a = AgentDeps(session=session, agent_record=agent_a)
     await compile_system_prompt(deps_a)
     compiled_a = agent_a.compiled_system_prompt
 
@@ -320,7 +320,7 @@ async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession
     await session.flush()
     assert agent.compiled_system_prompt == ""  # model defaults to ''
 
-    ctx = mock_run_context(make_deps(session, agent))
+    ctx = mock_run_context(AgentDeps(session=session, agent_record=agent))
     result = await get_system_prompt(ctx)
     assert result == ""
 

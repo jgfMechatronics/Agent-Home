@@ -85,8 +85,8 @@ async def multi_tenant_with_deps(session: AsyncSession, multi_tenant_agents_with
     For testing that write operations respect agent_id boundaries.
     """
     data = multi_tenant_agents_with_core_memory
-    deps_a = make_deps(session, data["agent_a"])
-    deps_b = make_deps(session, data["agent_b"])
+    deps_a = AgentDeps(session=session, agent_record=data["agent_a"])
+    deps_b = AgentDeps(session=session, agent_record=data["agent_b"])
     return {**data, "deps_a": deps_a, "deps_b": deps_b}
 
 
