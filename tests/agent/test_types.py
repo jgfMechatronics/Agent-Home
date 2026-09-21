@@ -214,12 +214,10 @@ class TestAgentDepsCommitChangesRefreshAgentRecord:
         self.mock_session.refresh.assert_not_called()
 
 
-async def test_agentdeps_holds_expected_fields(session, agent_record):
+async def test_agentdeps_holds_expected_fields(session, agent_deps, agent_record):
     """AgentDeps properties should delegate to the underlying AgentRecord."""
-    deps = AgentDeps(session=session, agent_record=agent_record)
-
-    assert deps.agent_id == agent_record.id
-    assert deps.session is session
-    assert deps.config is agent_record.agent_config
-    assert deps.name == agent_record.name
-    assert deps.system_instructions == agent_record.system_instructions
+    assert agent_deps.agent_id == agent_record.id
+    assert agent_deps.session is session
+    assert agent_deps.config is agent_record.agent_config
+    assert agent_deps.name == agent_record.name
+    assert agent_deps.system_instructions == agent_record.system_instructions

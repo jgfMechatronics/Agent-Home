@@ -28,9 +28,9 @@ async def agent_with_blocks_and_deps(session: AsyncSession, agent_with_blocks: d
 
 
 @pytest_asyncio.fixture
-async def agent_no_blocks_with_deps(session: AsyncSession, agent_record: AgentRecord):
+async def agent_no_blocks_with_deps(agent_deps: AgentDeps, agent_record: AgentRecord):
     """Agent with no memory blocks. Uses shared agent_record from conftest."""
-    return {"agent": agent_record, "deps": AgentDeps(session=session, agent_record=agent_record)}
+    return {"agent": agent_record, "deps": agent_deps}
 
 
 @pytest_asyncio.fixture
@@ -167,7 +167,7 @@ class TestCompileSystemPrompt:
 
 # --- compile_system_prompt formatting test (standalone, different fixtures). Was written to enable easy inspection of format ---
 
-async def test_exact_compiled_format(session: AsyncSession, agent_record: AgentRecord):
+async def test_exact_compiled_format(session: AsyncSession, agent_deps: AgentDeps, agent_record: AgentRecord):
     """
     Compiled prompt exact XML format — newlines between every section and block.
     Bespoke simple memory structure to enable easy format inspection
@@ -193,8 +193,7 @@ async def test_exact_compiled_format(session: AsyncSession, agent_record: AgentR
     session.add_all([block_a, block_b])
     await session.flush()
 
-    deps = AgentDeps(session=session, agent_record=agent_record)
-    await compile_system_prompt(deps)
+    await compile_system_prompt(agent_deps)
 
     expected = (
         f"<system_instructions>\n"

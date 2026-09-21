@@ -109,10 +109,10 @@ class DBTestBase:
     """Base class for test classes that need a database session and agent."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
+    async def setup(self, session: AsyncSession, agent_deps: AgentDeps, agent_record: AgentRecord):
         self.session = session
         self.agent = agent_record
-        self.deps = AgentDeps(session=session, agent_record=agent_record)
+        self.deps = agent_deps
 
     async def _persist(self, messages, tool_schemas=None, *, deps=None) -> int | None:
         """Persist messages with controlled tool schemas; use self.deps unless deps is provided.

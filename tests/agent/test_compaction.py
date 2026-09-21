@@ -242,16 +242,14 @@ class TestCompactToolPairAtomicity:
 
     async def _make_agent_with_tool_sequence(
         self,
-        session: AsyncSession,
-        agent_record: AgentRecord,
+        agent_deps: AgentDeps,
         tool_pair_generator,
         *,
         config: AgentConfig,
     ) -> dict:
-        agent_record.agent_config = config
-        await session.flush()
+        agent_deps._agent_record.agent_config = config
+        await agent_deps.session.flush()
 
-        deps = AgentDeps(session=session, agent_record=agent_record)
         tool_call_response, tool_response_request = tool_pair_generator()
         pydantic_msgs = [
             make_request("msg 0"),
@@ -265,11 +263,11 @@ class TestCompactToolPairAtomicity:
             make_request("msg 8"),
             make_response("resp 9"),
         ]
-        records = await _persist_messages_load_records(deps, pydantic_msgs)
-        return {"agent": agent_record, "records": records, "deps": deps}
+        records = await _persist_messages_load_records(agent_deps, pydantic_msgs)
+        return {"agent": agent_deps._agent_record, "records": records, "deps": agent_deps}
 
     @pytest.mark.parametrize("tool_pair_generator", [make_tool_pair, make_retry_pair])
-    async def test_does_not_orphan_tool_response(self, session: AsyncSession, agent_record: AgentRecord, tool_pair_generator):
+    async def test_does_not_orphan_tool_response(self, session: AsyncSession, agent_deps: AgentDeps, tool_pair_generator):
         """compact() walks back from the naive trim point to preserve tool pair atomicity.
 
         Token math — engineered to force the naive trim to land at records[6] (tool
@@ -286,7 +284,7 @@ class TestCompactToolPairAtomicity:
         Fixed result: context_window_start = records[5].seq_id  ← pair kept intact
         """
         config = _make_config(soft_compaction_limit=1000, compaction_target_fraction=0.5)
-        data = await self._make_agent_with_tool_sequence(session, agent_record, tool_pair_generator, config=config)
+        data = await self._make_agent_with_tool_sequence(agent_deps, tool_pair_generator, config=config)
 
         # sanity check: records[5] and [6] are the tool pair (assumed in ending assertion)
         call_record, return_record = deserialize_messages(data["records"][5:7])

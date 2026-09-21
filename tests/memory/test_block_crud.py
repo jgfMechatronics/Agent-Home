@@ -316,10 +316,9 @@ async def test_create_block_auto_assigns_position_at_end(multi_tenant_with_deps:
     assert result.position == max_existing_position + 1
 
 
-async def test_create_block_on_agent_with_no_blocks(session: AsyncSession, agent_record: AgentRecord):
+async def test_create_block_on_agent_with_no_blocks(agent_deps: AgentDeps):
     """create_block on agent with no blocks should assign position 0."""
-    deps = AgentDeps(session=session, agent_record=agent_record)
-    result = await create_block(deps, BlockSettings(label="first_block"))
+    result = await create_block(agent_deps, BlockSettings(label="first_block"))
     assert result.position == 0
 
 
