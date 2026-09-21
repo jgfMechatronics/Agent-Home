@@ -132,19 +132,10 @@ async def seed_stub_snapshots(session: AsyncSession):
     await session.flush()
 
 
-def make_deps(session: AsyncSession, agent: AgentRecord) -> AgentDeps:
-    """Construct AgentDeps from a session and agent record.
-    TODO: this fixture is stupid and should go
-    """
-    return AgentDeps(session=session, agent_record=agent)
-
-
 @pytest_asyncio.fixture
 async def agent_deps(session: AsyncSession, agent_record: AgentRecord) -> AgentDeps:
-    """AgentDeps constructed directly from session + agent_record (bypasses factory/lock — valid in tests).
-    TODO: Replace any callsites that construct an AgentDeps with the default session and record fixture with this
-    """
-    return make_deps(session, agent_record)
+    """AgentDeps constructed directly from session + agent_record (bypasses factory/lock — valid in tests)."""
+    return AgentDeps(session=session, agent_record=agent_record)
 
 
 # ---------------------------------------------------------------------------

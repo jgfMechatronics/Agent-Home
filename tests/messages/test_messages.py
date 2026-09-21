@@ -33,12 +33,12 @@ from conftest import (
     local_dummy_tool,
     SAMPLE_AGENT_CONFIG,
     make_alternating_messages,
-    make_deps,
     make_request,
     make_response,
     make_retry_pair,
     make_tool_pair,
 )
+from agent.types import AgentDeps
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ class DBTestBase:
     async def setup(self, session: AsyncSession, agent_record: AgentRecord):
         self.session = session
         self.agent = agent_record
-        self.deps = make_deps(session, agent_record)
+        self.deps = AgentDeps(session=session, agent_record=agent_record)
 
     async def _persist(self, messages, tool_schemas=None, *, deps=None) -> int | None:
         """Persist messages with controlled tool schemas; use self.deps unless deps is provided.
@@ -264,7 +264,7 @@ class TestPersistMessages(DBTestBase):
         )
         self.session.add(other_agent)
         await self.session.flush()
-        other_deps = make_deps(self.session, other_agent)
+        other_deps = AgentDeps(session=self.session, agent_record=other_agent)
 
         expected_other_msg = make_request("other msg")
         my_first_expected_msg = make_request("my msg")
@@ -550,7 +550,7 @@ class TestLoadMessages(DBTestBase):
         )
         self.session.add(other_agent)
         await self.session.flush()
-        other_deps = make_deps(self.session, other_agent)
+        other_deps = AgentDeps(session=self.session, agent_record=other_agent)
 
         await self._persist([make_request(), make_response()])
         await self._persist([make_request(), make_response()], deps=other_deps)

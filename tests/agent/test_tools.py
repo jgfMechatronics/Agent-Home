@@ -14,7 +14,8 @@ from agent.tools import (
     memory_insert,
     memory_replace,
 )
-from conftest import SAMPLE_AGENT_CONFIG, make_deps, mock_run_context
+from agent.types import AgentDeps
+from conftest import SAMPLE_AGENT_CONFIG, mock_run_context
 from db.models import AgentRecord, MemoryBlockRecord
 
 
@@ -54,7 +55,7 @@ async def _make_agent_with_block(
     session.add(block)
     await session.flush()
     
-    deps = make_deps(session, agent)
+    deps = AgentDeps(session=session, agent_record=agent)
     ctx = mock_run_context(deps)
     
     return {"agent": agent, "block": block, "deps": deps, "ctx": ctx}

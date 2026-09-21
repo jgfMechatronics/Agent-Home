@@ -10,7 +10,8 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from conftest import make_deps, mock_run_context, SAMPLE_AGENT_CONFIG
+from conftest import mock_run_context, SAMPLE_AGENT_CONFIG
+from agent.types import AgentDeps
 from db.models import AgentRecord, MemoryBlockRecord
 
 
@@ -23,13 +24,13 @@ from memory.system_prompt_compilation import compile_system_prompt, get_system_p
 @pytest_asyncio.fixture
 async def agent_with_blocks_and_deps(session: AsyncSession, agent_with_blocks: dict):
     """Extends agent_with_blocks with AgentDeps for write operations."""
-    return {**agent_with_blocks, "deps": make_deps(session, agent_with_blocks["agent"])}
+    return {**agent_with_blocks, "deps": AgentDeps(session=session, agent_record=agent_with_blocks["agent"])}
 
 
 @pytest_asyncio.fixture
 async def agent_no_blocks_with_deps(session: AsyncSession, agent_record: AgentRecord):
     """Agent with no memory blocks. Uses shared agent_record from conftest."""
-    return {"agent": agent_record, "deps": make_deps(session, agent_record)}
+    return {"agent": agent_record, "deps": AgentDeps(session=session, agent_record=agent_record)}
 
 
 @pytest_asyncio.fixture

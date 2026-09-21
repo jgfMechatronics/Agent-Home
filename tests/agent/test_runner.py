@@ -43,9 +43,9 @@ from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThink
 # Local
 from messages.messages import format_system_alert
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
-from agent.types import AgentAppState, MCPConnError
+from agent.types import AgentAppState, MCPConnError, AgentDeps
 from api.fastapi_deps import get_agent_and_deps
-from conftest import make_deps, make_mock_agent, _make_mock_session, local_dummy_tool
+from conftest import make_mock_agent, _make_mock_session, local_dummy_tool
 from db.models import AgentRecord
 
 # --- Module-level test data ---
@@ -1073,7 +1073,7 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
     def _setup(self, agent_record):
         self.test_agent = FunctionModelTestAgent()
         self.agent_app_state = AgentAppState()
-        self._deps = make_deps(_make_mock_session(), agent_record)
+        self._deps = AgentDeps(session=_make_mock_session(), agent_record=agent_record)
 
     async def _run_agent_to_completion(self, user_prompt: str = "test") -> list:
         return [event async for event in run_stateful_agent(

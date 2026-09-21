@@ -21,7 +21,6 @@ from agent.types import AgentConfig, AgentDeps
 from conftest import (
     SAMPLE_AGENT_CONFIG,
     make_alternating_messages,
-    make_deps,
     make_request,
     make_response,
     make_retry_pair,
@@ -78,7 +77,7 @@ async def _make_agent_with_messages(
     session.add(agent)
     await session.flush()
 
-    deps = make_deps(session, agent)
+    deps = AgentDeps(session=session, agent_record=agent)
     pydantic_msgs = make_alternating_messages(message_count)
     messages = await _persist_messages_load_records(deps, pydantic_msgs)
 
@@ -252,7 +251,7 @@ class TestCompactToolPairAtomicity:
         agent_record.agent_config = config
         await session.flush()
 
-        deps = make_deps(session, agent_record)
+        deps = AgentDeps(session=session, agent_record=agent_record)
         tool_call_response, tool_response_request = tool_pair_generator()
         pydantic_msgs = [
             make_request("msg 0"),
