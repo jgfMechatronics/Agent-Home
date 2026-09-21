@@ -43,7 +43,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThink
 # Local
 from messages.messages import format_system_alert
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
-from agent.types import AgentAppState
+from agent.types import AgentAppState, MCPConnError
 from api.fastapi_deps import get_agent_and_deps
 from conftest import make_deps, make_mock_agent, _make_mock_session, local_dummy_tool
 from db.models import AgentRecord
@@ -1283,3 +1283,30 @@ class TestMCPToolSchemaSnapshotting(_BaseRouteTest):
             assert len(function_toolsets) == 1, "Expected exactly one FunctionToolset"
             assert len(mcp_toolsets) == 1, "Expected exactly one MCPToolset"
             assert len(toolsets) == 2, "Expected exactly two toolsets total"
+
+
+class TestMCPConnectionError(_BaseRouteTest):
+    """Test that MCP connection failures produce clear, actionable errors.
+    
+    When an MCP server is unreachable, the runner should raise MCPConnError with a
+    helpful message rather than letting the cryptic RuntimeError propagate.
+    """
+
+    @pytest.fixture(autouse=True)
+    def unreachable_mcp_setup(self, agent_record):
+        self._agent_record = agent_record
+        # Port 1 is privileged and guaranteed to have nothing listening.
+        # Connection refused is immediate (no timeout wait).
+        unreachable_toolset = MCPToolset("http://127.0.0.1:1/mcp")
+        self._test_agent = Agent(
+            FunctionModel(stream_function=_mcp_completion_stream),
+            toolsets=[unreachable_toolset],
+        )
+
+    async def test_unreachable_mcp_server_raises_mcp_conn_error(self):
+        """Unreachable MCP server produces clear MCPConnError, not cryptic RuntimeError."""
+        deps = make_deps(_make_mock_session(), self._agent_record)
+
+        with pytest.raises(MCPConnError, match="MCP server is unreachable"):
+            async for _ in run_stateful_agent(self._test_agent, deps, AgentAppState(), "hello"):
+                pass
