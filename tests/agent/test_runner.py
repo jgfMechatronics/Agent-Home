@@ -1246,6 +1246,11 @@ async def test_empty_model_response_parts_does_not_crash():
     """
     pytest.fail("not yet implemented")
 
+
+# ---------------------------------------------------------------------------
+# MCP connection/handling tests
+# ---------------------------------------------------------------------------
+
 async def _mcp_completion_stream(messages: list, info: AgentInfo) -> None:
     """Minimal FunctionModel stream: plain text completion, no tool calls."""
     yield FunctionModelTestAgent.COMPLETION_TEXT
