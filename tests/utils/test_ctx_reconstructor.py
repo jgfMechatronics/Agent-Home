@@ -14,7 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory
-from agent.runner import _extract_tool_definitions, run_stateful_agent
+from agent.runner import run_stateful_agent
+from messages.messages import _extract_tool_definitions
 from agent.tools import TOOL_REGISTRY
 from agent.types import AgentAppState, AgentConfig, AgentDeps
 from db.models import (
