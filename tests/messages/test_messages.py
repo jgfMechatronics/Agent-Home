@@ -120,7 +120,7 @@ class DBTestBase:
         Patches _extract_tool_definitions so tests can supply ToolDefinition lists directly
         without needing real toolsets. Passes empty toolsets to persist_messages since
         extraction is handled by the patch.
-        This approach is intended for compatibiltiy with existing tests after a change to persist_messages signature
+        This approach is intended for compatibility with existing tests after a change to persist_messages signature
         """
         schemas = tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS
         with patch("messages.messages._extract_tool_definitions", AsyncMock(return_value=schemas)):
