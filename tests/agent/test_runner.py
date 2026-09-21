@@ -37,6 +37,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import ToolDefinition
 
@@ -1293,11 +1294,11 @@ def in_process_mcp_toolset():
 
 
 class TestMCPToolSchemaSnapshotting(_BaseRouteTest):
-    """Integration test: MCP tool schemas flow through run_stateful_agent to persist_messages.
+    """Integration test: correct toolsets flow through run_stateful_agent to persist_messages.
 
-    Uses a real in-process FastMCP server (MCPToolsetClient accepts FastMCP directly —
-    mcp.py line 1973), so the full chain runs without mocking MCPToolset internals.
-    Asserts that both MCP and function tool schemas reach persist_messages after the fix.
+    Verifies that agent.toolsets (containing both FunctionToolset and MCPToolset) are passed
+    to persist_messages on every call. Schema extraction from toolsets is an internal detail
+    of persist_messages, tested in test_messages.py.
     """
 
     @pytest.fixture(autouse=True)
@@ -1316,8 +1317,8 @@ class TestMCPToolSchemaSnapshotting(_BaseRouteTest):
 
         self._test_agent = agent
 
-    async def test_mcp_and_function_schemas_reach_persist_messages(self):
-        """Both MCP and function tool schemas must appear in every persist_messages call."""
+    async def test_mcp_and_function_toolsets_reach_persist_messages(self):
+        """Both FunctionToolset and MCPToolset must be present in every persist_messages call."""
         deps = make_deps(_make_mock_session(), self._agent_record)
 
         async for _ in run_stateful_agent(self._test_agent, deps, AgentAppState(), "hello"):
@@ -1325,9 +1326,9 @@ class TestMCPToolSchemaSnapshotting(_BaseRouteTest):
 
         assert self.mock_persist_messages.called, "persist_messages must be called at least once"
         for call in self.mock_persist_messages.call_args_list:
-            # checking this type buys us a lot in terms of guarentees from other unit tests, I think
-            schemas = call.kwargs["tool_schemas"]
-            assert all(isinstance(s, ToolDefinition) for s in schemas)
-            assert sorted(schemas, key=lambda s: s.name) == sorted(
-                [_EXPECTED_MCP_SCHEMA, _EXPECTED_LOCAL_SCHEMA], key=lambda s: s.name
-            )
+            toolsets = call.kwargs["toolsets"]
+            function_toolsets = [ts for ts in toolsets if isinstance(ts, FunctionToolset)]
+            mcp_toolsets = [ts for ts in toolsets if isinstance(ts, MCPToolset)]
+            assert len(function_toolsets) == 1, "Expected exactly one FunctionToolset"
+            assert len(mcp_toolsets) == 1, "Expected exactly one MCPToolset"
+            assert len(toolsets) == 2, "Expected exactly two toolsets total"
