@@ -39,14 +39,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.tools import ToolDefinition
 
 # Local
 from messages.messages import format_system_alert
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
 from agent.types import AgentAppState
 from api.fastapi_deps import get_agent_and_deps
-from conftest import make_deps, make_mock_agent, _make_mock_session
+from conftest import make_deps, make_mock_agent, _make_mock_session, local_dummy_tool
 from db.models import AgentRecord
 
 # --- Module-level test data ---
@@ -1247,50 +1246,9 @@ async def test_empty_model_response_parts_does_not_crash():
     """
     pytest.fail("not yet implemented")
 
-# ---- MCP schema snapshotting ----
-
-_EXPECTED_MCP_SCHEMA = ToolDefinition(
-    name="mcp_read_file",
-    description="Read a file from disk.",
-    parameters_json_schema={
-        "additionalProperties": False,
-        "properties": {"path": {"type": "string"}},
-        "required": ["path"],
-        "type": "object",
-    },
-)
-
-_EXPECTED_LOCAL_SCHEMA = ToolDefinition(
-    name="local_dummy",
-    description="A local function tool.",
-    parameters_json_schema={
-        "additionalProperties": False,
-        "properties": {"text": {"type": "string"}},
-        "required": ["text"],
-        "type": "object",
-    },
-    return_schema={"type": "string"},
-)
-
-
 async def _mcp_completion_stream(messages: list, info: AgentInfo) -> None:
     """Minimal FunctionModel stream: plain text completion, no tool calls."""
     yield FunctionModelTestAgent.COMPLETION_TEXT
-
-
-@pytest.fixture
-def in_process_mcp_toolset():
-    """Real in-process FastMCP server exposing a known tool — no HTTP, no mocking."""
-    from fastmcp import FastMCP
-
-    mcp = FastMCP("test-mcp-server")
-
-    @mcp.tool()
-    def mcp_read_file(path: str) -> str:
-        """Read a file from disk."""
-        return f"contents of {path}"
-
-    return MCPToolset(mcp)
 
 
 class TestMCPToolSchemaSnapshotting(_BaseRouteTest):
@@ -1304,18 +1262,11 @@ class TestMCPToolSchemaSnapshotting(_BaseRouteTest):
     @pytest.fixture(autouse=True)
     def mcp_agent_setup(self, agent_record, in_process_mcp_toolset):
         self._agent_record = agent_record
-
-        async def local_dummy(ctx: RunContext, text: str) -> str:
-            """A local function tool."""
-            return text
-
-        agent = Agent(
+        self._test_agent = Agent(
             FunctionModel(stream_function=_mcp_completion_stream),
-            tools=[local_dummy],
+            tools=[local_dummy_tool],
             toolsets=[in_process_mcp_toolset],
         )
-
-        self._test_agent = agent
 
     async def test_mcp_and_function_toolsets_reach_persist_messages(self):
         """Both FunctionToolset and MCPToolset must be present in every persist_messages call."""

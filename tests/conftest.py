@@ -369,3 +369,28 @@ def override_db_session(app: FastAPI, session: AsyncSession):
     app.dependency_overrides[get_session_dep] = _get_test_session
     yield
     app.dependency_overrides.pop(get_session_dep)
+
+
+# ---------------------------------------------------------------------------
+# MCP test helpers (shared between test_runner.py and test_messages.py)
+# ---------------------------------------------------------------------------
+
+async def local_dummy_tool(ctx: RunContext, text: str) -> str:
+    """A local function tool used in MCP integration tests."""
+    return text
+
+
+@pytest.fixture
+def in_process_mcp_toolset():
+    """Real in-process FastMCP server exposing a known tool — no HTTP, no mocking."""
+    from fastmcp import FastMCP
+    from pydantic_ai.mcp import MCPToolset
+
+    mcp = FastMCP("test-mcp-server")
+
+    @mcp.tool()
+    def mcp_read_file(path: str) -> str:
+        """Read a file from disk."""
+        return f"contents of {path}"
+
+    return MCPToolset(mcp)

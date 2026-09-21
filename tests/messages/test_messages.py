@@ -6,7 +6,9 @@ import time
 
 import pytest
 import pytest_asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -16,6 +18,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 from sqlalchemy import select
@@ -23,10 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig
 from db.models import AgentConfigSnapshot, AgentRecord, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
-from messages.messages import deserialize_messages, load_messages, persist_messages, format_system_alert, is_system_alert
+from messages.messages import _extract_tool_definitions, deserialize_messages, load_messages, persist_messages, format_system_alert, is_system_alert
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
 from conftest import (
+    local_dummy_tool,
     SAMPLE_AGENT_CONFIG,
     make_alternating_messages,
     make_deps,
@@ -111,12 +115,20 @@ class DBTestBase:
         self.deps = make_deps(session, agent_record)
 
     async def _persist(self, messages, tool_schemas=None, *, deps=None) -> int | None:
-        """Persist messages with default tool schemas; use self.deps unless deps is provided."""
-        return await persist_messages(
-            deps if deps is not None else self.deps,
-            messages,
-            tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS,
-        )
+        """Persist messages with controlled tool schemas; use self.deps unless deps is provided.
+
+        Patches _extract_tool_definitions so tests can supply ToolDefinition lists directly
+        without needing real toolsets. Passes empty toolsets to persist_messages since
+        extraction is handled by the patch.
+        This approach is intended for compatibiltiy with existing tests after a change to persist_messages signature
+        """
+        schemas = tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS
+        with patch("messages.messages._extract_tool_definitions", AsyncMock(return_value=schemas)):
+            return await persist_messages(
+                deps if deps is not None else self.deps,
+                messages,
+                [],
+            )
 
     async def _persist_and_fetch(self, messages, tool_schemas=None) -> list[MessageRecord]:
         await self._persist(messages, tool_schemas)
@@ -418,9 +430,9 @@ class TestPersistMessagesSnapshots(DBTestBase):
         """Same prompt reuses the existing snapshot row; a changed prompt creates a new one.
         Record hashes exactly match the set of snapshot IDs."""
         self.agent.compiled_system_prompt = "prompt A"
-        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        await self._persist([make_request()])
         self.agent.compiled_system_prompt = second_prompt
-        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        await self._persist([make_request()])
         snaps, records = await self._sys_snapshots(), await fetch_all_records(self.session, self.agent.id)
         assert len(snaps) == expected_count
         assert {r.system_prompt_hash for r in records} == {s.id for s in snaps}
@@ -431,8 +443,8 @@ class TestPersistMessagesSnapshots(DBTestBase):
     async def test_tool_schema_snapshot_dedup(self, second_schemas, expected_count):
         """Same schemas reuse the existing snapshot row; changed schemas create a new one.
         Record hashes exactly match the set of snapshot IDs."""
-        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
-        await persist_messages(self.deps, [make_request()], second_schemas)
+        await self._persist([make_request()])
+        await self._persist([make_request()], second_schemas)
         snaps, records = await self._tool_snapshots(), await fetch_all_records(self.session, self.agent.id)
         assert len(snaps) == expected_count
         assert {r.tool_definition_hash for r in records} == {s.id for s in snaps}
@@ -457,9 +469,9 @@ class TestPersistMessagesSnapshots(DBTestBase):
     async def test_agent_config_snapshot_dedup(self, second_config, expected_count):
         """Same config reuses the existing snapshot row; a changed config creates a new one.
         Record hashes exactly match the set of snapshot IDs."""
-        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        await self._persist([make_request()])
         self.agent.agent_config = second_config
-        await persist_messages(self.deps, [make_request()], SAMPLE_TOOL_SCHEMAS)
+        await self._persist([make_request()])
         snaps, records = await self._config_snapshots(), await fetch_all_records(self.session, self.agent.id)
         assert len(snaps) == expected_count
         assert {r.agent_config_hash for r in records} == {s.id for s in snaps}
@@ -467,7 +479,7 @@ class TestPersistMessagesSnapshots(DBTestBase):
     async def test_context_window_start_stable_across_calls(self):
         """Subsequent persist calls all reference the UUID of the very first message ever persisted."""
         first_records = await self._persist_and_fetch([make_request(), make_response()])
-        await persist_messages(self.deps, [make_request(), make_response()], SAMPLE_TOOL_SCHEMAS)
+        await self._persist([make_request(), make_response()])
         all_records = await fetch_all_records(self.session, self.agent.id)
         assert all(r.context_window_start_msg_id == first_records[0].id for r in all_records)
 
@@ -676,3 +688,48 @@ class TestSystemAlertFormatting:
 
     def test_not_just_any_xml(self):
         assert not is_system_alert("<garbage> manure </garbage>")
+
+
+# ---------------------------------------------------------------------------
+# TestExtractToolDefinitions
+# ---------------------------------------------------------------------------
+
+_EXPECTED_MCP_SCHEMA = ToolDefinition(
+    name="mcp_read_file",
+    description="Read a file from disk.",
+    parameters_json_schema={
+        "additionalProperties": False,
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+        "type": "object",
+    },
+)
+
+_EXPECTED_LOCAL_SCHEMA = ToolDefinition(
+    name="local_dummy_tool",
+    description="A local function tool used in MCP integration tests.",
+    parameters_json_schema={
+        "additionalProperties": False,
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+        "type": "object",
+    },
+    return_schema={"type": "string"},
+)
+
+
+@pytest.mark.asyncio
+async def test_extract_tool_definitions_returns_correct_schemas(in_process_mcp_toolset):
+    """_extract_tool_definitions extracts correct ToolDefinitions from both FunctionToolset and MCPToolset.
+
+    Uses a real in-process FastMCP server and a real Agent-wrapped function tool so the
+    full extraction chain runs without mocking. Asserts exact schema content, not just types.
+    """
+    agent = Agent(TestModel(), tools=[local_dummy_tool], toolsets=[in_process_mcp_toolset])
+
+    schemas = await _extract_tool_definitions(agent.toolsets, "test-agent")
+
+    assert all(isinstance(s, ToolDefinition) for s in schemas)
+    assert sorted(schemas, key=lambda s: s.name) == sorted(
+        [_EXPECTED_MCP_SCHEMA, _EXPECTED_LOCAL_SCHEMA], key=lambda s: s.name
+    )
