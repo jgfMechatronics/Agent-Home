@@ -11,13 +11,13 @@ StatefulAgent Pattern:
   - Could own lifespan. Lock acquisition/release and such. AgentFactory could then be an object which only exists long enough to construct a StatefulAgent, or could just be a free function
 """
 import asyncio
-import os
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
@@ -32,6 +32,9 @@ __all__ = ["AgentFactory", "AgentNotFoundError", "AgentLockedError", "get_model"
 
 LOCK_TIMEOUT_SECONDS: int = 60
 LOCK_TIMEOUT_FAST: int = 2
+_MCP_FILESYSTEM_URL = "http://host.docker.internal:8080/mcp"
+
+logger = logging.getLogger(__name__)
 
 
 class AgentFactory:
@@ -132,13 +135,12 @@ class AgentFactory:
 
 def _construct_toolsets(toolset_names: list[str]) -> list:
     """Construct toolset instances from a list of toolset names.
-    
+
     Maps toolset names to their constructors and builds instances.
-    Unknown names are silently skipped (may want to warn/error in future).
-    
+
     Args:
         toolset_names: List of toolset identifiers (e.g., ["mcp_filesystem"])
-    
+
     Returns:
         List of constructed toolset instances ready for Agent consumption.
     """
@@ -146,8 +148,9 @@ def _construct_toolsets(toolset_names: list[str]) -> list:
     toolsets = []
     for name in toolset_names:
         if name == "mcp_filesystem":
-            toolsets.append(MCPToolset("http://host.docker.internal:8080/mcp"))
-        # Future toolsets can be added here with elif branches
+            toolsets.append(MCPToolset(_MCP_FILESYSTEM_URL))
+        else:
+            logger.warning("Unknown toolset name %r — skipping. Check agent config for typos.", name)
     return toolsets
 
 
