@@ -45,6 +45,7 @@ import httpx
 # --- Configuration ---
 
 DEFAULT_SERVER_URL = "http://localhost:8000"
+_TOOL_ARG_DISPLAY_MAX_CHARS = 60
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_SOFT_COMPACTION_LIMIT = 80000
 DEFAULT_MEMORY_TOOLS = ["memory_replace", "memory_insert"]
@@ -519,23 +520,24 @@ def _output_headless_accumulated(state: CLIState, stream_state: _StreamState) ->
 
 def _format_tool_args(args: dict | str | None) -> str:
     """Format tool args for display — compact key=value pairs, values truncated."""
-    MAX_VAL = 60
     if not args:
         return ""
     if isinstance(args, str):
         try:
             args = json.loads(args)
         except (json.JSONDecodeError, ValueError):
-            return args[:MAX_VAL] + "…" if len(args) > MAX_VAL else args
+            n = _TOOL_ARG_DISPLAY_MAX_CHARS
+            return args[:n] + "…" if len(args) > n else args
     if isinstance(args, dict):
         parts = []
+        n = _TOOL_ARG_DISPLAY_MAX_CHARS
         for k, v in args.items():
             if isinstance(v, str):
-                truncated = v[:MAX_VAL] + "…" if len(v) > MAX_VAL else v
+                truncated = v[:n] + "…" if len(v) > n else v
                 parts.append(f'{k}="{truncated}"')
             else:
                 s = repr(v)
-                parts.append(f"{k}={s[:MAX_VAL] + '…' if len(s) > MAX_VAL else s}")
+                parts.append(f"{k}={s[:n] + '…' if len(s) > n else s}")
         return " ".join(parts)
     return ""
 
