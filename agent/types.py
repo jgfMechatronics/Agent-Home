@@ -65,6 +65,11 @@ class AgentLockedError(Exception):
     pass
 
 
+class MCPConnError(Exception):
+    """Raised when an attached MCP server is unreachable at run start."""
+    pass
+
+
 class AgentConfig(BaseModel):
     """
     Agent configuration stored as JSON in AgentRecord.agent_config.

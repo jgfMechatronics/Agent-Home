@@ -1,4 +1,5 @@
 import logging
+import httpx
 from collections.abc import Sequence
 from typing import AsyncGenerator, TYPE_CHECKING
 
@@ -13,7 +14,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from agent.compaction import compact, is_compaction_needed
-from agent.types import AgentAppState, AgentDeps
+from agent.types import AgentAppState, AgentDeps, MCPConnError
 from messages.messages import deserialize_messages, format_system_alert, load_messages, persist_messages
 
 if TYPE_CHECKING:
@@ -107,47 +108,54 @@ async def run_stateful_agent(agent: Agent,
         new_message_idx = len(message_history) - merge_adjustment
 
         with capture_run_messages() as messages:
-            async with agent.run_stream_events(user_prompt=user_prompt,
-                                                message_history=message_history,
-                                                deps=deps) as stream:
-                last_total_tokens_value = None
+            try:
+                async with agent.run_stream_events(user_prompt=user_prompt,
+                                                    message_history=message_history,
+                                                    deps=deps) as stream:
+                    last_total_tokens_value = None
 
-                async for event in stream:
-                    yield event
+                    async for event in stream:
+                        yield event
 
-                    messages_to_persist = []
-                    last_part_of_last_msg = messages[-1].parts[-1] if (messages and messages[-1].parts) else None
+                        messages_to_persist = []
+                        last_part_of_last_msg = messages[-1].parts[-1] if (messages and messages[-1].parts) else None
 
-                    if (isinstance(event, ToolResultEvent)
-                        and isinstance(event.part, ToolReturnPart)
-                        and not isinstance(last_part_of_last_msg, ToolReturnPart)
-                        and isinstance(last_part_of_last_msg, ToolCallPart)):
-                        # As of 1.97.0, pydantic-ai adds the ToolReturn to the captured messages list only
-                        # when the next step starts, not when ToolResultEvent is yielded. Persist the tool pair atomically
-                        # from the event data directly, so we don't lose it on cancel
-                        # The last two gating conditions are a sanity check: Ensure the tool return is NOT available but the tool call IS
-                        tool_return_msg = ModelRequest(parts=[event.part])
-                        messages_to_persist = messages[new_message_idx:] + [tool_return_msg]
-                    elif (len(messages) > new_message_idx) and not isinstance(last_part_of_last_msg, ToolCallPart):
-                        messages_to_persist = messages[new_message_idx:]
+                        if (isinstance(event, ToolResultEvent)
+                            and isinstance(event.part, ToolReturnPart)
+                            and not isinstance(last_part_of_last_msg, ToolReturnPart)
+                            and isinstance(last_part_of_last_msg, ToolCallPart)):
+                            # As of 1.97.0, pydantic-ai adds the ToolReturn to the captured messages list only
+                            # when the next step starts, not when ToolResultEvent is yielded. Persist the tool pair atomically
+                            # from the event data directly, so we don't lose it on cancel
+                            # The last two gating conditions are a sanity check: Ensure the tool return is NOT available but the tool call IS
+                            tool_return_msg = ModelRequest(parts=[event.part])
+                            messages_to_persist = messages[new_message_idx:] + [tool_return_msg]
+                        elif (len(messages) > new_message_idx) and not isinstance(last_part_of_last_msg, ToolCallPart):
+                            messages_to_persist = messages[new_message_idx:]
 
-                    if messages_to_persist:
-                        total_tokens = await persist_messages(deps=deps, messages=messages_to_persist, toolsets=agent.toolsets)
-                        await deps.commit_changes_refresh_agent_record()
-                        new_message_idx += len(messages_to_persist)
-                        if total_tokens is not None:
-                            last_total_tokens_value = total_tokens
+                        if messages_to_persist:
+                            total_tokens = await persist_messages(deps=deps, messages=messages_to_persist, toolsets=agent.toolsets)
+                            await deps.commit_changes_refresh_agent_record()
+                            new_message_idx += len(messages_to_persist)
+                            if total_tokens is not None:
+                                last_total_tokens_value = total_tokens
 
-                    if await _check_and_handle_cancel(agent_app_state, deps, agent.toolsets):
-                        return
+                        if await _check_and_handle_cancel(agent_app_state, deps, agent.toolsets):
+                            return
 
-                    # Mid-turn compaction check (after cancel — cancel supersedes compaction).
-                    # Only fire at clean message boundaries: after a tool returns or at natural turn end.
-                    if isinstance(event, (ToolResultEvent, AgentRunResultEvent)) and is_compaction_needed(last_total_tokens_value, deps.config):
-                        await compact(deps, last_total_tokens_value)
+                        # Mid-turn compaction check (after cancel — cancel supersedes compaction).
+                        # Only fire at clean message boundaries: after a tool returns or at natural turn end.
+                        if isinstance(event, (ToolResultEvent, AgentRunResultEvent)) and is_compaction_needed(last_total_tokens_value, deps.config):
+                            await compact(deps, last_total_tokens_value)
 
-                        if not isinstance(event, AgentRunResultEvent):
-                            # agent wasn't finished, restart them with a fresh run.
-                            user_prompt = COMPACTION_RESUME_NOTICE
-                            interrupted_by_compaction = True
-                            break
+                            if not isinstance(event, AgentRunResultEvent):
+                                # agent wasn't finished, restart them with a fresh run.
+                                user_prompt = COMPACTION_RESUME_NOTICE
+                                interrupted_by_compaction = True
+                                break
+            except RuntimeError as e:
+                if isinstance(e.__cause__, httpx.ConnectError):
+                    raise MCPConnError(
+                        "At least 1 attached MCP server is unreachable — check status of attached MCP servers."
+                    ) from e
+                raise
