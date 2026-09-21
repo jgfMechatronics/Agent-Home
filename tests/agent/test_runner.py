@@ -1285,11 +1285,6 @@ class TestMCPTools(_BaseRouteTest):
         )
 
     @pytest.fixture
-    def deps(self, agent_record):
-        """AgentDeps with mock session for runner tests."""
-        return make_deps(_make_mock_session(), agent_record)
-
-    @pytest.fixture
     def completion_agent(self, in_process_mcp_toolset):
         """Agent that completes without tool calls."""
         return self._build_agent(_mcp_completion_stream, in_process_mcp_toolset)
@@ -1299,9 +1294,9 @@ class TestMCPTools(_BaseRouteTest):
         """Agent that calls the MCP tool then completes."""
         return self._build_agent(self._tool_call_stream, in_process_mcp_toolset)
 
-    async def test_toolsets_reach_persist_messages(self, deps, completion_agent):
+    async def test_toolsets_reach_persist_messages(self, agent_deps, completion_agent):
         """Both FunctionToolset and MCPToolset must be present in every persist_messages call."""
-        async for _ in run_stateful_agent(completion_agent, deps, AgentAppState(), "hello"):
+        async for _ in run_stateful_agent(completion_agent, agent_deps, AgentAppState(), "hello"):
             pass
 
         assert self.mock_persist_messages.called, "persist_messages must be called at least once"
@@ -1313,10 +1308,10 @@ class TestMCPTools(_BaseRouteTest):
             assert len(mcp_toolsets) == 1, "Expected exactly one MCPToolset"
             assert len(toolsets) == 2, "Expected exactly two toolsets total"
 
-    async def test_mcp_tool_call_returns_expected_result(self, deps, tool_call_agent):
+    async def test_mcp_tool_call_returns_expected_result(self, agent_deps, tool_call_agent):
         """MCP tool can be called and returns expected result through the runner."""
         events = []
-        async for event in run_stateful_agent(tool_call_agent, deps, AgentAppState(), "hello"):
+        async for event in run_stateful_agent(tool_call_agent, agent_deps, AgentAppState(), "hello"):
             events.append(event)
 
         # Find the tool result event and verify the MCP tool returned correctly
@@ -1336,8 +1331,7 @@ class TestMCPConnectionError(_BaseRouteTest):
     """
 
     @pytest.fixture(autouse=True)
-    def unreachable_mcp_setup(self, agent_record):
-        self._agent_record = agent_record
+    def unreachable_mcp_setup(self):
         # Port 1 is privileged and guaranteed to have nothing listening.
         # Connection refused is immediate (no timeout wait).
         unreachable_toolset = MCPToolset("http://127.0.0.1:1/mcp")
@@ -1346,10 +1340,8 @@ class TestMCPConnectionError(_BaseRouteTest):
             toolsets=[unreachable_toolset],
         )
 
-    async def test_unreachable_mcp_server_raises_mcp_conn_error(self):
+    async def test_unreachable_mcp_server_raises_mcp_conn_error(self, agent_deps):
         """Unreachable MCP server produces clear MCPConnError, not cryptic RuntimeError."""
-        deps = make_deps(_make_mock_session(), self._agent_record)
-
         with pytest.raises(MCPConnError, match="MCP server is unreachable"):
-            async for _ in run_stateful_agent(self._test_agent, deps, AgentAppState(), "hello"):
+            async for _ in run_stateful_agent(self._test_agent, agent_deps, AgentAppState(), "hello"):
                 pass
