@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Sequence
 from typing import AsyncGenerator, TYPE_CHECKING
 
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
@@ -11,45 +12,16 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.tools import ToolDefinition
-
 from agent.compaction import compact, is_compaction_needed
 from agent.types import AgentAppState, AgentDeps
 from messages.messages import deserialize_messages, format_system_alert, load_messages, persist_messages
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from pydantic_ai.toolsets import AbstractToolset
 
 logger = logging.getLogger(__name__)
 
 COMPACTION_RESUME_NOTICE = format_system_alert("Resuming after compaction. Context was trimmed to stay within limits.")
-
-
-async def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent_id: str) -> list[ToolDefinition]:
-    tool_schemas: list[ToolDefinition] = []
-    for ts in toolsets:
-        if isinstance(ts, FunctionToolset):
-            for tool in ts.tools.values():
-                tool_schemas.append(tool.tool_def)
-        elif isinstance(ts, MCPToolset):
-            for mcp_tool in await ts.list_tools():
-                tool_schemas.append(ToolDefinition(
-                    name=mcp_tool.name,
-                    description=mcp_tool.description,
-                    parameters_json_schema=mcp_tool.inputSchema,
-                ))
-        else:
-            logger.error(
-                "Agent %s has an unsupported toolset type (%s); "
-                "tool definitions for context reconstruction will be incomplete."
-                "Supported toolset types are FunctionToolset and MCPToolset.",
-                agent_id, ts.label,
-            )
-    return tool_schemas
 
 
 def _count_adjacent_message_merges(messages: list) -> int:
@@ -88,14 +60,14 @@ def _count_adjacent_message_merges(messages: list) -> int:
 async def _check_and_handle_cancel(
     agent_app_state: AgentAppState,
     deps: AgentDeps,
-    tool_schemas: "list[ToolDefinition]",
+    toolsets: "Sequence[AbstractToolset]",
 ) -> bool:
     if not agent_app_state.cancel_requested.is_set():
         return False
     cancel_notice = ModelRequest(parts=[UserPromptPart(
         content=format_system_alert("Turn cancelled by user.")
     )])
-    await persist_messages(deps=deps, messages=[cancel_notice], tool_schemas=tool_schemas)
+    await persist_messages(deps=deps, messages=[cancel_notice], toolsets=toolsets)
     await deps.commit_changes_refresh_agent_record()
     return True
 
@@ -143,9 +115,6 @@ async def run_stateful_agent(agent: Agent,
                 async for event in stream:
                     yield event
 
-                    # putting tool_schemas capture here should support agent self modifying attached tools.
-                    # not that we have any means or tests for that yet
-                    tool_schemas = await _extract_tool_definitions(agent.toolsets, deps.agent_id)
                     messages_to_persist = []
                     last_part_of_last_msg = messages[-1].parts[-1] if (messages and messages[-1].parts) else None
 
@@ -163,13 +132,13 @@ async def run_stateful_agent(agent: Agent,
                         messages_to_persist = messages[new_message_idx:]
 
                     if messages_to_persist:
-                        total_tokens = await persist_messages(deps=deps, messages=messages_to_persist, tool_schemas=tool_schemas)
+                        total_tokens = await persist_messages(deps=deps, messages=messages_to_persist, toolsets=agent.toolsets)
                         await deps.commit_changes_refresh_agent_record()
                         new_message_idx += len(messages_to_persist)
                         if total_tokens is not None:
                             last_total_tokens_value = total_tokens
 
-                    if await _check_and_handle_cancel(agent_app_state, deps, tool_schemas):
+                    if await _check_and_handle_cancel(agent_app_state, deps, agent.toolsets):
                         return
 
                     # Mid-turn compaction check (after cancel — cancel supersedes compaction).
