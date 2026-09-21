@@ -220,7 +220,7 @@ class TestReconstructContextIntegration:
     """Integration tests: run_stateful_agent → DB persistence → reconstruct_context."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
+    async def setup(self, session: AsyncSession, agent_record: AgentRecord, agent_deps: AgentDeps):
         """Configure agent_record for integration tests, store common fixtures as member data."""
         self.session = session
         self.agent_record = agent_record
@@ -228,7 +228,7 @@ class TestReconstructContextIntegration:
         # Configure for integration tests: all tools, known system instructions
         agent_record.agent_config = INTEGRATION_AGENT_CONFIG
         agent_record.system_instructions = INTEGRATION_SYSTEM_INSTRUCTIONS
-        await compile_system_prompt(AgentDeps(session, agent_record))
+        await compile_system_prompt(agent_deps)
 
     async def _run_and_reconstruct(
         self, prompt: str, test_model: TestModel
