@@ -599,7 +599,7 @@ class TestSendMessage:
         await session.flush()
         self.sender = sender
         self.session = session
-        self.deps = make_deps(session, sender)
+        self.deps = AgentDeps(session=session, agent_record=sender)
         self.ctx = mock_run_context(self.deps)
 
     async def _create_target(self):
@@ -837,7 +837,7 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # All other calls (A's persists and B's iter2 persists) return None → no compaction.
         b_first_persist_done = [False]
 
-        async def _persist_side_effect(deps, messages, tool_schemas):
+        async def _persist_side_effect(deps, messages, toolsets):
             if deps._agent_record is self.recipient_record and not b_first_persist_done[0]:
                 b_first_persist_done[0] = True
                 return 999_999  # > soft_compaction_limit (10 000) → compaction fires
