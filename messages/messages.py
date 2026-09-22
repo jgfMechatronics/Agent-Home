@@ -11,7 +11,9 @@ import logging
 import uuid
 from datetime import datetime
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
+from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -22,6 +24,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     RetryPromptPart,
 )
+from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.tools import ToolDefinition
 from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -29,6 +32,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig, AgentDeps
 from db.models import AgentConfigSnapshot, BaseSnapshot, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
+
+if TYPE_CHECKING:
+    from pydantic_ai.toolsets import AbstractToolset
 
 log = logging.getLogger(__name__)
 
@@ -207,10 +213,41 @@ async def _get_context_window_start_msg_id(
     return result.scalar()
 
 
+async def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent_id: str) -> list[ToolDefinition]:
+    """Extract ToolDefinition schemas from all attached toolsets.
+
+    Called once per persist_messages invocation so schemas are always fresh
+    at natural step boundaries. If mid-run toolset mutation is ever added,
+    this will automatically capture the current state at each persist point.
+    For intra-step mutation (mutations during a single model response), a
+    FunctionToolResultEvent hook in runner.py would be needed instead.
+    """
+    tool_schemas: list[ToolDefinition] = []
+    for ts in toolsets:
+        if isinstance(ts, FunctionToolset):
+            for tool in ts.tools.values():
+                tool_schemas.append(tool.tool_def)
+        elif isinstance(ts, MCPToolset):
+            for mcp_tool in await ts.list_tools():
+                tool_schemas.append(ToolDefinition(
+                    name=mcp_tool.name,
+                    description=mcp_tool.description,
+                    parameters_json_schema=mcp_tool.inputSchema,
+                ))
+        else:
+            log.error(
+                "Agent %s has an unsupported toolset type (%s); "
+                "tool definitions for context reconstruction will be incomplete. "
+                "Supported toolset types are FunctionToolset and MCPToolset.",
+                agent_id, ts.label,
+            )
+    return tool_schemas
+
+
 async def _persist_error_warnings(
     deps: AgentDeps,
     errors: list[tuple[datetime | None, str]],
-    tool_schemas: list[ToolDefinition],
+    toolsets: "Sequence[AbstractToolset]",
 ) -> None:
     """Build and persist error warning messages via recursive call to persist_messages."""
     warning_messages = [
@@ -222,7 +259,7 @@ async def _persist_error_warnings(
         for error_ts, error_text in errors
     ]
     await deps.session.flush()  # Ensure main messages visible to recursive call's MAX query
-    await persist_messages(deps, warning_messages, tool_schemas, _is_error_pass=True)
+    await persist_messages(deps, warning_messages, toolsets, _is_error_pass=True)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +269,7 @@ async def _persist_error_warnings(
 async def persist_messages(
     deps: AgentDeps,
     messages: list[ModelMessage],
-    tool_schemas: list[ToolDefinition],
+    toolsets: "Sequence[AbstractToolset]",
     *,
     _is_error_pass: bool = False,
 ) -> int | None:
@@ -261,7 +298,8 @@ async def persist_messages(
     max_seq_id = result.scalar()
     next_seq_id = max_seq_id + 1 if max_seq_id is not None else 0
 
-    # Snapshot hashes — computed once per call; **assumed** stable across the batch
+    tool_schemas = await _extract_tool_definitions(toolsets, deps.agent_id)
+    # Snapshot hashes — computed once per call; **assumed** stable across the batch of messages
     system_prompt_hash = await _ensure_system_prompt_snapshotted(deps.session, deps.compiled_system_prompt)
     tool_definition_hash = await _ensure_tool_definition_snapshotted(deps.session, tool_schemas)
     agent_config_hash = await _ensure_agent_config_snapshotted(deps.session, deps.config)

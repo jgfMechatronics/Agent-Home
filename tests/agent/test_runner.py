@@ -36,14 +36,16 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 # Local
 from messages.messages import format_system_alert
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
-from agent.types import AgentAppState
+from agent.types import AgentAppState, MCPConnError, AgentDeps
 from api.fastapi_deps import get_agent_and_deps
-from conftest import make_deps, make_mock_agent, _make_mock_session
+from conftest import make_mock_agent, _make_mock_session, local_dummy_tool
 from db.models import AgentRecord
 
 # --- Module-level test data ---
@@ -174,7 +176,7 @@ class TestHandleMessage(_BaseRouteTest):
             async def _mock_dep():
                 if raise_exc is not None:
                     raise raise_exc
-                yield make_mock_agent(events, raises_mid_stream), make_deps(self.mock_session, agent_record)
+                yield make_mock_agent(events, raises_mid_stream), AgentDeps(session=self.mock_session, agent_record=agent_record)
 
             app.dependency_overrides[get_agent_and_deps] = _mock_dep
 
@@ -417,7 +419,7 @@ class FunctionModelTestAgent:
 
         async def _make_agent_and_deps():
             async with agent_app_state.lock:
-                yield self._agent, make_deps(mock_session, agent_record)
+                yield self._agent, AgentDeps(session=mock_session, agent_record=agent_record)
                 agent_app_state.cancel_requested.clear()
 
         app.dependency_overrides[get_agent_and_deps] = _make_agent_and_deps
@@ -1071,7 +1073,7 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
     def _setup(self, agent_record):
         self.test_agent = FunctionModelTestAgent()
         self.agent_app_state = AgentAppState()
-        self._deps = make_deps(_make_mock_session(), agent_record)
+        self._deps = AgentDeps(session=_make_mock_session(), agent_record=agent_record)
 
     async def _run_agent_to_completion(self, user_prompt: str = "test") -> list:
         return [event async for event in run_stateful_agent(
@@ -1243,3 +1245,108 @@ async def test_empty_model_response_parts_does_not_crash():
     Fix: `messages[-1].parts[-1] if (messages and messages[-1].parts) else None`.
     """
     pytest.fail("not yet implemented")
+
+
+# ---------------------------------------------------------------------------
+# MCP connection/handling tests
+# ---------------------------------------------------------------------------
+
+async def _mcp_completion_stream(messages: list, info: AgentInfo) -> None:
+    """Minimal FunctionModel stream: plain text completion, no tool calls."""
+    yield FunctionModelTestAgent.COMPLETION_TEXT
+
+
+class TestMCPTools(_BaseRouteTest):
+    """Integration tests for MCP toolset functionality.
+
+    Tests both that toolsets flow correctly through the runner and that
+    MCP tools can be called and return results.
+    """
+
+    # Constants for MCP tool call test
+    MCP_TOOL_NAME = "mcp_read_file"
+    MCP_TOOL_ARGS = '{"path": "/test/file.txt"}'
+    MCP_TOOL_CALL_ID = "mcp-call-1"
+    MCP_EXPECTED_RETURN = "contents of /test/file.txt"
+
+    @staticmethod
+    async def _tool_call_stream(messages: list, info: AgentInfo) -> None:
+        """FunctionModel stream that calls the MCP tool, then completes."""
+        if len(messages) == 1:  # First invocation: emit tool call
+            yield DeltaToolCalls({0: DeltaToolCall(
+                name=TestMCPTools.MCP_TOOL_NAME,
+                json_args=TestMCPTools.MCP_TOOL_ARGS,
+                tool_call_id=TestMCPTools.MCP_TOOL_CALL_ID,
+            )})
+        else:  # Second invocation (after tool return): emit completion
+            yield FunctionModelTestAgent.COMPLETION_TEXT
+
+    def _build_agent(self, stream_fn, in_process_mcp_toolset):
+        """Build test agent with specified stream function."""
+        return Agent(
+            FunctionModel(stream_function=stream_fn),
+            tools=[local_dummy_tool],
+            toolsets=[in_process_mcp_toolset],
+        )
+
+    @pytest.fixture
+    def completion_agent(self, in_process_mcp_toolset):
+        """Agent that completes without tool calls."""
+        return self._build_agent(_mcp_completion_stream, in_process_mcp_toolset)
+
+    @pytest.fixture
+    def tool_call_agent(self, in_process_mcp_toolset):
+        """Agent that calls the MCP tool then completes."""
+        return self._build_agent(self._tool_call_stream, in_process_mcp_toolset)
+
+    async def test_toolsets_reach_persist_messages(self, agent_deps, completion_agent):
+        """Both FunctionToolset and MCPToolset must be present in every persist_messages call."""
+        async for _ in run_stateful_agent(completion_agent, agent_deps, AgentAppState(), "hello"):
+            pass
+
+        assert self.mock_persist_messages.called, "persist_messages must be called at least once"
+        for call in self.mock_persist_messages.call_args_list:
+            toolsets = call.kwargs["toolsets"]
+            function_toolsets = [ts for ts in toolsets if isinstance(ts, FunctionToolset)]
+            mcp_toolsets = [ts for ts in toolsets if isinstance(ts, MCPToolset)]
+            assert len(function_toolsets) == 1, "Expected exactly one FunctionToolset"
+            assert len(mcp_toolsets) == 1, "Expected exactly one MCPToolset"
+            assert len(toolsets) == 2, "Expected exactly two toolsets total"
+
+    async def test_mcp_tool_call_returns_expected_result(self, agent_deps, tool_call_agent):
+        """MCP tool can be called and returns expected result through the runner."""
+        events = []
+        async for event in run_stateful_agent(tool_call_agent, agent_deps, AgentAppState(), "hello"):
+            events.append(event)
+
+        # Find the tool result event and verify the MCP tool returned correctly
+        tool_result_events = [e for e in events if isinstance(e, FunctionToolResultEvent)]
+        assert len(tool_result_events) == 1, "Expected exactly one tool result event"
+
+        result_event = tool_result_events[0]
+        assert result_event.part.tool_name == self.MCP_TOOL_NAME
+        assert result_event.part.content == self.MCP_EXPECTED_RETURN
+
+
+class TestMCPConnectionError(_BaseRouteTest):
+    """Test that MCP connection failures produce clear, actionable errors.
+    
+    When an MCP server is unreachable, the runner should raise MCPConnError with a
+    helpful message rather than letting the cryptic RuntimeError propagate.
+    """
+
+    @pytest.fixture(autouse=True)
+    def unreachable_mcp_setup(self):
+        # Port 1 is privileged and guaranteed to have nothing listening.
+        # Connection refused is immediate (no timeout wait).
+        unreachable_toolset = MCPToolset("http://127.0.0.1:1/mcp")
+        self._test_agent = Agent(
+            FunctionModel(stream_function=_mcp_completion_stream),
+            toolsets=[unreachable_toolset],
+        )
+
+    async def test_unreachable_mcp_server_raises_mcp_conn_error(self, agent_deps):
+        """Unreachable MCP server produces clear MCPConnError, not cryptic RuntimeError."""
+        with pytest.raises(MCPConnError, match="MCP server is unreachable"):
+            async for _ in run_stateful_agent(self._test_agent, agent_deps, AgentAppState(), "hello"):
+                pass

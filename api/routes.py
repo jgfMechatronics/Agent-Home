@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
-from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings
+from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps
 from api.schemas import (
@@ -99,6 +99,12 @@ async def handle_message(
                                               agent_app_state=agent_app_state,
                                               user_prompt=body.message):
             yield map_to_sse(event)
+    except MCPConnError as e:
+        logger.error("MCP connection error for agent %s: %s", agent_id, e)
+        yield ServerSentEvent(
+            data={"message": f"\n\n{e}"},
+            event="Error",
+        )
     except Exception as e:
         # TODO (low priority): put more thought into logging strategy (log levels, handler chain, structured logging)
         logger.exception("Unexpected error in handle_message for agent %s", agent_id)

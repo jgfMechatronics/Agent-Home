@@ -26,14 +26,14 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Local
-from agent.factory import AgentNotFoundError, LOCK_TIMEOUT_FAST
+from agent.factory import LOCK_TIMEOUT_FAST
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings
 from api.fastapi_deps import get_agent_deps
 from agent.crud import create_agent_record
-from conftest import make_deps, SAMPLE_AGENT_CONFIG
+from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
-from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, DuplicateBlockError, InvalidBlockOrderListError
+from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError
 
 
 # --- Test Classes ---
@@ -533,7 +533,7 @@ class _MemoryBlockEndpointBase:
         self.mock_session = Mock()
 
         async def _mock_dep():
-            yield make_deps(self.mock_session, self.agent_record)
+            yield AgentDeps(session=self.mock_session, agent_record=self.agent_record)
 
         app.dependency_overrides[get_agent_deps] = _mock_dep
 

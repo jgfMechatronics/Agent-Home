@@ -45,6 +45,7 @@ import httpx
 # --- Configuration ---
 
 DEFAULT_SERVER_URL = "http://localhost:8000"
+_TOOL_ARG_DISPLAY_MAX_CHARS = 60
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_SOFT_COMPACTION_LIMIT = 80000
 DEFAULT_MEMORY_TOOLS = ["memory_replace", "memory_insert"]
@@ -517,6 +518,30 @@ def _output_headless_accumulated(state: CLIState, stream_state: _StreamState) ->
         output_json(state, result)
 
 
+def _format_tool_args(args: dict | str | None) -> str:
+    """Format tool args for display — compact key=value pairs, values truncated."""
+    if not args:
+        return ""
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (json.JSONDecodeError, ValueError):
+            n = _TOOL_ARG_DISPLAY_MAX_CHARS
+            return args[:n] + "…" if len(args) > n else args
+    if isinstance(args, dict):
+        parts = []
+        n = _TOOL_ARG_DISPLAY_MAX_CHARS
+        for k, v in args.items():
+            if isinstance(v, str):
+                truncated = v[:n] + "…" if len(v) > n else v
+                parts.append(f'{k}="{truncated}"')
+            else:
+                s = repr(v)
+                parts.append(f"{k}={s[:n] + '…' if len(s) > n else s}")
+        return " ".join(parts)
+    return ""
+
+
 async def process_sse_event(
     state: CLIState, stream_state: _StreamState, event_type: str, data_str: str
 ) -> None:
@@ -593,10 +618,12 @@ async def process_sse_event(
         if content:
             output(state, content, end="")
     elif event_type == "FunctionToolCallEvent":
-        # Structure: {"part": {"tool_name": "name"}}
+        # Structure: {"part": {"tool_name": "name", "args": {...}}}
         part = data.get("part", {})
         tool_name = part.get("tool_name", "unknown")
-        output(state, f"\n[Tool: {tool_name}]", end="")
+        args_display = _format_tool_args(part.get("args"))
+        suffix = f" {args_display}" if args_display else ""
+        output(state, f"\n[Tool: {tool_name}]{suffix}", end="")
     elif event_type == "FunctionToolResultEvent":
         output(state, " ✓", end="")
     elif event_type == "AgentRunResultEvent":

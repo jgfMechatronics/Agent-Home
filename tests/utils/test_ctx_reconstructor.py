@@ -14,7 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory
-from agent.runner import _extract_tool_definitions, run_stateful_agent
+from agent.runner import run_stateful_agent
+from messages.messages import _extract_tool_definitions
 from agent.tools import TOOL_REGISTRY
 from agent.types import AgentAppState, AgentConfig, AgentDeps
 from db.models import (
@@ -219,7 +220,7 @@ class TestReconstructContextIntegration:
     """Integration tests: run_stateful_agent → DB persistence → reconstruct_context."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
+    async def setup(self, session: AsyncSession, agent_record: AgentRecord, agent_deps: AgentDeps):
         """Configure agent_record for integration tests, store common fixtures as member data."""
         self.session = session
         self.agent_record = agent_record
@@ -227,7 +228,7 @@ class TestReconstructContextIntegration:
         # Configure for integration tests: all tools, known system instructions
         agent_record.agent_config = INTEGRATION_AGENT_CONFIG
         agent_record.system_instructions = INTEGRATION_SYSTEM_INSTRUCTIONS
-        await compile_system_prompt(AgentDeps(session, agent_record))
+        await compile_system_prompt(agent_deps)
 
     async def _run_and_reconstruct(
         self, prompt: str, test_model: TestModel
@@ -242,7 +243,7 @@ class TestReconstructContextIntegration:
             factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
             async with factory.build_agent_and_deps() as (pydantic_agent, deps):
                 # Capture expected tool definitions from the live agent (ground truth)
-                expected_tool_definitions = _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
+                expected_tool_definitions = await _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
                 async for _ in run_stateful_agent(pydantic_agent, deps, agent_app_state_reg[self.agent_record.id], prompt):
                     pass
 

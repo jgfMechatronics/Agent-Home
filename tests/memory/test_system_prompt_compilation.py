@@ -10,7 +10,8 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from conftest import make_deps, mock_run_context, SAMPLE_AGENT_CONFIG
+from conftest import mock_run_context, SAMPLE_AGENT_CONFIG
+from agent.types import AgentDeps
 from db.models import AgentRecord, MemoryBlockRecord
 
 
@@ -23,13 +24,13 @@ from memory.system_prompt_compilation import compile_system_prompt, get_system_p
 @pytest_asyncio.fixture
 async def agent_with_blocks_and_deps(session: AsyncSession, agent_with_blocks: dict):
     """Extends agent_with_blocks with AgentDeps for write operations."""
-    return {**agent_with_blocks, "deps": make_deps(session, agent_with_blocks["agent"])}
+    return {**agent_with_blocks, "deps": AgentDeps(session=session, agent_record=agent_with_blocks["agent"])}
 
 
 @pytest_asyncio.fixture
-async def agent_no_blocks_with_deps(session: AsyncSession, agent_record: AgentRecord):
+async def agent_no_blocks_with_deps(agent_deps: AgentDeps, agent_record: AgentRecord):
     """Agent with no memory blocks. Uses shared agent_record from conftest."""
-    return {"agent": agent_record, "deps": make_deps(session, agent_record)}
+    return {"agent": agent_record, "deps": agent_deps}
 
 
 @pytest_asyncio.fixture
@@ -44,7 +45,7 @@ async def agent_with_precompiled_prompt(session: AsyncSession):
     )
     session.add(agent)
     await session.flush()
-    return {"agent": agent, "deps": make_deps(session, agent)}
+    return {"agent": agent, "deps": AgentDeps(session=session, agent_record=agent)}
 
 
 # --- Helper ---
@@ -166,7 +167,7 @@ class TestCompileSystemPrompt:
 
 # --- compile_system_prompt formatting test (standalone, different fixtures). Was written to enable easy inspection of format ---
 
-async def test_exact_compiled_format(session: AsyncSession, agent_record: AgentRecord):
+async def test_exact_compiled_format(session: AsyncSession, agent_deps: AgentDeps, agent_record: AgentRecord):
     """
     Compiled prompt exact XML format — newlines between every section and block.
     Bespoke simple memory structure to enable easy format inspection
@@ -192,8 +193,7 @@ async def test_exact_compiled_format(session: AsyncSession, agent_record: AgentR
     session.add_all([block_a, block_b])
     await session.flush()
 
-    deps = make_deps(session, agent_record)
-    await compile_system_prompt(deps)
+    await compile_system_prompt(agent_deps)
 
     expected = (
         f"<system_instructions>\n"
@@ -265,7 +265,7 @@ async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession
     session.add_all([block_a, block_b])
     await session.flush()
 
-    deps_a = make_deps(session, agent_a)
+    deps_a = AgentDeps(session=session, agent_record=agent_a)
     await compile_system_prompt(deps_a)
     compiled_a = agent_a.compiled_system_prompt
 
@@ -319,7 +319,7 @@ async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession
     await session.flush()
     assert agent.compiled_system_prompt == ""  # model defaults to ''
 
-    ctx = mock_run_context(make_deps(session, agent))
+    ctx = mock_run_context(AgentDeps(session=session, agent_record=agent))
     result = await get_system_prompt(ctx)
     assert result == ""
 

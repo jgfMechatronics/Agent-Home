@@ -13,8 +13,8 @@ import pytest_asyncio
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import BlockSettings
-from conftest import make_deps, SAMPLE_AGENT_CONFIG
+from agent.types import BlockSettings, AgentDeps
+from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord
 
 from memory import block_crud
@@ -85,8 +85,8 @@ async def multi_tenant_with_deps(session: AsyncSession, multi_tenant_agents_with
     For testing that write operations respect agent_id boundaries.
     """
     data = multi_tenant_agents_with_core_memory
-    deps_a = make_deps(session, data["agent_a"])
-    deps_b = make_deps(session, data["agent_b"])
+    deps_a = AgentDeps(session=session, agent_record=data["agent_a"])
+    deps_b = AgentDeps(session=session, agent_record=data["agent_b"])
     return {**data, "deps_a": deps_a, "deps_b": deps_b}
 
 
@@ -316,10 +316,9 @@ async def test_create_block_auto_assigns_position_at_end(multi_tenant_with_deps:
     assert result.position == max_existing_position + 1
 
 
-async def test_create_block_on_agent_with_no_blocks(session: AsyncSession, agent_record: AgentRecord):
+async def test_create_block_on_agent_with_no_blocks(agent_deps: AgentDeps):
     """create_block on agent with no blocks should assign position 0."""
-    deps = make_deps(session, agent_record)
-    result = await create_block(deps, BlockSettings(label="first_block"))
+    result = await create_block(agent_deps, BlockSettings(label="first_block"))
     assert result.position == 0
 
 
