@@ -449,7 +449,7 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     pytest.param(delete_block, ("persona",), False, id="delete_block"),
     pytest.param(reorder_blocks, (["system", "human", "persona"],), False, id="reorder_blocks"),
 ])
-async def test_write_ops_commit_and_refresh_by_default(multi_tenant_with_deps, write_op, call_args, returns_record):
+async def test_write_ops_commit_and_refresh(multi_tenant_with_deps, write_op, call_args, returns_record):
     """Write ops with commit=True (default) should commit and refresh returned objects."""
     deps = multi_tenant_with_deps["deps_a"]
 
@@ -464,63 +464,3 @@ async def test_write_ops_commit_and_refresh_by_default(multi_tenant_with_deps, w
     assert not deps.session.new
     assert not deps.session.dirty
     assert not deps.session.deleted
-
-
-@pytest.mark.parametrize("write_op,call_args,fetch_record,change_applied", [
-    pytest.param(
-        update_block,
-        ("persona", "modified"),
-        lambda deps: get_block(deps.session, deps.agent_id, "persona"),
-        lambda block: block.content == "modified",
-        id="update_block",
-    ),
-    pytest.param(
-        update_block_settings,
-        ("persona", BlockSettings(label="persona_renamed", description="new desc")),
-        lambda deps: get_block(deps.session, deps.agent_id, "persona_renamed"),
-        lambda block: block is not None and block.description == "new desc",
-        id="update_block_settings",
-    ),
-    pytest.param(
-        create_block,
-        (BlockSettings(label="new_block"),),
-        lambda deps: get_block(deps.session, deps.agent_id, "new_block"),
-        lambda block: block is not None,
-        id="create_block",
-    ),
-    pytest.param(
-        delete_block,
-        ("persona",),
-        lambda deps: get_block(deps.session, deps.agent_id, "persona"),
-        lambda block: block is None,
-        id="delete_block",
-    ),
-    pytest.param(
-        reorder_blocks,
-        (["system", "human", "persona"],),
-        lambda deps: get_blocks(deps.session, deps.agent_id),
-        lambda blocks: [b.label for b in blocks] == ["system", "human", "persona"],
-        id="reorder_blocks",
-    ),
-])
-async def test_write_ops_flush_only_when_commit_false(
-    multi_tenant_with_deps, write_op, call_args, fetch_record, change_applied
-):
-    """Write ops with commit=False should flush but not commit — rollback undoes changes."""
-    deps = multi_tenant_with_deps["deps_a"]
-
-    # Start a savepoint so rollback doesn't undo fixture data
-    savepoint = await deps.session.begin_nested()
-
-    await write_op(deps, *call_args, commit=False)
-
-    # Change is visible within transaction (flushed)
-    current = await fetch_record(deps)
-    assert change_applied(current), "Change should be visible after flush"
-
-    # Explicitly rollback the savepoint
-    await savepoint.rollback()
-
-    # After rollback, change should be undone
-    reverted = await fetch_record(deps)
-    assert not change_applied(reverted), "Change should be undone after rollback"

@@ -159,10 +159,10 @@ async def memory_replace(
     
     # handles char limit check and persistence
     try:
-        await update_block(deps, label, new_content, commit=False, block=block)
+        await update_block(deps, label, new_content, block=block)
     except ContentExceedsLimitError as e:
         raise ModelRetry(str(e))
-    
+
     # Compute and return snippet
     return _compute_snippet(new_content, start_pos, new_string)
 
@@ -217,10 +217,10 @@ async def memory_insert(
     
     # handles char limit check and persistence
     try:
-        await update_block(deps, label, new_content, commit=False, block=block)
+        await update_block(deps, label, new_content, block=block)
     except ContentExceedsLimitError as e:
         raise ModelRetry(str(e))
-    
+
     return _compute_snippet(new_content, insert_pos, content)
 
 
