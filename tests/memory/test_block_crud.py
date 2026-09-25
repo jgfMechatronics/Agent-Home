@@ -448,7 +448,7 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     pytest.param(delete_block, ("persona",), False, id="delete_block"),
     pytest.param(reorder_blocks, (["system", "human", "persona"],), False, id="reorder_blocks"),
 ])
-async def test_write_ops_commit_and_refresh_by_default(multi_tenant_with_deps, write_op, call_args, returns_record):
+async def test_write_ops_commit_and_refresh(multi_tenant_with_deps, write_op, call_args, returns_record):
     """Write ops with commit=True (default) should commit and refresh returned objects."""
     deps = multi_tenant_with_deps["deps_a"]
 
@@ -463,6 +463,3 @@ async def test_write_ops_commit_and_refresh_by_default(multi_tenant_with_deps, w
     assert not deps.session.new
     assert not deps.session.dirty
     assert not deps.session.deleted
-
-
-
