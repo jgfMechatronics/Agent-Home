@@ -48,17 +48,11 @@ class DuplicatePositionError(Exception):
 
 # --- Internal helpers ---
 
-async def _persist(deps: AgentDeps, commit: bool, record: MemoryBlockRecord | None = None) -> None:
-    """Commit or flush the session, refreshing records if committing."""
-    if commit:
-        await deps.commit_changes_refresh_agent_record()
-        if record is not None:
-            await deps.session.refresh(record)
-    else:
-        # TODO: flush does not refresh ORM objects with server-generated values (e.g. server_default
-        # timestamps). If we ever add such columns and a subsequent tool within the same turn reads
-        # them back, those reads will see stale data. Consider refresh-after-flush if that occurs.
-        await deps.session.flush()
+async def _persist(deps: AgentDeps, record: MemoryBlockRecord | None = None) -> None:
+    """Commit the session and refresh the agent record. Optionally refresh a returned record."""
+    await deps.commit_changes_refresh_agent_record()
+    if record is not None:
+        await deps.session.refresh(record)
 
 
 # --- Read operations (no lock) ---
@@ -106,16 +100,13 @@ async def update_block(
     deps: AgentDeps,
     label: str,
     content: str,
-    commit: bool = True,
     block: MemoryBlockRecord | None = None,
 ) -> MemoryBlockRecord:
     """
     Update block content.
-    
+
     Raises if block doesn't exist or content exceeds char_limit.
-    commit=False flushes instead of committing, for chaining ops atomically.
-    block: Optional pre-fetched block to avoid redundant DB query if user 
-    already has it
+    block: Optional pre-fetched block to avoid redundant DB query if caller already has it.
     """
     if block is None:
         block = await get_block_or_raise(deps.session, deps.agent_id, label)
@@ -124,7 +115,7 @@ async def update_block(
         raise ContentExceedsLimitError("new content exceeds char limit")
 
     block.content = content
-    await _persist(deps, commit, block)
+    await _persist(deps, block)
     return block
 
 
@@ -132,11 +123,10 @@ async def create_block(
     deps: AgentDeps,
     settings: BlockSettings,
     content: str = "",
-    commit: bool = True,
 ) -> MemoryBlockRecord:
     """
     Create new block.
-    
+
     If settings.position is None, appends to end (max existing position + 1).
     Raises if label already exists for this agent.
     """
@@ -161,18 +151,18 @@ async def create_block(
         position=position,
     )
     deps.session.add(block)
-    await _persist(deps, commit, block)
+    await _persist(deps, block)
     return block
 
 
-async def delete_block(deps: AgentDeps, label: str, commit: bool = True) -> None:
+async def delete_block(deps: AgentDeps, label: str) -> None:
     """Remove block. Raises if block doesn't exist (fail loudly)."""
     block = await get_block_or_raise(deps.session, deps.agent_id, label)
     await deps.session.delete(block)
-    await _persist(deps, commit)
+    await _persist(deps)
 
 
-async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str], commit: bool = True) -> None:
+async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str]) -> None:
     """
     Assign positions 0, 1, 2... based on list order.
     
@@ -205,24 +195,22 @@ async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str], commit: bo
     for position, label in enumerate(labels_in_order):
         blocks_by_label[label].position = position
 
-    await _persist(deps, commit)
+    await _persist(deps)
 
 
 async def update_block_settings(
     deps: AgentDeps,
     label: str,
     settings: BlockSettings,
-    commit: bool = True,
 ) -> MemoryBlockRecord:
     """
     Update block settings (label, description, char_limit, position).
-    
+
     Args:
         deps: Agent dependencies (proves caller holds lock)
         label: Current label of block to update (from URL path)
         settings: New settings to apply (settings.label may differ for rename)
-        commit: Whether to commit transaction
-    
+
     If settings.position is None, keeps the current position (no change).
     
     Raises BlockNotFoundError if block doesn't exist.
@@ -246,7 +234,7 @@ async def update_block_settings(
         block.position = settings.position
 
     try:
-        await _persist(deps, commit, block)
+        await _persist(deps, block)
     except IntegrityError as e:
         # Label conflict already checked above; check for position conflict
         if "UNIQUE constraint failed: memory_block.agent_id, memory_block.position" in str(e):
