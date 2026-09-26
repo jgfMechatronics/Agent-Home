@@ -13,13 +13,14 @@ TODO: We have some exception catching and mapping that doesn't use "raise ... fr
 import logging
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import ValidationError
 from pydantic_ai import Agent, AgentRunResultEvent
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent.broadcast import RunCompletedEvent, RunStartedEvent
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
@@ -56,14 +57,21 @@ router = APIRouter(prefix="/agents")
 # --- Helpers ---
 
 def map_to_sse(event: Any) -> ServerSentEvent:
-    """Convert a Pydantic AI streaming event to a ServerSentEvent.
+    """Convert a streaming event to a ServerSentEvent.
 
     The event type name goes in the SSE 'event' field, allowing clients to filter
     with addEventListener(). The event object is passed directly to 'data' and
     serialized by FastAPI's jsonable_encoder.
 
+    Handles both pydantic-ai native events and our synthetic broadcast events
+    (RunStartedEvent, RunCompletedEvent).
+
     TODO: Document the SSE event types in the API readme.
     """
+    if isinstance(event, RunStartedEvent):
+        return ServerSentEvent(data={"prompt": event.prompt}, event="RunStarted")
+    if isinstance(event, RunCompletedEvent):
+        return ServerSentEvent(data={"status": event.status}, event="RunCompleted")
     if isinstance(event, AgentRunResultEvent):
         # Stream-end signal only — don't expose the result object
         return ServerSentEvent(data={}, event="AgentRunResultEvent")
@@ -80,6 +88,23 @@ async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
 
 
 # --- Routes ---
+
+@router.get("/{agent_id}/stream", response_class=EventSourceResponse)
+async def stream_agent_events(
+    agent_id: str,
+    request: Request,
+) -> AsyncGenerator[ServerSentEvent, None]:
+    """Long-lived SSE stream of all run events for agent_id, regardless of who initiated the run.
+
+    Emits synthetic RunStarted / RunCompleted bookend events plus the standard
+    pydantic-ai streaming events (PartStartEvent, PartDeltaEvent, etc.) in the
+    same SSE format as the /messages endpoint. Live-only — history is on /messages.
+    """
+    hub = request.app.state.broadcast_hub
+    async with hub.subscribe(agent_id, request) as events:
+        async for event in events:
+            yield map_to_sse(event)
+
 
 @router.post("/{agent_id}/messages", response_class=EventSourceResponse)
 async def handle_message(

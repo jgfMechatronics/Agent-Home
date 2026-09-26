@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 
+from agent.broadcast import RunCompletedEvent, RunStartedEvent
 from api.routes import map_to_sse
 
 
@@ -176,3 +177,30 @@ class TestThinkingPart:
         data = serialize_sse_data(map_to_sse(PartDeltaEvent(index=0, delta=THINKING_DELTA)))
         assert data["delta"]["content_delta"] == THINKING_DELTA.content_delta
         assert data["delta"]["part_delta_kind"] == "thinking"
+
+
+# --- Synthetic broadcast events (not pydantic-ai native) ---
+
+class TestRunStartedEvent:
+    """RunStartedEvent — synthetic bookend for broadcast streams."""
+
+    def test_event_type_is_run_started(self):
+        result = map_to_sse(RunStartedEvent(prompt="hello world"))
+        assert result.event == "RunStarted"
+
+    def test_data_contains_prompt(self):
+        result = map_to_sse(RunStartedEvent(prompt="test prompt"))
+        assert serialize_sse_data(result) == {"prompt": "test prompt"}
+
+
+class TestRunCompletedEvent:
+    """RunCompletedEvent — synthetic bookend for broadcast streams."""
+
+    def test_event_type_is_run_completed(self):
+        result = map_to_sse(RunCompletedEvent(status="success"))
+        assert result.event == "RunCompleted"
+
+    @pytest.mark.parametrize("status", ["success", "cancelled", "error"])
+    def test_data_contains_status(self, status):
+        result = map_to_sse(RunCompletedEvent(status=status))
+        assert serialize_sse_data(result) == {"status": status}
