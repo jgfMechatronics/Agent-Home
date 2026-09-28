@@ -73,7 +73,7 @@ class BroadcastHub:
         """Internal iterator that yields events until disconnect or shutdown."""
         while not await request.is_disconnected():
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=1.0)
+                event = await asyncio.wait_for(queue.get(), timeout=5.0)
             except asyncio.TimeoutError:
                 continue
             if isinstance(event, ShutdownEvent):
