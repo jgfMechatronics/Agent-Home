@@ -80,7 +80,7 @@ class BroadcastHub:
 
     async def _event_iterator(
         self, agent_id: str, queue: asyncio.Queue, request: Request
-    ) -> AsyncIterator[object]:
+    ) -> AsyncGenerator[object, None]:
         """Internal iterator that yields events until disconnect or shutdown."""
         while not await request.is_disconnected():
             try:

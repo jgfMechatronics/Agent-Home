@@ -1,6 +1,6 @@
 """E2E tests for broadcast streaming.
 
-Run with: pytest -m e2e
+Run with: pytest tests/e2e -m e2e
 Server is auto-started/stopped by the live_server fixture.
 """
 

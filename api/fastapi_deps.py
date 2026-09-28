@@ -26,8 +26,7 @@ def get_agent_app_state_reg(request: Request) -> dict[str, AgentAppState]:
 
 def get_broadcast_hub(request: Request) -> BroadcastHub:
     """FastAPI dependency: returns the BroadcastHub from app.state."""
-    hub = request.app.state.broadcast_hub
-    return hub
+    return request.app.state.broadcast_hub
 
 
 async def get_session_dep(request: Request) -> AsyncIterator[AsyncSession]:

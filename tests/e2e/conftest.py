@@ -1,7 +1,7 @@
 """E2E test configuration.
 
 Tests in this directory require a live server and are excluded from the default test run.
-Run with: pytest -m e2e
+Run with: pytest tests/e2e -m e2e
 """
 
 import subprocess
