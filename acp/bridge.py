@@ -525,9 +525,9 @@ async def subscribe_to_agent_stream(
     """Background task: subscribe to real-time SSE stream from Agent Home.
 
     Connects to GET /agents/{id}/stream and processes events as they arrive:
-    - RunStarted: send status=working to Nori
+    - RunStartedEvent: send status=working to Nori
     - Content events (PartStartEvent, PartDeltaEvent, etc.): forward to Nori
-    - RunCompleted: send status=idle to Nori
+    - RunCompletedEvent: send status=idle to Nori
 
     Automatically reconnects on disconnect with exponential backoff.
     Skips forwarding while a toad-initiated stream is active (stream_active=True)
@@ -592,7 +592,7 @@ async def _process_stream_event(
 ) -> None:
     """Process a single event from the agent stream.
 
-    Handles RunStarted/RunCompleted for status updates, and delegates
+    Handles RunStartedEvent/RunCompletedEvent for status updates, and delegates
     content events to process_sse_event for forwarding to Nori.
     """
     # Skip forwarding if a user-initiated stream is active — that stream
@@ -606,7 +606,7 @@ async def _process_stream_event(
         logger.warning("Failed to parse stream event data: %s", data_str[:100])
         return
 
-    if event_type == "RunStarted":
+    if event_type == "RunStartedEvent":
         # Agent run beginning — notify Nori and display triggering prompt if present
         if not state.observer_turn_active:
             send(nori_status_update(session_id, "working"))
@@ -615,12 +615,12 @@ async def _process_stream_event(
         prompt = data.get("prompt")
         if prompt:
             send(user_message_chunk(session_id, prompt))
-        logger.debug("RunStarted received, prompt=%s", "yes" if prompt else "no")
+        logger.debug("RunStartedEvent received, prompt=%s", "yes" if prompt else "no")
 
-    elif event_type == "RunCompleted":
+    elif event_type == "RunCompletedEvent":
         # Agent run finished — notify Nori
         status = data.get("status", "success")
-        logger.debug("RunCompleted received: status=%s", status)
+        logger.debug("RunCompletedEvent received: status=%s", status)
         if state.observer_turn_active:
             send(nori_status_update(session_id, "idle"))
             state.observer_turn_active = False
