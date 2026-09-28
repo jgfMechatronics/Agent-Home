@@ -13,7 +13,7 @@ TODO: We have some exception catching and mapping that doesn't use "raise ... fr
 import logging
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import ValidationError
 from pydantic_ai import Agent, AgentRunResultEvent
@@ -23,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
-from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps
+from agent.broadcast_streaming import BroadcastHub, run_agent_with_broadcast
+from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_broadcast_hub
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
@@ -103,6 +104,8 @@ async def handle_message(
     body: MessageRequest,
     agent_and_deps: tuple[Agent, AgentDeps] = Depends(get_agent_and_deps),
     agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
+    hub: BroadcastHub = Depends(get_broadcast_hub),
+    suppress_broadcast: bool = Header(default=False, alias="Suppress-Broadcast"),
 ) -> AsyncGenerator[ServerSentEvent, None]:
     """TODO: Agent run should still be able to complete and persist in the event that client disconnects"""
     # AgentNotFoundError / AgentLockedError are translated to HTTP 404/503 by get_agent_and_deps
@@ -110,10 +113,24 @@ async def handle_message(
 
     try:
         agent_app_state = agent_app_state_reg[agent_id]
-        async for event in run_stateful_agent(agent=agent,
-                                              deps=deps, 
-                                              agent_app_state=agent_app_state,
-                                              user_prompt=body.message):
+
+        if suppress_broadcast:
+            event_stream = run_stateful_agent(
+                agent=agent,
+                deps=deps,
+                agent_app_state=agent_app_state,
+                user_prompt=body.message,
+            )
+        else:
+            event_stream = run_agent_with_broadcast(
+                agent=agent,
+                deps=deps,
+                agent_app_state=agent_app_state,
+                user_prompt=body.message,
+                hub=hub,
+            )
+
+        async for event in event_stream:
             yield map_to_sse(event)
     except MCPConnError as e:
         logger.error("MCP connection error for agent %s: %s", agent_id, e)
