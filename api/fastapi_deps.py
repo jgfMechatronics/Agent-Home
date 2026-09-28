@@ -14,12 +14,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST
 from agent.types import AgentAppState, AgentDeps
 from db.connection import get_session
+from agent.broadcast_streaming import BroadcastHub
+
 from pydantic_ai import Agent
 
 
 def get_agent_app_state_reg(request: Request) -> dict[str, AgentAppState]:
     """FastAPI dependency: returns the app-wide agent state registry from app.state."""
     return request.app.state.agent_app_state_reg
+
+
+def get_broadcast_hub(request: Request) -> BroadcastHub:
+    """FastAPI dependency: returns the BroadcastHub from app.state."""
+    return request.app.state.broadcast_hub
 
 
 async def get_session_dep(request: Request) -> AsyncIterator[AsyncSession]:

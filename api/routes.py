@@ -13,7 +13,7 @@ TODO: We have some exception catching and mapping that doesn't use "raise ... fr
 import logging
 from typing import Any, AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import ValidationError
 from pydantic_ai import Agent, AgentRunResultEvent
@@ -23,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
-from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps
+from agent.broadcast_streaming import BroadcastHub, run_agent_with_broadcast
+from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_broadcast_hub
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
@@ -56,7 +57,7 @@ router = APIRouter(prefix="/agents")
 # --- Helpers ---
 
 def map_to_sse(event: Any) -> ServerSentEvent:
-    """Convert a Pydantic AI streaming event to a ServerSentEvent.
+    """Convert a streaming event to a ServerSentEvent.
 
     The event type name goes in the SSE 'event' field, allowing clients to filter
     with addEventListener(). The event object is passed directly to 'data' and
@@ -70,7 +71,6 @@ def map_to_sse(event: Any) -> ServerSentEvent:
     return ServerSentEvent(data=event, event=type(event).__name__)
 
 
-
 async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
     """Load agent record, raising 404 if not found."""
     record = await get_agent_record(session, agent_id)
@@ -81,12 +81,31 @@ async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
 
 # --- Routes ---
 
+@router.get("/{agent_id}/stream", response_class=EventSourceResponse)
+async def stream_agent_events(
+    agent_id: str,
+    request: Request,
+) -> AsyncGenerator[ServerSentEvent, None]:
+    """Long-lived SSE stream of all run events for agent_id, regardless of who initiated the run.
+
+    Emits synthetic RunStarted / RunCompleted bookend events plus the standard
+    pydantic-ai streaming events (PartStartEvent, PartDeltaEvent, etc.) in the
+    same SSE format as the /messages endpoint. Live-only — history is on /messages.
+    """
+    hub = request.app.state.broadcast_hub
+    async with hub.subscribe(agent_id, request) as events:
+        async for event in events:
+            yield map_to_sse(event)
+
+
 @router.post("/{agent_id}/messages", response_class=EventSourceResponse)
 async def handle_message(
     agent_id: str,
     body: MessageRequest,
     agent_and_deps: tuple[Agent, AgentDeps] = Depends(get_agent_and_deps),
     agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
+    hub: BroadcastHub = Depends(get_broadcast_hub),
+    suppress_broadcast: bool = Header(default=False, alias="Suppress-Broadcast"),
 ) -> AsyncGenerator[ServerSentEvent, None]:
     """TODO: Agent run should still be able to complete and persist in the event that client disconnects"""
     # AgentNotFoundError / AgentLockedError are translated to HTTP 404/503 by get_agent_and_deps
@@ -94,10 +113,24 @@ async def handle_message(
 
     try:
         agent_app_state = agent_app_state_reg[agent_id]
-        async for event in run_stateful_agent(agent=agent,
-                                              deps=deps, 
-                                              agent_app_state=agent_app_state,
-                                              user_prompt=body.message):
+
+        if suppress_broadcast:
+            event_stream = run_stateful_agent(
+                agent=agent,
+                deps=deps,
+                agent_app_state=agent_app_state,
+                user_prompt=body.message,
+            )
+        else:
+            event_stream = run_agent_with_broadcast(
+                agent=agent,
+                deps=deps,
+                agent_app_state=agent_app_state,
+                user_prompt=body.message,
+                hub=hub,
+            )
+
+        async for event in event_stream:
             yield map_to_sse(event)
     except MCPConnError as e:
         logger.error("MCP connection error for agent %s: %s", agent_id, e)

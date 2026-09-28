@@ -23,7 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from agent.types import AgentConfig, AgentDeps
+from agent.broadcast_streaming import BroadcastHub
 from pydantic import ConfigDict
+from api.app import _create_app
 from api.fastapi_deps import get_session_dep
 from db.models import (
     AgentConfigSnapshot,
@@ -330,8 +332,10 @@ def _make_mock_session() -> Mock:
 @pytest.fixture
 def app() -> FastAPI:
     """Fresh app instance per test — avoids state contamination."""
-    from api.app import _create_app
-    return _create_app()
+    app = _create_app()
+    # Lifespan doesn't run in tests, so set up broadcast_hub manually
+    app.state.broadcast_hub = BroadcastHub()
+    return app
 
 
 @pytest_asyncio.fixture
