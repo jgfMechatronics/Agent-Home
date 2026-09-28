@@ -39,7 +39,7 @@ class TestStreamEndpoint:
 
         async def broadcast_then_shutdown():
             await asyncio.sleep(0.05)  # Let subscriber connect
-            await hub.broadcast(agent_id, RunStartedEvent(prompt="hello"))
+            hub.broadcast(agent_id, RunStartedEvent(prompt="hello"))
             await asyncio.sleep(0.05)  # Let event propagate
             await hub.shutdown()  # Causes iterator to exit via ShutdownEvent
 
