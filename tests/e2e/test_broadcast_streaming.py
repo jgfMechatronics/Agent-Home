@@ -1,9 +1,7 @@
 """E2E tests for broadcast streaming.
 
-These tests require a live server running on localhost:8008.
-Start with: ./start_server.sh
-
 Run with: pytest -m e2e
+Server is auto-started/stopped by the live_server fixture.
 """
 
 import asyncio
@@ -12,13 +10,11 @@ import json
 import httpx
 import pytest
 
-SERVER_URL = "http://localhost:8008"
 
-
-async def subscribe_to_stream(agent_id: str, events: list, ready_event: asyncio.Event):
+async def subscribe_to_stream(server_url: str, agent_id: str, events: list, ready_event: asyncio.Event):
     """Subscribe to agent's broadcast stream and collect events."""
     async with httpx.AsyncClient(timeout=30.0) as client:
-        async with client.stream("GET", f"{SERVER_URL}/agents/{agent_id}/stream") as response:
+        async with client.stream("GET", f"{server_url}/agents/{agent_id}/stream") as response:
             ready_event.set()  # Signal that subscription is active
             async for line in response.aiter_lines():
                 if line.startswith("data:"):
@@ -29,13 +25,13 @@ async def subscribe_to_stream(agent_id: str, events: list, ready_event: asyncio.
                     events.append({"_event_type": event_type})
 
 
-async def send_message(agent_id: str, message: str) -> list[dict]:
+async def send_message(server_url: str, agent_id: str, message: str) -> list[dict]:
     """Send message to agent and collect SSE events from response."""
     events = []
     async with httpx.AsyncClient(timeout=30.0) as client:
         async with client.stream(
             "POST",
-            f"{SERVER_URL}/agents/{agent_id}/messages",
+            f"{server_url}/agents/{agent_id}/messages",
             json={"message": message},
         ) as response:
             async for line in response.aiter_lines():
@@ -48,11 +44,11 @@ async def send_message(agent_id: str, message: str) -> list[dict]:
     return events
 
 
-async def get_or_create_test_agent() -> str:
+async def get_or_create_test_agent(server_url: str) -> str:
     """Get existing test agent or create one. Returns agent_id."""
     async with httpx.AsyncClient(timeout=10.0) as client:
         # List agents
-        response = await client.get(f"{SERVER_URL}/agents")
+        response = await client.get(f"{server_url}/agents")
         response.raise_for_status()
         agents = response.json()
         
@@ -63,7 +59,7 @@ async def get_or_create_test_agent() -> str:
         
         # Create new agent
         response = await client.post(
-            f"{SERVER_URL}/agents",
+            f"{server_url}/agents",
             json={
                 "name": "e2e-broadcast-test",
                 "system_instructions": "You are a helpful test assistant. Keep responses brief.",
@@ -78,7 +74,7 @@ async def get_or_create_test_agent() -> str:
         return response.json()["id"]
 
 
-async def test_broadcast_stream_receives_events():
+async def test_broadcast_stream_receives_events(live_server: str):
     """
     Verify that /stream receives broadcast events when /messages is called.
     
@@ -87,14 +83,14 @@ async def test_broadcast_stream_receives_events():
     - All pydantic-ai streaming events (same as /messages response)
     - RunCompletedEvent (synthetic, after agent completes)
     """
-    agent_id = await get_or_create_test_agent()
+    agent_id = await get_or_create_test_agent(live_server)
     
     broadcast_events: list[dict] = []
     subscription_ready = asyncio.Event()
     
     # Start subscription task
     subscription_task = asyncio.create_task(
-        subscribe_to_stream(agent_id, broadcast_events, subscription_ready)
+        subscribe_to_stream(live_server, agent_id, broadcast_events, subscription_ready)
     )
     
     try:
@@ -105,7 +101,7 @@ async def test_broadcast_stream_receives_events():
         await asyncio.sleep(0.1)
         
         # Send message and collect response events
-        message_events = await send_message(agent_id, "Say 'hello' and nothing else.")
+        message_events = await send_message(live_server, agent_id, "Say 'hello' and nothing else.")
         
         # Give broadcast events time to arrive
         await asyncio.sleep(0.5)
