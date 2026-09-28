@@ -6,7 +6,6 @@ Top-down TDD: tests drive the interface design, implementation follows.
 import asyncio
 
 import pytest
-import pytest_asyncio
 from fastapi import FastAPI
 from httpx import AsyncClient
 
