@@ -96,9 +96,18 @@ async def test_broadcast_stream_receives_events(live_server: str, client: httpx.
     
     # Check for synthetic bookend events in broadcast
     event_types = [e["event"] for e in broadcast_events]
-    assert "RunStartedEvent" in event_types, f"Broadcast should include RunStartedEvent. Got: {event_types}"
-    assert "RunCompletedEvent" in event_types, f"Broadcast should include RunCompletedEvent. Got: {event_types}"
+    assert event_types[0] == "RunStartedEvent", f"First broadcast event should be RunStartedEvent. Got: {event_types[0]}"
+    assert event_types[-1] == "RunCompletedEvent", f"Last broadcast event should be RunCompletedEvent. Got: {event_types[-1]}"
+    
+    # Events between bookends should match message_events exactly
+    inner_broadcast_events = broadcast_events[1:-1]
+    assert inner_broadcast_events == message_events, (
+        f"Broadcast inner events should match message events.\n"
+        f"Broadcast inner: {inner_broadcast_events}\n"
+        f"Message events: {message_events}"
+    )
     
     print(f"\n✓ Message stream events: {len(message_events)}")
     print(f"✓ Broadcast stream events: {len(broadcast_events)}")
     print(f"✓ Broadcast event types: {event_types}")
+    print(f"✓ Inner events match: {len(inner_broadcast_events)} events")
