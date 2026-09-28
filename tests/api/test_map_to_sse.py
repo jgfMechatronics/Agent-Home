@@ -63,11 +63,11 @@ ALL_EVENTS = [
     pytest.param(FunctionToolResultEvent(part=TOOL_RETURN_PART), "FunctionToolResultEvent", id="FunctionToolResultEvent"),
     pytest.param(FinalResultEvent(tool_name=None, tool_call_id=None), "FinalResultEvent", id="FinalResultEvent"),
     pytest.param(AgentRunResultEvent(result=Mock()), "AgentRunResultEvent", id="AgentRunResultEvent"),
-    pytest.param(RunStartedEvent(prompt="hello"), "RunStarted", id="RunStartedEvent"),
-    pytest.param(RunCompletedEvent(status="success"), "RunCompleted", id="RunCompletedEvent"),
+    pytest.param(RunStartedEvent(prompt="hello"), "RunStartedEvent", id="RunStartedEvent"),
+    pytest.param(RunCompletedEvent(status="success"), "RunCompletedEvent", id="RunCompletedEvent"),
 ]
 
-# Pydantic-ai events that map_to_sse passes through unchanged (data=event, event=type name).
+# Events that map_to_sse passes through unchanged (data=event, event=type name).
 # One entry per event type is sufficient — we're testing the passthrough contract, not
 # the serialization of each field.
 PASSTHROUGH_EVENTS = [
@@ -79,6 +79,8 @@ PASSTHROUGH_EVENTS = [
     pytest.param(FinalResultEvent(tool_name=None, tool_call_id=None), id="FinalResultEvent"),
     pytest.param(PartStartEvent(index=0, part=THINKING_PART), id="PartStartEvent_thinking"),
     pytest.param(PartDeltaEvent(index=0, delta=THINKING_DELTA), id="PartDeltaEvent_thinking"),
+    pytest.param(RunStartedEvent(prompt="hello"), id="RunStartedEvent"),
+    pytest.param(RunCompletedEvent(status="success"), id="RunCompletedEvent"),
 ]
 
 
@@ -104,16 +106,6 @@ class TestDataPayload:
         """
         expected = ServerSentEvent(data=event, event=type(event).__name__)
         assert map_to_sse(event) == expected
-
-    @pytest.mark.parametrize("event,expected_data", [
-        pytest.param(RunStartedEvent(prompt="test prompt"), {"prompt": "test prompt"}, id="RunStartedEvent"),
-        pytest.param(RunCompletedEvent(status="success"), {"status": "success"}, id="RunCompletedEvent_success"),
-        pytest.param(RunCompletedEvent(status="cancelled"), {"status": "cancelled"}, id="RunCompletedEvent_cancelled"),
-        pytest.param(RunCompletedEvent(status="error"), {"status": "error"}, id="RunCompletedEvent_error"),
-    ])
-    def test_custom_event_data(self, event, expected_data):
-        """Custom events construct specific payloads — verify exact content."""
-        assert serialize_sse_data(map_to_sse(event)) == expected_data
 
     def test_agent_run_result_exposes_no_data(self):
         """AgentRunResultEvent is a stream-end signal only — result content is not exposed over the wire.

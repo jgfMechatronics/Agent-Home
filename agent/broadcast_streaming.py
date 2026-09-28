@@ -6,7 +6,7 @@ Enables TUIs and other clients to observe agent runs without polling.
 """
 import asyncio
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import AsyncIterator
 
 from starlette.requests import Request
@@ -16,24 +16,22 @@ from starlette.requests import Request
 # Synthetic event types (not emitted by pydantic-ai)
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(frozen=True)
 class RunStartedEvent:
     """Emitted before the first pydantic-ai event in a run."""
     prompt: str
-    event_kind: str = field(default="run_started", init=False)
 
 
-@dataclass
+@dataclass(frozen=True)
 class RunCompletedEvent:
     """Emitted after all pydantic-ai events in a run."""
     status: str  # "success" | "cancelled" | "error"
-    event_kind: str = field(default="run_completed", init=False)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ShutdownEvent:
     """Internal sentinel signaling subscribers to exit. Should never be yielded to consumers."""
-    event_kind: str = field(default="shutdown", init=False)
+    pass
 
 
 # ---------------------------------------------------------------------------

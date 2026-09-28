@@ -50,9 +50,9 @@ class TestStreamEndpoint:
             timeout=2.0
         )
 
-        # Verify SSE format: event type and data
+        # Verify SSE format: event type and data (dataclass serializes to dict with field names)
         expected = [
-            "event: RunStarted",
+            "event: RunStartedEvent",
             'data: {"prompt": "hello"}',
             "",  # Empty line marks end of SSE event
         ]

@@ -20,7 +20,6 @@ from pydantic_ai import Agent, AgentRunResultEvent
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.broadcast_streaming import RunCompletedEvent, RunStartedEvent
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
@@ -63,20 +62,12 @@ def map_to_sse(event: Any) -> ServerSentEvent:
     with addEventListener(). The event object is passed directly to 'data' and
     serialized by FastAPI's jsonable_encoder.
 
-    Handles both pydantic-ai native events and our synthetic broadcast events
-    (RunStartedEvent, RunCompletedEvent).
-
     TODO: Document the SSE event types in the API readme.
     """
-    if isinstance(event, RunStartedEvent):
-        return ServerSentEvent(data={"prompt": event.prompt}, event="RunStarted")
-    if isinstance(event, RunCompletedEvent):
-        return ServerSentEvent(data={"status": event.status}, event="RunCompleted")
     if isinstance(event, AgentRunResultEvent):
         # Stream-end signal only — don't expose the result object
         return ServerSentEvent(data={}, event="AgentRunResultEvent")
     return ServerSentEvent(data=event, event=type(event).__name__)
-
 
 
 async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
