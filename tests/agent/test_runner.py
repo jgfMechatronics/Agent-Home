@@ -98,7 +98,12 @@ async def collect_sse_events(response: Response) -> list[dict]:
 
 
 DEFAULT_USER_MESSAGE = "You're not a real LLM are you?"
-async def stream_and_collect(client: AsyncClient, agent_id, message: str = DEFAULT_USER_MESSAGE) -> list[dict]:
+async def stream_and_collect(
+    client: AsyncClient,
+    agent_id,
+    message: str = DEFAULT_USER_MESSAGE,
+    headers: dict | None = None,
+) -> list[dict]:
     """POST to messages endpoint, assert 200, return parsed SSE events.
     Reduces boilerplate in streaming tests.
     """
@@ -106,6 +111,7 @@ async def stream_and_collect(client: AsyncClient, agent_id, message: str = DEFAU
         "POST",
         f"/agents/{agent_id}/messages",
         json={"message": message},
+        headers=headers or {},
     ) as response:
         assert response.status_code == 200
         return await collect_sse_events(response)
@@ -232,6 +238,36 @@ class TestHandleMessage(_BaseRouteTest):
         ) as response:
             assert "text/event-stream" in response.headers["content-type"]
             await collect_sse_events(response)  # Consume to avoid warnings
+
+    @pytest.fixture
+    def broadcast_tracker(self, app: FastAPI):
+        """Wraps hub.broadcast to track calls while preserving original behavior."""
+        hub = app.state.broadcast_hub
+        original_broadcast = hub.broadcast
+        calls = []
+        def tracking_broadcast(agent_id, event):
+            calls.append((agent_id, event))
+            original_broadcast(agent_id, event)
+        hub.broadcast = tracking_broadcast
+        return calls
+
+    async def test_suppress_broadcast_header_skips_broadcast(
+        self, client: AsyncClient, broadcast_tracker: list
+    ):
+        """Suppress-Broadcast header prevents broadcasting to hub."""
+        await stream_and_collect(
+            client, self.agent_record.id,
+            headers={"Suppress-Broadcast": "true"}
+        )
+        assert broadcast_tracker == []
+
+    async def test_broadcast_occurs_without_suppress_header(
+        self, client: AsyncClient, broadcast_tracker: list
+    ):
+        """Without Suppress-Broadcast header, events are broadcast to hub."""
+        await stream_and_collect(client, self.agent_record.id)
+        # Should have at least RunStartedEvent and RunCompletedEvent
+        assert len(broadcast_tracker) >= 2
 
     async def test_returns_400_for_malformed_body(self, client: AsyncClient):
         """Missing required 'message' field returns 400 or 422.
