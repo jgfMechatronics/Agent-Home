@@ -7,8 +7,6 @@ serialized data. Pure unit tests: no DB, no HTTP, no async.
 NOTE: BuiltinToolCallEvent and BuiltinToolResultEvent are intentionally not tested.
 Agent Home uses custom function tools exclusively — we don't use provider-side
 built-in tools (WebSearchTool, CodeExecutionTool, etc.).
-
-TODO: JF Skimmed this file but did not review in detail
 """
 import json
 import pytest
@@ -56,7 +54,7 @@ TOOL_RETURN_PART = ToolReturnPart(
     tool_name="memory_replace", content="Updated.", tool_call_id="call-1"
 )
 
-# One instance of each event type, paired with its expected SSE event name.
+# All event types paired with their expected SSE event name.
 ALL_EVENTS = [
     pytest.param(PartStartEvent(index=0, part=TEXT_PART), "PartStartEvent", id="PartStartEvent"),
     pytest.param(PartDeltaEvent(index=0, delta=TEXT_DELTA), "PartDeltaEvent", id="PartDeltaEvent"),
@@ -65,18 +63,27 @@ ALL_EVENTS = [
     pytest.param(FunctionToolResultEvent(part=TOOL_RETURN_PART), "FunctionToolResultEvent", id="FunctionToolResultEvent"),
     pytest.param(FinalResultEvent(tool_name=None, tool_call_id=None), "FinalResultEvent", id="FinalResultEvent"),
     pytest.param(AgentRunResultEvent(result=Mock()), "AgentRunResultEvent", id="AgentRunResultEvent"),
+    pytest.param(RunStartedEvent(prompt="hello"), "RunStarted", id="RunStartedEvent"),
+    pytest.param(RunCompletedEvent(status="success"), "RunCompleted", id="RunCompletedEvent"),
 ]
 
-# PartStartEvent and PartEndEvent share structure (index + full part) — tested together.
-# Use different index values to prevent false positives from a hardcoded return.
-PART_BOUNDARY_EVENTS = [
+# Pydantic-ai events that map_to_sse passes through unchanged (data=event, event=type name).
+# One entry per event type is sufficient — we're testing the passthrough contract, not
+# the serialization of each field.
+PASSTHROUGH_EVENTS = [
     pytest.param(PartStartEvent(index=0, part=TEXT_PART), id="PartStartEvent"),
-    pytest.param(PartEndEvent(index=3, part=TEXT_PART), id="PartEndEvent"),
+    pytest.param(PartDeltaEvent(index=0, delta=TEXT_DELTA), id="PartDeltaEvent"),
+    pytest.param(PartEndEvent(index=0, part=TEXT_PART), id="PartEndEvent"),
+    pytest.param(FunctionToolCallEvent(part=TOOL_CALL_PART), id="FunctionToolCallEvent"),
+    pytest.param(FunctionToolResultEvent(part=TOOL_RETURN_PART), id="FunctionToolResultEvent"),
+    pytest.param(FinalResultEvent(tool_name=None, tool_call_id=None), id="FinalResultEvent"),
+    pytest.param(PartStartEvent(index=0, part=THINKING_PART), id="PartStartEvent_thinking"),
+    pytest.param(PartDeltaEvent(index=0, delta=THINKING_DELTA), id="PartDeltaEvent_thinking"),
 ]
 
 
 class TestMapToSSEShared:
-    """Behaviors shared across event types (7 tested, 2 builtin-tool events skipped)."""
+    """Behaviors shared across all event types."""
 
     @pytest.mark.parametrize("event,expected_type", ALL_EVENTS)
     def test_returns_server_sent_event_with_correct_type(self, event, expected_type):
@@ -85,122 +92,32 @@ class TestMapToSSEShared:
         assert result.event == expected_type
 
 
-class TestPartBoundaryEvents:
-    """PartStartEvent and PartEndEvent share structure: index + full part.
+class TestDataPayload:
+    """Verifies the serialized data payload for each event type."""
 
-    Tested together to avoid duplicating identical assertions.
-    """
+    @pytest.mark.parametrize("event", PASSTHROUGH_EVENTS)
+    def test_passthrough_data_is_unchanged(self, event):
+        """For pydantic-ai events, map_to_sse passes data through as-is.
 
-    @pytest.mark.parametrize("event", PART_BOUNDARY_EVENTS)
-    def test_includes_index(self, event):
-        assert serialize_sse_data(map_to_sse(event))["index"] == event.index
-
-    @pytest.mark.parametrize("event", PART_BOUNDARY_EVENTS)
-    def test_part_contains_content_and_kind(self, event):
-        data = serialize_sse_data(map_to_sse(event))
-        assert data["part"]["content"] == TEXT_PART.content
-        assert data["part"]["part_kind"] == TEXT_PART.part_kind
-
-
-class TestPartDeltaEvent:
-    def test_includes_index(self):
-        event = PartDeltaEvent(index=1, delta=TEXT_DELTA)
-        assert serialize_sse_data(map_to_sse(event))["index"] == 1
-
-    def test_delta_contains_content_delta(self):
-        event = PartDeltaEvent(index=0, delta=TEXT_DELTA)
-        assert serialize_sse_data(map_to_sse(event))["delta"]["content_delta"] == TEXT_DELTA.content_delta
-
-
-class TestFunctionToolCallEvent:
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        self.data = serialize_sse_data(map_to_sse(FunctionToolCallEvent(part=TOOL_CALL_PART)))
-
-    def test_includes_tool_call_id(self):
-        assert self.data["part"]["tool_call_id"] == "call-1"
-
-    def test_part_contains_tool_name_and_args(self):
-        assert self.data["part"]["tool_name"] == "memory_replace"
-        assert self.data["part"]["args"] == {"label": "notes"}
-
-
-class TestFunctionToolResultEvent:
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        self.data = serialize_sse_data(map_to_sse(FunctionToolResultEvent(part=TOOL_RETURN_PART)))
-
-    def test_includes_tool_call_id(self):
-        assert self.data["part"]["tool_call_id"] == "call-1"
-
-    def test_result_contains_tool_name_and_content(self):
-        assert self.data["part"]["tool_name"] == "memory_replace"
-        assert self.data["part"]["content"] == "Updated."
-
-
-class TestFinalResultEvent:
-    def test_tool_name_is_none_for_text_output(self):
-        event = FinalResultEvent(tool_name=None, tool_call_id=None)
-        assert serialize_sse_data(map_to_sse(event))["tool_name"] is None
-
-    def test_tool_name_is_set_for_tool_output(self):
-        event = FinalResultEvent(tool_name="memory_replace", tool_call_id="call-1")
-        assert serialize_sse_data(map_to_sse(event))["tool_name"] == "memory_replace"
-
-
-class TestAgentRunResultEvent:
-    def test_is_minimal_signal_with_no_result_content(self):
-        """Empty data payload — result content is not exposed over the wire.
-
-        The client accumulates the response via PartDeltaEvents; AgentRunResultEvent
-        is a stream-end signal only.
+        Asserts the result equals a directly constructed SSE with the same event and data —
+        verifying map_to_sse doesn't modify or strip fields.
         """
-        event = AgentRunResultEvent(result=Mock())
-        result = map_to_sse(event)
-        assert result.event == "AgentRunResultEvent"
-        assert serialize_sse_data(result) == {}
+        expected = ServerSentEvent(data=event, event=type(event).__name__)
+        assert map_to_sse(event) == expected
 
-
-class TestThinkingPart:
-    """ThinkingPart flows through Part events — tests extended thinking/CoT streaming."""
-
-    @pytest.mark.parametrize("event", [
-        pytest.param(PartStartEvent(index=0, part=THINKING_PART), id="PartStartEvent"),
-        pytest.param(PartEndEvent(index=0, part=THINKING_PART), id="PartEndEvent"),
+    @pytest.mark.parametrize("event,expected_data", [
+        pytest.param(RunStartedEvent(prompt="test prompt"), {"prompt": "test prompt"}, id="RunStartedEvent"),
+        pytest.param(RunCompletedEvent(status="success"), {"status": "success"}, id="RunCompletedEvent_success"),
+        pytest.param(RunCompletedEvent(status="cancelled"), {"status": "cancelled"}, id="RunCompletedEvent_cancelled"),
+        pytest.param(RunCompletedEvent(status="error"), {"status": "error"}, id="RunCompletedEvent_error"),
     ])
-    def test_thinking_part_boundary_event(self, event):
-        data = serialize_sse_data(map_to_sse(event))
-        assert data["part"]["content"] == THINKING_PART.content
-        assert data["part"]["part_kind"] == "thinking"
+    def test_custom_event_data(self, event, expected_data):
+        """Custom events construct specific payloads — verify exact content."""
+        assert serialize_sse_data(map_to_sse(event)) == expected_data
 
-    def test_part_delta_with_thinking_delta(self):
-        data = serialize_sse_data(map_to_sse(PartDeltaEvent(index=0, delta=THINKING_DELTA)))
-        assert data["delta"]["content_delta"] == THINKING_DELTA.content_delta
-        assert data["delta"]["part_delta_kind"] == "thinking"
+    def test_agent_run_result_exposes_no_data(self):
+        """AgentRunResultEvent is a stream-end signal only — result content is not exposed over the wire.
 
-
-# --- Synthetic broadcast events (not pydantic-ai native) ---
-
-class TestRunStartedEvent:
-    """RunStartedEvent — synthetic bookend for broadcast streams."""
-
-    def test_event_type_is_run_started(self):
-        result = map_to_sse(RunStartedEvent(prompt="hello world"))
-        assert result.event == "RunStarted"
-
-    def test_data_contains_prompt(self):
-        result = map_to_sse(RunStartedEvent(prompt="test prompt"))
-        assert serialize_sse_data(result) == {"prompt": "test prompt"}
-
-
-class TestRunCompletedEvent:
-    """RunCompletedEvent — synthetic bookend for broadcast streams."""
-
-    def test_event_type_is_run_completed(self):
-        result = map_to_sse(RunCompletedEvent(status="success"))
-        assert result.event == "RunCompleted"
-
-    @pytest.mark.parametrize("status", ["success", "cancelled", "error"])
-    def test_data_contains_status(self, status):
-        result = map_to_sse(RunCompletedEvent(status=status))
-        assert serialize_sse_data(result) == {"status": status}
+        Clients accumulate the response via PartDeltaEvents; this event carries no payload.
+        """
+        assert serialize_sse_data(map_to_sse(AgentRunResultEvent(result=Mock()))) == {}
