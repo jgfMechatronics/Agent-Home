@@ -26,8 +26,38 @@ class TestBroadcastHub:
             async for event in events:
                 collector.append(event)
 
-    async def test_broadcast_delivers_to_correct_subscribers(self, hub):
-        """Events broadcast to agent_id reach only that agent's subscribers."""
+    @staticmethod
+    async def broadcast_events(hub: BroadcastHub, events_a: list, events_b: list):
+        """Broadcast events to agents a and b."""
+        await asyncio.sleep(0.01)  # Let subscribers start
+        for event in events_a:
+            await hub.broadcast("a", event)
+        for event in events_b:
+            await hub.broadcast("b", event)
+        await asyncio.sleep(0.01)  # Let events propagate
+
+    @staticmethod
+    async def terminate_via_disconnect(hub, events_a, events_b, requests):
+        """Broadcast events, then signal client disconnect."""
+        await TestBroadcastHub.broadcast_events(hub, events_a, events_b)
+        for req in requests:
+            req._disconnected = True
+
+    @staticmethod
+    async def terminate_via_shutdown(hub, events_a, events_b, requests):
+        """Broadcast events, then trigger hub shutdown."""
+        await TestBroadcastHub.broadcast_events(hub, events_a, events_b)
+        await hub.shutdown()
+
+    @pytest.mark.parametrize("termination_method,timeout", [
+        pytest.param(terminate_via_disconnect, 7.0, id="disconnect"),
+        pytest.param(terminate_via_shutdown, 2.0, id="shutdown"),
+    ])
+    async def test_broadcast_delivers_to_correct_subscribers(self, hub, termination_method, timeout):
+        """Events broadcast to agent_id reach only that agent's subscribers.
+        
+        Tests both termination mechanisms: client disconnect and server shutdown.
+        """
         # Events to broadcast for each agent
         events_a = [RunStartedEvent(prompt="a1"), RunCompletedEvent(status="success")]
         events_b = [RunStartedEvent(prompt="b1"), RunStartedEvent(prompt="b2")]
@@ -36,65 +66,24 @@ class TestBroadcastHub:
         request_a = self.make_mock_request()
         request_b1 = self.make_mock_request()
         request_b2 = self.make_mock_request()
+        all_requests = [request_a, request_b1, request_b2]
 
         # Collectors for received events
         received_a: list = []
         received_b1: list = []
         received_b2: list = []
 
-        async def broadcast_then_disconnect():
-            """Broadcast all events, then signal disconnect."""
-            await asyncio.sleep(0.01)  # Let subscribers start
-
-            for event in events_a:
-                await hub.broadcast("a", event)
-            for event in events_b:
-                await hub.broadcast("b", event)
-
-            await asyncio.sleep(0.01)  # Let events propagate
-
-            # Signal all subscribers to disconnect
-            request_a._disconnected = True
-            request_b1._disconnected = True
-            request_b2._disconnected = True
-
         await asyncio.wait_for(
             asyncio.gather(
                 self.collect_events(hub, "a", request_a, received_a),
                 self.collect_events(hub, "b", request_b1, received_b1),
                 self.collect_events(hub, "b", request_b2, received_b2),
-                broadcast_then_disconnect(),
+                termination_method(hub, events_a, events_b, all_requests),
             ),
-            timeout=7.0,  # Must exceed hub's 5s disconnect check interval
+            timeout=timeout,
         )
 
         # Each subscriber received exactly what was broadcast to their agent
         assert received_a == events_a
         assert received_b1 == events_b
         assert received_b2 == events_b
-
-    async def test_shutdown_terminates_all_subscribers(self, hub):
-        """shutdown() causes all active subscribe iterators to exit."""
-        request_a = self.make_mock_request()
-        request_b = self.make_mock_request()
-
-        received_a: list = []
-        received_b: list = []
-
-        async def shutdown_after_delay():
-            await asyncio.sleep(0.01)  # Let subscribers start
-            await hub.shutdown()
-
-        # Should complete without timeout — shutdown terminates iterators
-        await asyncio.wait_for(
-            asyncio.gather(
-                self.collect_events(hub, "a", request_a, received_a),
-                self.collect_events(hub, "b", request_b, received_b),
-                shutdown_after_delay(),
-            ),
-            timeout=2.0,
-        )
-
-        # Subscribers exited cleanly (no events were broadcast)
-        assert received_a == []
-        assert received_b == []
