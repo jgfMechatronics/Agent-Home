@@ -7,10 +7,17 @@ Enables TUIs and other clients to observe agent runs without polling.
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncGenerator, AsyncIterator
 
 from starlette.requests import Request
 
+from agent.runner import run_stateful_agent
+
+if TYPE_CHECKING:
+    from pydantic_ai import Agent
+
+    from agent.runner import AgentAppState
+    from agent.types import AgentDeps
 
 # ---------------------------------------------------------------------------
 # Synthetic event types (not emitted by pydantic-ai)
@@ -48,10 +55,14 @@ class BroadcastHub:
     def __init__(self):
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
 
-    async def broadcast(self, agent_id: str, event: object) -> None:
-        """Push an event to all registered subscribers for agent_id."""
+    def broadcast(self, agent_id: str, event: object) -> None:
+        """Push an event to all registered subscribers for agent_id.
+        
+        Uses put_nowait to avoid possibly blocking the caller.
+        """
         for queue in self._subscribers.get(agent_id, []):
-            await queue.put(event)
+            # If the queue fills we have a bug which should be addressed 
+            queue.put_nowait(event)
 
     @asynccontextmanager
     async def subscribe(self, agent_id: str, request: Request) -> AsyncIterator[AsyncIterator[object]]:
@@ -97,3 +108,42 @@ class BroadcastHub:
         for agent_id in list(self._subscribers.keys()):
             for queue in self._subscribers[agent_id]:
                 await queue.put(ShutdownEvent())
+
+
+# ---------------------------------------------------------------------------
+# Agent runner wrapper function
+# ---------------------------------------------------------------------------
+
+async def run_agent_with_broadcast(
+    agent: "Agent",
+    deps: "AgentDeps",
+    agent_app_state: "AgentAppState",
+    user_prompt: str,
+    hub: BroadcastHub,
+) -> AsyncGenerator[object, None]:
+    """Wrap run_stateful_agent with broadcast logic.
+    
+    Broadcasts RunStartedEvent before the run, all pydantic-ai events during,
+    and RunCompletedEvent after. Yields events through so caller can also
+    consume them (e.g., for SSE response).
+    
+    Status in RunCompletedEvent:
+    - "success" if run completes normally
+    - "cancelled" if cancel_requested was set
+    - "error" if an exception occurred (re-raised after broadcasting)
+    """
+
+    agent_id = deps.agent_id
+    hub.broadcast(agent_id, RunStartedEvent(prompt=user_prompt))
+    status = "success"
+    try:
+        async for event in run_stateful_agent(agent, deps, agent_app_state, user_prompt):
+            hub.broadcast(agent_id, event)
+            yield event
+    except Exception:
+        status = "error"
+        raise
+    finally:
+        if agent_app_state.cancel_requested.is_set():
+            status = "cancelled"
+        hub.broadcast(agent_id, RunCompletedEvent(status=status))
