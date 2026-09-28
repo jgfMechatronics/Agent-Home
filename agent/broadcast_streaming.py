@@ -61,7 +61,7 @@ class BroadcastHub:
         and shutdown sentinel internally.
         """
         queue: asyncio.Queue = asyncio.Queue()
-        self._subscribers.setdefault(agent_id, []).append(queue)
+        self._register(agent_id, queue)
         try:
             yield self._event_iterator(agent_id, queue, request)
         finally:
@@ -80,12 +80,16 @@ class BroadcastHub:
                 return
             yield event
 
+    def _register(self, agent_id: str, queue: asyncio.Queue) -> None:
+        """Add a queue to the registry."""
+        self._subscribers.setdefault(agent_id, []).append(queue)
+
     def _unregister(self, agent_id: str, queue: asyncio.Queue) -> None:
-        """Remove a queue from the registry."""
-        subs = self._subscribers.get(agent_id)
-        if subs and queue in subs:
-            subs.remove(queue)
-            if not subs:
+        """Remove a queue from the registry. Removes agent_id entry if this was the last queue."""
+        queue_list = self._subscribers.get(agent_id)
+        if queue_list and queue in queue_list:
+            queue_list.remove(queue)
+            if not queue_list:
                 del self._subscribers[agent_id]
 
     async def shutdown(self) -> None:
