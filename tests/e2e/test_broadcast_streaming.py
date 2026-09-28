@@ -5,76 +5,53 @@ Server is auto-started/stopped by the live_server fixture.
 """
 
 import asyncio
-import json
 
 import httpx
-import pytest
+from httpx_sse import aconnect_sse
+
+from tests.e2e.conftest import sse_to_dict, send_message, TEST_AGENT_INSTRUCTIONS
 
 
-async def subscribe_to_stream(server_url: str, agent_id: str, events: list, ready_event: asyncio.Event):
+async def subscribe_to_stream(
+    client: httpx.AsyncClient, server_url: str, agent_id: str, events: list, ready_event: asyncio.Event
+):
     """Subscribe to agent's broadcast stream and collect events."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        async with client.stream("GET", f"{server_url}/agents/{agent_id}/stream") as response:
-            ready_event.set()  # Signal that subscription is active
-            async for line in response.aiter_lines():
-                if line.startswith("data:"):
-                    data = json.loads(line[5:].strip())
-                    events.append(data)
-                elif line.startswith("event:"):
-                    event_type = line[6:].strip()
-                    events.append({"_event_type": event_type})
+    async with aconnect_sse(client, "GET", f"{server_url}/agents/{agent_id}/stream") as event_source:
+        ready_event.set()  # Signal that subscription is active
+        async for sse in event_source.aiter_sse():
+            events.append(sse_to_dict(sse))
 
 
-async def send_message(server_url: str, agent_id: str, message: str) -> list[dict]:
-    """Send message to agent and collect SSE events from response."""
-    events = []
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        async with client.stream(
-            "POST",
-            f"{server_url}/agents/{agent_id}/messages",
-            json={"message": message},
-        ) as response:
-            async for line in response.aiter_lines():
-                if line.startswith("data:"):
-                    data = json.loads(line[5:].strip())
-                    events.append(data)
-                elif line.startswith("event:"):
-                    event_type = line[6:].strip()
-                    events.append({"_event_type": event_type})
-    return events
-
-
-async def get_or_create_test_agent(server_url: str) -> str:
+async def get_or_create_test_agent(client: httpx.AsyncClient, server_url: str) -> str:
     """Get existing test agent or create one. Returns agent_id."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        # List agents
-        response = await client.get(f"{server_url}/agents")
-        response.raise_for_status()
-        agents = response.json()
-        
-        # Look for existing e2e test agent
-        for agent in agents:
-            if agent.get("name") == "e2e-broadcast-test":
-                return agent["id"]
-        
-        # Create new agent
-        response = await client.post(
-            f"{server_url}/agents",
-            json={
-                "name": "e2e-broadcast-test",
-                "system_instructions": "You are a helpful test assistant. Keep responses brief.",
-                "config": {
-                    "model_name": "claude-sonnet-4-20250514",
-                    "tool_names": [],
-                    "soft_compaction_limit": 100000,
-                },
+    # List agents
+    response = await client.get(f"{server_url}/agents")
+    response.raise_for_status()
+    agents = response.json()
+    
+    # Look for existing e2e test agent
+    for agent in agents:
+        if agent.get("name") == "e2e-broadcast-test":
+            return agent["id"]
+    
+    # Create new agent
+    response = await client.post(
+        f"{server_url}/agents",
+        json={
+            "name": "e2e-broadcast-test",
+            "system_instructions": TEST_AGENT_INSTRUCTIONS,
+            "config": {
+                "model_name": "claude-haiku-4-5-20251001",
+                "tool_names": [],
+                "soft_compaction_limit": 100000,
             },
-        )
-        response.raise_for_status()
-        return response.json()["id"]
+        },
+    )
+    response.raise_for_status()
+    return response.json()["id"]
 
 
-async def test_broadcast_stream_receives_events(live_server: str):
+async def test_broadcast_stream_receives_events(live_server: str, client: httpx.AsyncClient):
     """
     Verify that /stream receives broadcast events when /messages is called.
     
@@ -83,14 +60,14 @@ async def test_broadcast_stream_receives_events(live_server: str):
     - All pydantic-ai streaming events (same as /messages response)
     - RunCompletedEvent (synthetic, after agent completes)
     """
-    agent_id = await get_or_create_test_agent(live_server)
+    agent_id = await get_or_create_test_agent(client, live_server)
     
     broadcast_events: list[dict] = []
     subscription_ready = asyncio.Event()
     
     # Start subscription task
     subscription_task = asyncio.create_task(
-        subscribe_to_stream(live_server, agent_id, broadcast_events, subscription_ready)
+        subscribe_to_stream(client, live_server, agent_id, broadcast_events, subscription_ready)
     )
     
     try:
@@ -101,7 +78,7 @@ async def test_broadcast_stream_receives_events(live_server: str):
         await asyncio.sleep(0.1)
         
         # Send message and collect response events
-        message_events = await send_message(live_server, agent_id, "Say 'hello' and nothing else.")
+        message_events = await send_message(client, live_server, agent_id, "Say 'hello' and nothing else.")
         
         # Give broadcast events time to arrive
         await asyncio.sleep(0.5)
@@ -118,7 +95,7 @@ async def test_broadcast_stream_receives_events(live_server: str):
     assert len(broadcast_events) > 0, "Should receive events from /stream broadcast"
     
     # Check for synthetic bookend events in broadcast
-    event_types = [e.get("_event_type") for e in broadcast_events if "_event_type" in e]
+    event_types = [e["event"] for e in broadcast_events]
     assert "RunStartedEvent" in event_types, f"Broadcast should include RunStartedEvent. Got: {event_types}"
     assert "RunCompletedEvent" in event_types, f"Broadcast should include RunCompletedEvent. Got: {event_types}"
     
