@@ -10,7 +10,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import AsyncClient
 
-from agent.broadcast import BroadcastHub, RunStartedEvent
+from agent.broadcast_streaming import BroadcastHub, RunStartedEvent
 from db.models import AgentRecord
 
 

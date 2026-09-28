@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 
-from agent.broadcast import RunCompletedEvent, RunStartedEvent
+from agent.broadcast_streaming import RunCompletedEvent, RunStartedEvent
 from api.routes import map_to_sse
 
 

@@ -13,6 +13,7 @@ from starlette.datastructures import Headers
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from agent.broadcast_streaming import BroadcastHub
 from agent.factory import AgentLockedError, AgentNotFoundError
 from memory.block_crud import BlockNotFoundError, DuplicateBlockError, DuplicatePositionError
 from api.routes import router
@@ -83,11 +84,14 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(msg)
     asyncio.get_running_loop().set_exception_handler(_handle_background_task_exception)
     engine = create_sqlite_engine(DB_PATH)
+    hub = BroadcastHub()
     try:
         await init_db(engine)
         app.state.engine = engine
+        app.state.broadcast_hub = hub
         yield
     finally:
+        await hub.shutdown()
         await engine.dispose()
 
 
