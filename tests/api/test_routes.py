@@ -34,7 +34,7 @@ from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError
-from api.slash_commands import _parse_slash_cmd, is_slash_cmd, handle_slash_cmd, _handle_recompile, SlashCommandDef
+from prototype.api.slash_commands import _parse_slash_cmd, is_slash_cmd, handle_slash_cmd, _handle_recompile, SlashCommandDef
 from fastapi.sse import ServerSentEvent
 
 
@@ -146,7 +146,7 @@ class TestHandleSlashCmd:
         mock_handler = AsyncMock(return_value=expected_sse)
 
         mock_def = SlashCommandDef(handler=mock_handler, description="test")
-        with patch.dict("api.slash_commands.SLASH_COMMANDS", {"recompile": mock_def}):
+        with patch.dict("prototype.api.slash_commands.SLASH_COMMANDS", {"recompile": mock_def}):
             result = await handle_slash_cmd(deps, msg)
 
         mock_handler.assert_awaited_once_with(deps, expected_args)
@@ -158,7 +158,7 @@ class TestHandleSlashCmd:
         mock_handler = AsyncMock(side_effect=RuntimeError("boom"))
 
         mock_def = SlashCommandDef(handler=mock_handler, description="test")
-        with patch.dict("api.slash_commands.SLASH_COMMANDS", {"recompile": mock_def}):
+        with patch.dict("prototype.api.slash_commands.SLASH_COMMANDS", {"recompile": mock_def}):
             result = await handle_slash_cmd(deps, "/recompile")
 
         assert result.event == "SlashCommandResult"
@@ -180,7 +180,7 @@ class TestHandleRecompile:
         deps = Mock()
         deps.commit_changes_refresh_agent_record = AsyncMock()
 
-        with patch("api.slash_commands.compile_system_prompt", new_callable=AsyncMock) as mock_compile:
+        with patch("prototype.api.slash_commands.compile_system_prompt", new_callable=AsyncMock) as mock_compile:
             result = await _handle_recompile(deps, "")
 
         mock_compile.assert_awaited_once_with(deps)

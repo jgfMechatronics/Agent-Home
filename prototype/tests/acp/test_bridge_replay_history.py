@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from acp.bridge import BridgeState, HISTORY_REPLAY_LIMIT, replay_history
+from prototype.acp.bridge import BridgeState, HISTORY_REPLAY_LIMIT, replay_history
 
 
 SESSION_ID = "test-session-id"
@@ -65,7 +65,7 @@ async def test_replay_history_limits_to_last_n_items():
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_response)
 
-    with patch("acp.bridge.send") as mock_send:
+    with patch("prototype.acp.bridge.send") as mock_send:
         await replay_history(state, SESSION_ID, mock_client)
 
     # Verify the client was called
@@ -95,7 +95,7 @@ async def test_replay_history_works_with_fewer_items():
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_response)
 
-    with patch("acp.bridge.send") as mock_send:
+    with patch("prototype.acp.bridge.send") as mock_send:
         await replay_history(state, SESSION_ID, mock_client)
 
     # Should have called send() for all 20 items
@@ -115,7 +115,7 @@ async def test_replay_history_handles_empty_messages():
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_response)
 
-    with patch("acp.bridge.send") as mock_send:
+    with patch("prototype.acp.bridge.send") as mock_send:
         await replay_history(state, SESSION_ID, mock_client)
 
     # No sends for empty message list (no working/idle status either)
@@ -131,7 +131,7 @@ async def test_replay_history_handles_fetch_error():
     mock_client = AsyncMock()
     mock_client.get.side_effect = Exception("Network error")
 
-    with patch("acp.bridge.send") as mock_send:
+    with patch("prototype.acp.bridge.send") as mock_send:
         # Should not raise
         await replay_history(state, SESSION_ID, mock_client)
 

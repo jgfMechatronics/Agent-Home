@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from acp.bridge import BridgeState, StreamState, process_sse_event
+from prototype.acp.bridge import BridgeState, StreamState, process_sse_event
 
 
 SESSION_ID = "test-session-id"
@@ -60,7 +60,7 @@ class TestDispatchEventSlashCommandResult:
     @pytest.mark.asyncio
     async def test_happy_path_emits_correct_notification_pair(self, state, stream_state):
         """Success SlashCommandResult → tool_call (in_progress) + tool_call_update (completed)."""
-        with patch("acp.bridge.send") as mock_send:
+        with patch("prototype.acp.bridge.send") as mock_send:
             await process_sse_event(state, stream_state, SESSION_ID, "SlashCommandResult", slash_data(), {})
 
         assert mock_send.call_count == 2
@@ -78,7 +78,7 @@ class TestDispatchEventSlashCommandResult:
     @pytest.mark.asyncio
     async def test_error_status_maps_to_failed(self, state, stream_state):
         """A SlashCommandResult with status='error' maps to 'failed' on the tool_call_update."""
-        with patch("acp.bridge.send") as mock_send:
+        with patch("prototype.acp.bridge.send") as mock_send:
             await process_sse_event(
                 state, stream_state, SESSION_ID, "SlashCommandResult",
                 slash_data(status="error", result="Command failed: oops"), {}

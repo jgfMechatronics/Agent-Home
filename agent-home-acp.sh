@@ -4,4 +4,4 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/.venv-host/bin/activate"
-exec python -m acp "$@"
+exec python -m prototype.acp "$@"

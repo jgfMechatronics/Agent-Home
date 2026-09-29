@@ -25,7 +25,7 @@ from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MC
 from agent.runner import run_stateful_agent
 from agent.broadcast_streaming import BroadcastHub, run_agent_with_broadcast
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_broadcast_hub
-from api.slash_commands import get_available_commands, is_slash_cmd, handle_slash_cmd
+from prototype.api.slash_commands import get_available_commands, is_slash_cmd, handle_slash_cmd
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,

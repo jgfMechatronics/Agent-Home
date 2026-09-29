@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from acp.bridge import (
+from prototype.acp.bridge import (
     BridgeState,
     StreamState,
     _process_stream_event,
@@ -40,7 +40,7 @@ class TestProcessStreamEvent:
     @pytest.mark.asyncio
     async def test_run_started_sends_working_status(self, state: BridgeState, stream_state: StreamState):
         """RunStarted event should send status=working to Nori."""
-        with patch("acp.bridge.send") as mock_send:
+        with patch("prototype.acp.bridge.send") as mock_send:
             await _process_stream_event(
                 state, stream_state, SESSION_ID, "RunStartedEvent", "{}"
             )
@@ -53,7 +53,7 @@ class TestProcessStreamEvent:
     @pytest.mark.asyncio
     async def test_run_started_with_prompt_emits_user_message(self, state: BridgeState, stream_state: StreamState):
         """RunStarted with prompt should send working status then user_message_chunk."""
-        with patch("acp.bridge.send") as mock_send:
+        with patch("prototype.acp.bridge.send") as mock_send:
             await _process_stream_event(
                 state, stream_state, SESSION_ID, "RunStartedEvent", '{"prompt": "Hello from another agent!"}'
             )
@@ -72,7 +72,7 @@ class TestProcessStreamEvent:
     async def test_run_started_skipped_if_already_active(self, state: BridgeState, stream_state: StreamState):
         """RunStarted should not double-send status if already in working state."""
         state.observer_turn_active = True
-        with patch("acp.bridge.send") as mock_send:
+        with patch("prototype.acp.bridge.send") as mock_send:
             await _process_stream_event(
                 state, stream_state, SESSION_ID, "RunStartedEvent", "{}"
             )
@@ -84,7 +84,7 @@ class TestProcessStreamEvent:
     async def test_run_started_with_prompt_still_emits_if_already_active(self, state: BridgeState, stream_state: StreamState):
         """RunStarted with prompt should still emit user_message_chunk even if already active."""
         state.observer_turn_active = True
-        with patch("acp.bridge.send") as mock_send:
+        with patch("prototype.acp.bridge.send") as mock_send:
             await _process_stream_event(
                 state, stream_state, SESSION_ID, "RunStartedEvent", '{"prompt": "Hello!"}'
             )
@@ -98,7 +98,7 @@ class TestProcessStreamEvent:
     async def test_run_completed_sends_idle_status(self, state: BridgeState, stream_state: StreamState):
         """RunCompleted event should send status=idle to Nori."""
         state.observer_turn_active = True
-        with patch("acp.bridge.send") as mock_send:
+        with patch("prototype.acp.bridge.send") as mock_send:
             await _process_stream_event(
                 state, stream_state, SESSION_ID, "RunCompletedEvent", '{"status": "success"}'
             )
@@ -112,7 +112,7 @@ class TestProcessStreamEvent:
     async def test_run_completed_skipped_if_not_active(self, state: BridgeState, stream_state: StreamState):
         """RunCompleted should not send idle if not in working state."""
         state.observer_turn_active = False
-        with patch("acp.bridge.send") as mock_send:
+        with patch("prototype.acp.bridge.send") as mock_send:
             await _process_stream_event(
                 state, stream_state, SESSION_ID, "RunCompletedEvent", '{"status": "success"}'
             )
@@ -123,7 +123,7 @@ class TestProcessStreamEvent:
     @pytest.mark.asyncio
     async def test_content_events_forwarded(self, state: BridgeState, stream_state: StreamState):
         """Content events should be forwarded via process_sse_event."""
-        with patch("acp.bridge.process_sse_event", new_callable=AsyncMock) as mock_process:
+        with patch("prototype.acp.bridge.process_sse_event", new_callable=AsyncMock) as mock_process:
             await _process_stream_event(
                 state, stream_state, SESSION_ID, "PartDeltaEvent",
                 '{"delta": {"content_delta": "hello"}}'
@@ -137,8 +137,8 @@ class TestProcessStreamEvent:
     async def test_skips_all_events_when_stream_active(self, state: BridgeState, stream_state: StreamState):
         """All events should be skipped when stream_active is True."""
         state.stream_active = True
-        with patch("acp.bridge.send") as mock_send, \
-             patch("acp.bridge.process_sse_event", new_callable=AsyncMock) as mock_process:
+        with patch("prototype.acp.bridge.send") as mock_send, \
+             patch("prototype.acp.bridge.process_sse_event", new_callable=AsyncMock) as mock_process:
             # Test RunStarted
             await _process_stream_event(
                 state, stream_state, SESSION_ID, "RunStartedEvent", "{}"
@@ -155,8 +155,8 @@ class TestProcessStreamEvent:
     @pytest.mark.asyncio
     async def test_handles_invalid_json_gracefully(self, state: BridgeState, stream_state: StreamState):
         """Invalid JSON should be logged and skipped, not raise."""
-        with patch("acp.bridge.send") as mock_send, \
-             patch("acp.bridge.logger") as mock_logger:
+        with patch("prototype.acp.bridge.send") as mock_send, \
+             patch("prototype.acp.bridge.logger") as mock_logger:
             # Should not raise
             await _process_stream_event(
                 state, stream_state, SESSION_ID, "RunStartedEvent", "not valid json {"

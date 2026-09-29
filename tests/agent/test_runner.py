@@ -309,7 +309,7 @@ class TestHandleMessage(_BaseRouteTest):
 
     async def test_slash_command_recompile_returns_result_sse_and_skips_agent(self, client: AsyncClient):
         """/recompile bypasses the agent run entirely and returns a single SlashCommandResult SSE."""
-        with patch("api.slash_commands.compile_system_prompt", new_callable=AsyncMock):
+        with patch("prototype.api.slash_commands.compile_system_prompt", new_callable=AsyncMock):
             events = await stream_and_collect(client, self.agent_record.id, message="/recompile")
 
         assert len(events) == 1
