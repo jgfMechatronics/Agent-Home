@@ -31,11 +31,13 @@ test = [
     "pytest-mock",
 ]
 
-[tool.pytest]
-markers = ["note: important info/caveats about tests"]
+[tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = [".", "tests"]
-markers = ["e2e: end-to-end tests requiring live server"]
+markers = [
+    "note: important info/caveats about tests",
+    "e2e: end-to-end tests requiring live server",
+]
 addopts = "-m 'not e2e' --ignore=tests/e2e"
 
 [tool.pyright]
