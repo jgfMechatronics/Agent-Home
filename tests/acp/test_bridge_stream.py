@@ -42,7 +42,7 @@ class TestProcessStreamEvent:
         """RunStarted event should send status=working to Nori."""
         with patch("acp.bridge.send") as mock_send:
             await _process_stream_event(
-                state, stream_state, SESSION_ID, "RunStarted", "{}"
+                state, stream_state, SESSION_ID, "RunStartedEvent", "{}"
             )
 
         assert state.observer_turn_active is True
@@ -55,7 +55,7 @@ class TestProcessStreamEvent:
         """RunStarted with prompt should send working status then user_message_chunk."""
         with patch("acp.bridge.send") as mock_send:
             await _process_stream_event(
-                state, stream_state, SESSION_ID, "RunStarted", '{"prompt": "Hello from another agent!"}'
+                state, stream_state, SESSION_ID, "RunStartedEvent", '{"prompt": "Hello from another agent!"}'
             )
 
         assert state.observer_turn_active is True
@@ -74,7 +74,7 @@ class TestProcessStreamEvent:
         state.observer_turn_active = True
         with patch("acp.bridge.send") as mock_send:
             await _process_stream_event(
-                state, stream_state, SESSION_ID, "RunStarted", "{}"
+                state, stream_state, SESSION_ID, "RunStartedEvent", "{}"
             )
 
         # Should not send anything since already active and no prompt
@@ -86,7 +86,7 @@ class TestProcessStreamEvent:
         state.observer_turn_active = True
         with patch("acp.bridge.send") as mock_send:
             await _process_stream_event(
-                state, stream_state, SESSION_ID, "RunStarted", '{"prompt": "Hello!"}'
+                state, stream_state, SESSION_ID, "RunStartedEvent", '{"prompt": "Hello!"}'
             )
 
         # Should emit user_message_chunk but not status (already active)
@@ -100,7 +100,7 @@ class TestProcessStreamEvent:
         state.observer_turn_active = True
         with patch("acp.bridge.send") as mock_send:
             await _process_stream_event(
-                state, stream_state, SESSION_ID, "RunCompleted", '{"status": "success"}'
+                state, stream_state, SESSION_ID, "RunCompletedEvent", '{"status": "success"}'
             )
 
         assert state.observer_turn_active is False
@@ -114,7 +114,7 @@ class TestProcessStreamEvent:
         state.observer_turn_active = False
         with patch("acp.bridge.send") as mock_send:
             await _process_stream_event(
-                state, stream_state, SESSION_ID, "RunCompleted", '{"status": "success"}'
+                state, stream_state, SESSION_ID, "RunCompletedEvent", '{"status": "success"}'
             )
 
         # Should not send anything since not active
@@ -141,7 +141,7 @@ class TestProcessStreamEvent:
              patch("acp.bridge.process_sse_event", new_callable=AsyncMock) as mock_process:
             # Test RunStarted
             await _process_stream_event(
-                state, stream_state, SESSION_ID, "RunStarted", "{}"
+                state, stream_state, SESSION_ID, "RunStartedEvent", "{}"
             )
             # Test content event
             await _process_stream_event(
@@ -159,7 +159,7 @@ class TestProcessStreamEvent:
              patch("acp.bridge.logger") as mock_logger:
             # Should not raise
             await _process_stream_event(
-                state, stream_state, SESSION_ID, "RunStarted", "not valid json {"
+                state, stream_state, SESSION_ID, "RunStartedEvent", "not valid json {"
             )
 
         mock_send.assert_not_called()
