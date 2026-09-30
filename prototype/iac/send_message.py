@@ -25,19 +25,24 @@ logger = logging.getLogger(__name__)
 # GC-safe set: keeps tasks alive until done (event loop holds only weak refs to tasks)
 background_tasks: set[asyncio.Task] = set()
 
-# Module-level registry reference — configured at app startup via configure_iac_registry()
+# Module-level references — configured at app startup via configure_iac()
 # TODO: Remove when IAC is replaced with queue-based design
 _agent_app_state_reg_IAC_ref: "dict[str, AgentAppState] | None" = None
+_broadcast_hub_IAC_ref: "BroadcastHub | None" = None
+
+if TYPE_CHECKING:
+    from agent.broadcast_streaming import BroadcastHub
 
 
-def configure_iac_registry(registry: "dict[str, AgentAppState]") -> None:
-    """Configure the IAC module with the agent app state registry.
+def configure_iac(registry: "dict[str, AgentAppState]", hub: "BroadcastHub") -> None:
+    """Configure the IAC module with the agent app state registry and broadcast hub.
     
     Must be called at app startup before any agent with send_message runs.
     TODO: Remove when IAC is replaced with queue-based design.
     """
-    global _agent_app_state_reg_IAC_ref
+    global _agent_app_state_reg_IAC_ref, _broadcast_hub_IAC_ref
     _agent_app_state_reg_IAC_ref = registry
+    _broadcast_hub_IAC_ref = hub
 
 
 def _format_inter_agent_message(sender_name: str, content: str) -> str:
@@ -82,9 +87,9 @@ async def send_message(
     # Format message with origin marker
     formatted_content = _format_inter_agent_message(sender_name=deps.name, content=content)
 
-    # Ensure registry is available (configured at app startup)
-    if _agent_app_state_reg_IAC_ref is None:
-        raise ModelRetry("send_message is not configured (call configure_iac_registry at startup).")
+    # Ensure IAC is configured (registry + hub, set at app startup)
+    if _agent_app_state_reg_IAC_ref is None or _broadcast_hub_IAC_ref is None:
+        raise ModelRetry("send_message is not configured (call configure_iac at startup).")
 
     # Extract engine from session — always available via session.bind
     # This is intended to avoid passing engine down on deps. Eventually we hope to not need the engine at this level at all.
@@ -100,6 +105,7 @@ async def send_message(
             user_prompt=formatted_content,
             engine=engine,
             agent_app_state_reg=_agent_app_state_reg_IAC_ref,
+            broadcast_hub=_broadcast_hub_IAC_ref,
             delivery_future=future,
         ),
         context=contextvars.Context(),
@@ -120,16 +126,20 @@ async def _deliver_message(
     user_prompt: str,
     engine: object,
     agent_app_state_reg: dict,
+    broadcast_hub: "BroadcastHub",
     delivery_future: "asyncio.Future[bool]",
 ) -> None:
     """Background task: acquire target lock, signal delivery, run agent to completion.
 
     Signals delivery_future with True once the lock is acquired (delivery confirmed),
     or False if the lock cannot be acquired within the timeout.
+    
+    Uses run_agent_with_broadcast so background agent activity is visible to
+    any SSE subscribers (e.g., Nori's background activity display).
     """
     # Deferred imports to avoid circular imports at module load
+    from agent.broadcast_streaming import run_agent_with_broadcast
     from agent.factory import AgentFactory, AgentLockedError
-    from agent.runner import run_stateful_agent
     from db.connection import get_session
     try:
         async with get_session(engine) as session:
@@ -138,7 +148,9 @@ async def _deliver_message(
                 async with factory.build_agent_and_deps() as (agent, deps):
                     # Lock is held — signal delivery confirmation
                     delivery_future.set_result(True)
-                    async for _ in run_stateful_agent(agent, deps, agent_app_state_reg[agent_id], user_prompt):
+                    async for _ in run_agent_with_broadcast(
+                        agent, deps, agent_app_state_reg[agent_id], user_prompt, broadcast_hub
+                    ):
                         pass
             except AgentLockedError:
                 if not delivery_future.done():

@@ -20,7 +20,7 @@ from db.models import AgentRecord
 from prototype.iac.send_message import (
     _format_inter_agent_message,
     _deliver_message,
-    configure_iac_registry,
+    configure_iac,
     send_message,
 )
 import prototype.iac.send_message as iac_module
@@ -46,8 +46,9 @@ class TestSendMessage:
         self.session = session
         self.deps = AgentDeps(session=session, agent_record=sender)
         self.ctx = mock_run_context(self.deps)
-        # Clear IAC registry before each test (some tests check unconfigured state)
+        # Clear IAC module state before each test (some tests check unconfigured state)
         iac_module._agent_app_state_reg_IAC_ref = None
+        iac_module._broadcast_hub_IAC_ref = None
 
     async def _create_target(self):
         """Helper: create target agent in DB."""
@@ -60,11 +61,12 @@ class TestSendMessage:
         await self.session.flush()
         return target
 
-    def _configure_registry(self, mocker):
-        """Helper: configure the IAC registry (enables send_message)."""
+    def _configure_iac(self, mocker):
+        """Helper: configure IAC module (enables send_message)."""
         registry = {self.sender.id: mocker.MagicMock()}
-        configure_iac_registry(registry)
-        return registry
+        hub = mocker.MagicMock()
+        configure_iac(registry, hub)
+        return registry, hub
 
     async def test_target_not_found_raises_model_retry(self):
         """Raises ModelRetry when no agent with that name exists."""
@@ -94,7 +96,7 @@ class TestSendMessage:
     async def test_delivery_outcome(self, mocker, delivery_succeeds, expect_error):
         """Delivery success returns message; failure raises ModelRetry."""
         await self._create_target()
-        self._configure_registry(mocker)
+        self._configure_iac(mocker)
 
         async def mock_deliver(*args, **kwargs):
             kwargs["delivery_future"].set_result(delivery_succeeds)
@@ -120,25 +122,12 @@ class TestDeliverMessage:
         mocker.patch("db.connection.get_session", return_value=mock_cm)
         return mock_cm
 
-    @pytest.mark.parametrize("lock_acquired", [
-        pytest.param(True, id="lock_acquired"),
-        pytest.param(False, id="lock_unavailable"),
-    ])
-    async def test_signals_future_based_on_lock_outcome(self, mocker, mock_session, lock_acquired):
-        """Future receives True when lock acquired, False when AgentLockedError."""
+    async def test_lock_unavailable_signals_false(self, mocker, mock_session):
+        """Future receives False when AgentLockedError."""
         from agent.factory import AgentLockedError
 
-        # Configure factory mock based on test case
         mock_factory_cm = mocker.AsyncMock()
-        if lock_acquired:
-            mock_factory_cm.__aenter__.return_value = (mocker.MagicMock(), mocker.MagicMock())
-            mock_factory_cm.__aexit__.return_value = None
-            async def mock_run(*args, **kwargs):
-                return
-                yield
-            mocker.patch("agent.runner.run_stateful_agent", side_effect=mock_run)
-        else:
-            mock_factory_cm.__aenter__.side_effect = AgentLockedError("test-agent-id")
+        mock_factory_cm.__aenter__.side_effect = AgentLockedError("test-agent-id")
 
         mock_factory = mocker.MagicMock()
         mock_factory.build_agent_and_deps.return_value = mock_factory_cm
@@ -150,10 +139,47 @@ class TestDeliverMessage:
             user_prompt="hello",
             engine=mocker.MagicMock(),
             agent_app_state_reg={"test-agent-id": mocker.MagicMock()},
+            broadcast_hub=mocker.MagicMock(),
             delivery_future=future,
         )
 
-        assert future.done() and future.result() is lock_acquired
+        assert future.done() and future.result() is False
+
+    async def test_lock_acquired_signals_true_and_uses_broadcast_runner(self, mocker, mock_session):
+        """Lock acquired: future receives True and run_agent_with_broadcast is called."""
+        mock_agent = mocker.MagicMock()
+        mock_deps = mocker.MagicMock()
+        mock_factory_cm = mocker.AsyncMock()
+        mock_factory_cm.__aenter__.return_value = (mock_agent, mock_deps)
+        mock_factory_cm.__aexit__.return_value = None
+
+        async def mock_run(*args, **kwargs):
+            return
+            yield
+        mock_broadcast_run = mocker.patch(
+            "agent.broadcast_streaming.run_agent_with_broadcast", side_effect=mock_run
+        )
+
+        mock_factory = mocker.MagicMock()
+        mock_factory.build_agent_and_deps.return_value = mock_factory_cm
+        mocker.patch("agent.factory.AgentFactory", return_value=mock_factory)
+
+        mock_app_state = mocker.MagicMock()
+        mock_hub = mocker.MagicMock()
+        future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        await _deliver_message(
+            agent_id="test-agent-id",
+            user_prompt="hello",
+            engine=mocker.MagicMock(),
+            agent_app_state_reg={"test-agent-id": mock_app_state},
+            broadcast_hub=mock_hub,
+            delivery_future=future,
+        )
+
+        assert future.done() and future.result() is True
+        mock_broadcast_run.assert_called_once_with(
+            mock_agent, mock_deps, mock_app_state, "hello", mock_hub
+        )
 
 
 class _SenderTestAgent(FunctionModelTestAgent):
@@ -222,8 +248,10 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
 
         # Shared registry — keyed by real recipient UUID
         self.app_state_reg = {recipient_id: AgentAppState()}
-        # Configure IAC module with registry (replaces deps.agent_app_state_reg)
-        configure_iac_registry(self.app_state_reg)
+        # Mock hub for broadcast (we don't need real broadcast for these tests)
+        self.mock_hub = mocker.MagicMock()
+        # Configure IAC module with registry + hub
+        configure_iac(self.app_state_reg, self.mock_hub)
 
         # Sender deps: mock session (DB access in send_message is bypassed via
         # mocked get_all_agents; session.bind still needed for engine extraction)
