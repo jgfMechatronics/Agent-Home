@@ -19,6 +19,7 @@ from agent.types import AgentDeps
 
 if TYPE_CHECKING:
     from agent.types import AgentAppState
+    from agent.broadcast_streaming import BroadcastHub
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +30,6 @@ background_tasks: set[asyncio.Task] = set()
 # TODO: Remove when IAC is replaced with queue-based design
 _agent_app_state_reg_IAC_ref: "dict[str, AgentAppState] | None" = None
 _broadcast_hub_IAC_ref: "BroadcastHub | None" = None
-
-if TYPE_CHECKING:
-    from agent.broadcast_streaming import BroadcastHub
 
 
 def configure_iac(registry: "dict[str, AgentAppState]", hub: "BroadcastHub") -> None:
