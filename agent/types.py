@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from db.models import AgentRecord, MemoryBlockRecord
-    from sqlalchemy.ext.asyncio import AsyncEngine
 
 
 # AnthropicModelName is str | Literal['claude-...', ...]. Extract only the known
@@ -165,20 +164,13 @@ class AgentDeps:
     commits and refreshes _agent_record, preventing MissingGreenlet on
     subsequent reads. Mutating callers should always hold deps (proves lock), so the
     commit site is always well-defined.
-
-    agent_app_state_reg is optional: only populated when the agent has access to
-    send_message functionality. Tools that need it (send_message) assert it is not None at call time.
-    The engine is always accessible via session.bind and is not stored separately.
     """
     session: AsyncSession
     _agent_record: "AgentRecord" = field(repr=False)
-    agent_app_state_reg: "dict[str, AgentAppState] | None"
 
-    def __init__(self, session: AsyncSession, agent_record: "AgentRecord",
-                 agent_app_state_reg: "dict[str, AgentAppState] | None" = None) -> None:
+    def __init__(self, session: AsyncSession, agent_record: "AgentRecord") -> None:
         self.session = session
         self._agent_record = agent_record
-        self.agent_app_state_reg = agent_app_state_reg
 
     @property
     def agent_id(self) -> str:

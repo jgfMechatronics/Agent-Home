@@ -9,6 +9,7 @@ behavior though.
 import asyncio
 import contextvars
 import logging
+from typing import TYPE_CHECKING
 
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
@@ -16,13 +17,27 @@ from pydantic_ai.exceptions import ModelRetry
 from agent.crud import get_all_agents
 from agent.types import AgentDeps
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from agent.types import AgentAppState
 
-# Timeout for acquiring the target agent's lock in the background task
-SEND_MESSAGE_LOCK_TIMEOUT_SECONDS: float = 20.0
+logger = logging.getLogger(__name__)
 
 # GC-safe set: keeps tasks alive until done (event loop holds only weak refs to tasks)
 background_tasks: set[asyncio.Task] = set()
+
+# Module-level registry reference — configured at app startup via configure_iac_registry()
+# TODO: Remove when IAC is replaced with queue-based design
+_agent_app_state_reg_IAC_ref: "dict[str, AgentAppState] | None" = None
+
+
+def configure_iac_registry(registry: "dict[str, AgentAppState]") -> None:
+    """Configure the IAC module with the agent app state registry.
+    
+    Must be called at app startup before any agent with send_message runs.
+    TODO: Remove when IAC is replaced with queue-based design.
+    """
+    global _agent_app_state_reg_IAC_ref
+    _agent_app_state_reg_IAC_ref = registry
 
 
 def _format_inter_agent_message(sender_name: str, content: str) -> str:
@@ -67,9 +82,9 @@ async def send_message(
     # Format message with origin marker
     formatted_content = _format_inter_agent_message(sender_name=deps.name, content=content)
 
-    # Ensure registry is available (only present when agent has send_message configured)
-    if deps.agent_app_state_reg is None:
-        raise ModelRetry("send_message is not configured for this agent (missing registry).")
+    # Ensure registry is available (configured at app startup)
+    if _agent_app_state_reg_IAC_ref is None:
+        raise ModelRetry("send_message is not configured (call configure_iac_registry at startup).")
 
     # Extract engine from session — always available via session.bind
     # This is intended to avoid passing engine down on deps. Eventually we hope to not need the engine at this level at all.
@@ -84,7 +99,7 @@ async def send_message(
             agent_id=target_record.id,
             user_prompt=formatted_content,
             engine=engine,
-            agent_app_state_reg=deps.agent_app_state_reg,
+            agent_app_state_reg=_agent_app_state_reg_IAC_ref,
             delivery_future=future,
         ),
         context=contextvars.Context(),
@@ -106,7 +121,6 @@ async def _deliver_message(
     engine: object,
     agent_app_state_reg: dict,
     delivery_future: "asyncio.Future[bool]",
-    timeout: float = SEND_MESSAGE_LOCK_TIMEOUT_SECONDS,
 ) -> None:
     """Background task: acquire target lock, signal delivery, run agent to completion.
 
@@ -121,7 +135,7 @@ async def _deliver_message(
         async with get_session(engine) as session:
             factory = AgentFactory(agent_id, agent_app_state_reg, session)
             try:
-                async with factory.build_agent_and_deps(timeout=timeout) as (agent, deps):
+                async with factory.build_agent_and_deps() as (agent, deps):
                     # Lock is held — signal delivery confirmation
                     delivery_future.set_result(True)
                     async for _ in run_stateful_agent(agent, deps, agent_app_state_reg[agent_id], user_prompt):

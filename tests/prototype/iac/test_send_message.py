@@ -20,8 +20,10 @@ from db.models import AgentRecord
 from prototype.iac.send_message import (
     _format_inter_agent_message,
     _deliver_message,
+    configure_iac_registry,
     send_message,
 )
+import prototype.iac.send_message as iac_module
 
 # TODO: move to conftest once on a proper PR branch
 from tests.agent.test_runner import FunctionModelTestAgent, _PersistenceAndCancellationTestBase
@@ -44,6 +46,8 @@ class TestSendMessage:
         self.session = session
         self.deps = AgentDeps(session=session, agent_record=sender)
         self.ctx = mock_run_context(self.deps)
+        # Clear IAC registry before each test (some tests check unconfigured state)
+        iac_module._agent_app_state_reg_IAC_ref = None
 
     async def _create_target(self):
         """Helper: create target agent in DB."""
@@ -56,14 +60,11 @@ class TestSendMessage:
         await self.session.flush()
         return target
 
-    def _ctx_with_registry(self, mocker):
-        """Helper: context with registry configured (enables send_message)."""
-        deps = AgentDeps(
-            session=self.session,
-            agent_record=self.sender,
-            agent_app_state_reg={self.sender.id: mocker.MagicMock()},
-        )
-        return mock_run_context(deps)
+    def _configure_registry(self, mocker):
+        """Helper: configure the IAC registry (enables send_message)."""
+        registry = {self.sender.id: mocker.MagicMock()}
+        configure_iac_registry(registry)
+        return registry
 
     async def test_target_not_found_raises_model_retry(self):
         """Raises ModelRetry when no agent with that name exists."""
@@ -93,7 +94,7 @@ class TestSendMessage:
     async def test_delivery_outcome(self, mocker, delivery_succeeds, expect_error):
         """Delivery success returns message; failure raises ModelRetry."""
         await self._create_target()
-        ctx = self._ctx_with_registry(mocker)
+        self._configure_registry(mocker)
 
         async def mock_deliver(*args, **kwargs):
             kwargs["delivery_future"].set_result(delivery_succeeds)
@@ -101,9 +102,9 @@ class TestSendMessage:
 
         if expect_error:
             with pytest.raises(ModelRetry, match="target-agent"):
-                await send_message(ctx, target_name="target-agent", content="hello")
+                await send_message(self.ctx, target_name="target-agent", content="hello")
         else:
-            result = await send_message(ctx, target_name="target-agent", content="hello")
+            result = await send_message(self.ctx, target_name="target-agent", content="hello")
             assert "delivered" in result.lower() and "target-agent" in result
 
 
@@ -221,13 +222,14 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
 
         # Shared registry — keyed by real recipient UUID
         self.app_state_reg = {recipient_id: AgentAppState()}
+        # Configure IAC module with registry (replaces deps.agent_app_state_reg)
+        configure_iac_registry(self.app_state_reg)
 
         # Sender deps: mock session (DB access in send_message is bypassed via
         # mocked get_all_agents; session.bind still needed for engine extraction)
         self.sender_deps = AgentDeps(
             session=_make_mock_session(),
             agent_record=self.sender_record,
-            agent_app_state_reg=self.app_state_reg,
         )
         self.sender_app_state = AgentAppState()
         self.sender_agent = _SenderTestAgent()
