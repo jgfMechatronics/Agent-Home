@@ -34,7 +34,6 @@ from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError
-from fastapi.sse import ServerSentEvent
 
 
 # --- Test Classes ---
@@ -364,7 +363,6 @@ class TestGetMemoryBlock:
     # 404 for unknown agent tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
 
-@pytest.mark.note("These tests are REFERENCE ONLY For the TUI PROTOTYPE BRANCH. They are now a mix of official reviewed tests (on main) and tests added for the prototype")
 class TestHealthCheck:
     """GET /health — service health."""
     
