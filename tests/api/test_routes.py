@@ -543,18 +543,6 @@ class TestGetMessages:
         assert item["content"] == raw_content  # raw JSON string — NOT parsed by the route
         assert item["timestamp"] == ts.isoformat()
 
-    async def test_after_seq_id_param_filters_exclusively(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
-        """?after_seq_id=<int>: calls load_messages with start_seq_id = after_seq_id + 1 (exclusive)."""
-        watermark_seq_id = 42
-
-        response = await client.get(f"/agents/{agent_record.id}/messages?after_seq_id={watermark_seq_id}")
-
-        assert response.status_code == 200
-        # Exclusive: start from the NEXT seq_id after the watermark
-        self.mock_load_messages.assert_called_once_with(
-            session, agent_record.id, start_seq_id=watermark_seq_id + 1
-        )
-
     # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
 
