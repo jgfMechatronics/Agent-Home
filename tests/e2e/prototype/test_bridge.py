@@ -10,18 +10,15 @@ Each test spawns a fresh bridge subprocess and drives it via the ACP protocol.
 import asyncio
 import json
 import sys
-from pathlib import Path
 from typing import AsyncIterator
 
 import httpx
 import pytest
 import pytest_asyncio
 
-from tests.e2e.conftest import TEST_AGENT_INSTRUCTIONS
+from tests.e2e.conftest import TEST_AGENT_INSTRUCTIONS, PROJECT_ROOT, SERVER_URL, REQUEST_TIMEOUT
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-SERVER_URL = "http://localhost:8008"
-BRIDGE_TIMEOUT = 30.0  # seconds to wait for bridge responses
+BRIDGE_TIMEOUT = REQUEST_TIMEOUT  # seconds to wait for bridge responses
 
 
 # =============================================================================
