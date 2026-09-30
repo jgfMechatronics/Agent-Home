@@ -18,13 +18,16 @@ if [[ -f "$ENV_FILE" ]]; then
     echo "Loaded env from $ENV_FILE"
 fi
 
-# create default dir for db
-DEFAULT_DB_DIR="$HOME/agent-home"
-if [[ ! -d "$DEFAULT_DB_DIR" ]]; then
-    mkdir -p "$DEFAULT_DB_DIR"
-    echo "created $DEFAULT_DB_DIR"
+# Set db path (respect existing env var, otherwise use default)
+if [[ -z "${AGENT_HOME_DB_PATH:-}" ]]; then
+    DEFAULT_DB_DIR="$HOME/agent-home"
+    if [[ ! -d "$DEFAULT_DB_DIR" ]]; then
+        mkdir -p "$DEFAULT_DB_DIR"
+        echo "created $DEFAULT_DB_DIR"
+    fi
+    export AGENT_HOME_DB_PATH="$DEFAULT_DB_DIR/db.sqlite"
 fi
-export AGENT_HOME_DB_PATH="$DEFAULT_DB_DIR/db.sqlite" # gets picked up by server
+echo "Using db: $AGENT_HOME_DB_PATH"
 
 # Stop existing server if running
 if [[ -f "$PID_FILE" ]]; then

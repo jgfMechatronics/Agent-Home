@@ -4,7 +4,9 @@ Tests in this directory require a live server and are excluded from the default 
 Run with: pytest tests/e2e -m e2e
 """
 
+import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -44,14 +46,21 @@ def pytest_collection_modifyitems(items):
 
 
 @pytest.fixture(scope="session")
-def live_server():
+def live_server(tmp_path_factory):
     """Start server before E2E tests, stop after.
     
     Uses start_server.sh and stop_server.sh from project root.
     Session-scoped so server starts once for all E2E tests.
+    Uses a temp directory for the database to ensure test isolation.
     """
     start_script = PROJECT_ROOT / "start_server.sh"
     stop_script = PROJECT_ROOT / "stop_server.sh"
+    
+    # Use temp directory for test database
+    tmp_dir = tmp_path_factory.mktemp("agent_home_e2e")
+    db_path = tmp_dir / "db.sqlite"
+    env = os.environ.copy()
+    env["AGENT_HOME_DB_PATH"] = str(db_path)
     
     # Start server
     result = subprocess.run(
@@ -59,6 +68,7 @@ def live_server():
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
         pytest.fail(f"Failed to start server: {result.stderr}")
