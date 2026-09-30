@@ -23,9 +23,10 @@ You have a send_message tool. When asked to send a message to another agent, you
 Do not just describe what you would do — actually call the tool.
 Keep responses brief. If you do not wish to participate, respond with only 'REFUSE'."""
 
-# Agent B: receives messages, just needs to respond
-RECIPIENT_INSTRUCTIONS = """You are Agent B, a test assistant.
-When you receive a message from another agent, acknowledge it briefly.
+# Agent B: receives messages, responds back via send_message
+RECIPIENT_INSTRUCTIONS = """You are Agent B, a test assistant with inter-agent communication capability.
+You have a send_message tool. When you receive a message from another agent, you MUST use your send_message tool to reply back to them.
+Do not just describe what you would do — actually call the tool to send your response.
 Keep responses brief. If you do not wish to participate, respond with only 'REFUSE'."""
 
 # How long to wait for background delivery
@@ -41,7 +42,7 @@ SENDER_CONFIG = {
 
 RECIPIENT_CONFIG = {
     "model_name": "claude-haiku-4-5",
-    "tool_names": [],
+    "tool_names": ["send_message"],
     "soft_compaction_limit": 10000,
 }
 
@@ -89,17 +90,18 @@ async def get_agent_messages(client: httpx.AsyncClient, server_url: str, agent_i
     return resp.json()["messages"]
 
 
-async def wait_for_recipient_message(
+async def wait_for_iac_message(
     client: httpx.AsyncClient,
     server_url: str,
     agent_id: str,
     timeout: float = IAC_DELIVERY_TIMEOUT_SEC,
 ) -> list:
-    """Poll recipient's history until messages appear or timeout."""
+    """Poll agent's history until an inter-agent message appears or timeout."""
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         messages = await get_agent_messages(client, server_url, agent_id)
-        if messages:
+        # Check if any message contains the IAC marker
+        if messages and "INTER AGENT MESSAGE" in str(messages):
             return messages
         await asyncio.sleep(IAC_POLL_INTERVAL_SEC)
     return []
@@ -158,19 +160,36 @@ class TestInterAgentCommunication:
             f"Expected delivery confirmation, got: {tool_result_content}"
         )
         
-        # Step 2: Wait for Agent B to receive and process the message
-        recipient_messages = await wait_for_recipient_message(
+        # Step 2: Wait for Agent B to receive the message from A
+        recipient_messages = await wait_for_iac_message(
             client, server_url, recipient_id
         )
+        assert recipient_messages, "Recipient (B) never received any IAC messages"
         
-        assert recipient_messages, "Recipient never received any messages"
-        
-        # Step 3: Verify the inter-agent message content
-        # Messages are serialized pydantic-ai format — look for the marker and content
-        all_content = str(recipient_messages)
-        assert "INTER AGENT MESSAGE" in all_content, (
-            f"Expected inter-agent marker in recipient history. Got: {recipient_messages}"
+        # Verify B received A's message
+        recipient_content = str(recipient_messages)
+        assert "INTER AGENT MESSAGE" in recipient_content, (
+            f"Expected inter-agent marker in B's history. Got: {recipient_messages}"
         )
-        assert test_content in all_content, (
-            f"Expected test content '{test_content}' in recipient history. Got: {recipient_messages}"
+        assert test_content in recipient_content, (
+            f"Expected test content in B's history. Got: {recipient_messages}"
+        )
+        assert "sender-agent" in recipient_content, (
+            f"Expected sender name in B's history. Got: {recipient_messages}"
+        )
+        
+        # Step 3: Wait for Agent A to receive B's reply (B should auto-respond via send_message)
+        # Give B time to process and send reply back
+        sender_messages = await wait_for_iac_message(
+            client, server_url, sender_id
+        )
+        assert sender_messages, "Sender (A) never received reply from B"
+        
+        # Verify A received B's reply
+        sender_content = str(sender_messages)
+        assert "INTER AGENT MESSAGE" in sender_content, (
+            f"Expected inter-agent marker in A's history (B's reply). Got: {sender_messages}"
+        )
+        assert "recipient-agent" in sender_content, (
+            f"Expected B's name in A's history. Got: {sender_messages}"
         )
