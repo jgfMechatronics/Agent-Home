@@ -62,10 +62,7 @@ async def sender_agent(client: httpx.AsyncClient, server_url: str):
         "config": SENDER_CONFIG,
     })
     assert resp.status_code == 201, f"Failed to create sender: {resp.text}"
-    data = resp.json()
-    yield data
-    # Cleanup
-    await client.delete(f"{server_url}/agents/{data['id']}")
+    return resp.json()
 
 
 @pytest_asyncio.fixture
@@ -77,10 +74,7 @@ async def recipient_agent(client: httpx.AsyncClient, server_url: str):
         "config": RECIPIENT_CONFIG,
     })
     assert resp.status_code == 201, f"Failed to create recipient: {resp.text}"
-    data = resp.json()
-    yield data
-    # Cleanup
-    await client.delete(f"{server_url}/agents/{data['id']}")
+    return resp.json()
 
 
 async def get_agent_messages(client: httpx.AsyncClient, server_url: str, agent_id: str) -> list:
