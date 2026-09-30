@@ -110,7 +110,7 @@ async def wait_for_iac_message(
 class TestInterAgentCommunication:
     """E2E tests for send_message tool."""
 
-    async def test_agent_a_can_message_agent_b(
+    async def test_bi_directional_agent_messaging(
         self,
         client: httpx.AsyncClient,
         server_url: str,
