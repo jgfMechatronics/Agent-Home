@@ -25,12 +25,14 @@ from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MC
 from agent.runner import run_stateful_agent
 from agent.broadcast_streaming import BroadcastHub, run_agent_with_broadcast
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_broadcast_hub
+from prototype.api.slash_commands import get_available_commands, is_slash_cmd, handle_slash_cmd
 from api.schemas import (
     AgentMetadataResponse,
     CoreMemoryResponse,
     CreateAgentRequest,
     CreateMemoryBlockRequest,
     MemoryBlockResponse,
+    MessageItem,
     MessageRequest,
     MessagesResponse,
     SystemInstructionsResponse,
@@ -53,6 +55,7 @@ from messages.messages import load_messages
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/agents")
+
 
 # --- Helpers ---
 
@@ -98,6 +101,12 @@ async def stream_agent_events(
             yield map_to_sse(event)
 
 
+@router.get("/slash-commands")
+async def get_slash_commands() -> list[dict[str, Any]]:
+    """Return available slash commands for client discovery."""
+    return get_available_commands()
+
+
 @router.post("/{agent_id}/messages", response_class=EventSourceResponse)
 async def handle_message(
     agent_id: str,
@@ -112,6 +121,10 @@ async def handle_message(
     agent, deps = agent_and_deps # This would be inside the try/except but cleanup assumes we have deps
 
     try:
+        if is_slash_cmd(body.message):
+            yield await handle_slash_cmd(deps, body.message)
+            return
+        
         agent_app_state = agent_app_state_reg[agent_id]
 
         if suppress_broadcast:
@@ -380,6 +393,7 @@ async def get_messages(
     # TODO: Don't need agent record if requesting full, but we're likely gonna rework this anyway
     start_seq_id = 0 if full else record.context_window_start
     messages = await load_messages(session, agent_id, start_seq_id=start_seq_id)
-    # Parse stored JSON and return — format TBD, this is throwaway (TODO)
-    import json
-    return MessagesResponse(messages=[json.loads(m.content) for m in messages])
+    return MessagesResponse(messages=[
+        MessageItem(id=m.id, seq_id=m.seq_id, type=m.type, content=m.content, timestamp=m.timestamp)
+        for m in messages
+    ])

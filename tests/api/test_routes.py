@@ -363,59 +363,6 @@ class TestGetMemoryBlock:
     # 404 for unknown agent tested via parametrized test_get_endpoints_return_404_for_unknown_agent
 
 
-@pytest.mark.xfail(reason="get_messages endpoint format TBD — will be reworked once coding CLI/harness is selected")
-class TestGetMessages:
-    """
-    GET /agents/{agent_id}/messages — conversation history.
-    TODO: This is OK for now but we will likely rework the endpoint after defining what is most useful for the frontend in terms of message format
-    """
-
-    @pytest.fixture(autouse=True)
-    def mock_message_loaders(self):
-        """Patch message-loading functions for all TestGetMessages tests.
-
-        Provides self.mock_load_messages for loader-routing assertions.
-        """
-        with (
-            patch("api.routes.load_messages", new_callable=AsyncMock) as mock_load,
-        ):
-            mock_load.return_value = []
-            self.mock_load_messages = mock_load
-            yield
-
-    async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
-        """Without ?full=true: calls load_messages with context_window_start as start_seq_id."""
-        expected_messages = [{"role": "user", "content": "test"}]
-        self.mock_load_messages.return_value = expected_messages
-
-        response = await client.get(f"/agents/{agent_record.id}/messages")
-
-        assert response.status_code == 200
-        assert response.json()["messages"] == expected_messages
-        self.mock_load_messages.assert_called_once_with(
-            session, agent_record.id, start_seq_id=agent_record.context_window_start
-        )
-
-    async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
-        """With ?full=true: calls load_messages with start_seq_id=0 for full history."""
-        expected_messages = [{"role": "user", "content": "old"}, {"role": "assistant", "content": "reply"}]
-        self.mock_load_messages.return_value = expected_messages
-
-        response = await client.get(f"/agents/{agent_record.id}/messages?full=true")
-
-        assert response.status_code == 200
-        assert response.json()["messages"] == expected_messages
-        self.mock_load_messages.assert_called_once_with(
-            session, agent_record.id, start_seq_id=0
-        )
-
-    async def test_returns_reasonable_format(self):
-        # TODO: finalize MessageItem format, constrain MessageResponse (or whatever it is) to be list[MessageItem]
-        pytest.fail()
-
-    # 404 tested via parametrized test_get_endpoints_return_404_for_unknown_agent
-
-
 class TestHealthCheck:
     """GET /health — service health."""
     

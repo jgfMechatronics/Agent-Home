@@ -759,7 +759,7 @@ wheels = [
 [[package]]
 name = "e-llm-agent-server"
 version = "0.1.0"
-source = { editable = "." }
+source = { virtual = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "asgi-lifespan" },
