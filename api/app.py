@@ -17,6 +17,7 @@ from agent.broadcast_streaming import BroadcastHub
 from agent.factory import AgentLockedError, AgentNotFoundError
 from memory.block_crud import BlockNotFoundError, DuplicateBlockError, DuplicatePositionError
 from api.routes import router
+from prototype.iac.send_message import configure_iac_registry  # TODO: Remove with IAC redesign
 from api.schemas import HealthResponse
 from db.connection import create_sqlite_engine, init_db
 from utils.integrity_checker import INTEGRITY_LOCKFILE_NAME
@@ -132,6 +133,7 @@ def _create_app() -> FastAPI:
     """Factory function for creating the FastAPI app. Enables fresh instances per test."""
     app = FastAPI(lifespan=lifespan)
     app.state.agent_app_state_reg = {}
+    configure_iac_registry(app.state.agent_app_state_reg)  # TODO: Remove with IAC redesign
     app.include_router(router)
     app.add_exception_handler(AgentNotFoundError, agent_not_found_handler)
     app.add_exception_handler(AgentLockedError, agent_locked_handler)

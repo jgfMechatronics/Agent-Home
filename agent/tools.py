@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import ModelRetry
 
 from agent.types import AgentDeps
 from memory.block_crud import get_block, update_block, ContentExceedsLimitError
+from prototype.iac.send_message import send_message
 
 
 def _get_edit_line_info(content: str, edit_start_idx: int, new_text: str) -> tuple[int, int]:
@@ -221,6 +222,7 @@ TOOL_REGISTRY: dict[str, Callable | Tool[AgentDeps]] = {
     "memory_insert": memory_insert,
     "duckduckgo_search": duckduckgo_search_tool(max_results=5),
     "web_fetch": web_fetch_tool(),
+    "send_message": send_message,
 }
 
 
