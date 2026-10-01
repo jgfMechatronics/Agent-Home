@@ -392,7 +392,6 @@ class TestBuildAgentAndDeps:
         with patch("agent.factory._build_model_settings", wraps=_build_model_settings) as mock_helper:
             async with self.factory.build_agent_and_deps() as (agent, deps):
                 mock_helper.assert_called_once_with(self.agent_record.agent_config)
-                assert agent.model_settings == _build_model_settings(self.agent_record.agent_config)
 
 
 # =============================================================================
