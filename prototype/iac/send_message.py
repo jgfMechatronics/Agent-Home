@@ -137,7 +137,8 @@ async def _deliver_message(
     """
     # Deferred imports to avoid circular imports at module load
     from agent.broadcast_streaming import run_agent_with_broadcast
-    from agent.factory import AgentFactory, AgentLockedError
+    from agent.factory import AgentFactory
+    from agent.types import AgentLockedError
     from db.connection import get_session
     try:
         async with get_session(engine) as session:

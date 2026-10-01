@@ -26,9 +26,6 @@ from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoun
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
 
-# Re-export exceptions for backward compatibility (canonical location is agent.types)
-__all__ = ["AgentFactory", "AgentNotFoundError", "AgentLockedError"]
-
 
 LOCK_TIMEOUT_SECONDS: int = 60
 LOCK_TIMEOUT_FAST: int = 2

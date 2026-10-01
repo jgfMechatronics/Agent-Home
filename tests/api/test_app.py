@@ -8,7 +8,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 
 from httpx import ASGITransport, AsyncClient
 
-from agent.factory import AgentLockedError, AgentNotFoundError
+from agent.types import AgentLockedError, AgentNotFoundError
 from memory.block_crud import BlockNotFoundError, DuplicateBlockError, DuplicatePositionError
 from api.app import _create_app
 from api.routes import router

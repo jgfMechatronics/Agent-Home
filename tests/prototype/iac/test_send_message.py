@@ -124,7 +124,7 @@ class TestDeliverMessage:
 
     async def test_lock_unavailable_signals_false(self, mocker, mock_session):
         """Future receives False when AgentLockedError."""
-        from agent.factory import AgentLockedError
+        from agent.types import AgentLockedError
 
         mock_factory_cm = mocker.AsyncMock()
         mock_factory_cm.__aenter__.side_effect = AgentLockedError("test-agent-id")

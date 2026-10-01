@@ -24,8 +24,8 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError
-from agent.types import AgentAppState, AgentDeps
+from agent.factory import AgentFactory
+from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError
 from memory.system_prompt_compilation import get_system_prompt
 from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord
