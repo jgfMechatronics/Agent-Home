@@ -21,38 +21,27 @@ if TYPE_CHECKING:
 
 
 def validate_model_name(model_name: str) -> str:
-    """Validate a 'provider:model' model name string.
+    """Validate a model name string via pydantic-ai's infer_model().
 
-    Checks that:
-    - The string is not empty or whitespace-only.
-    - The model part (after the colon) is not empty.
-    - The provider is recognised by pydantic-ai (via infer_model).
+    Accepts any format pydantic-ai accepts: 'provider:model' (e.g.
+    'anthropic:claude-haiku-4-5') or bare model names that pydantic-ai can
+    resolve to a provider (e.g. 'claude-haiku-4-5').
 
-    Note: pydantic-ai intentionally accepts unknown model names for forward
-    compatibility with new releases and custom deployments, so only the
-    provider is validated here. A bad model name will surface at first inference.
+    The only case we check ourselves is an empty resolved model name
+    (e.g. 'anthropic:') since infer_model() accepts that silently.
 
-    Examples of valid names:
-        'anthropic:claude-haiku-4-5'
-        'together:meta-llama/Llama-3.3-70B-Instruct-Turbo'
-        'openai:gpt-4o'
+    ValueError from infer_model (unknown provider) propagates naturally.
+    UserError / OpenAIError (missing API key) are re-raised as ValueError
+    so they surface as a 422 ValidationError with the original message.
 
-    Raises ValueError for empty, whitespace-only, empty model part, or unknown provider.
     Returns the name unchanged.
     """
-    if not model_name.strip():
-        raise ValueError("model_name cannot be empty")
-    provider, _, model = model_name.partition(":")
-    if not provider.strip():
-        raise ValueError("model_name provider part cannot be empty")
-    if not model.strip():
-        raise ValueError("model_name model part cannot be empty")
     try:
-        infer_model(model_name)
-    except ValueError as e:
-        raise ValueError(f"Invalid model_name {model_name!r}: {e}") from e
+        m = infer_model(model_name)
     except (UserError, OpenAIError) as e:
         raise ValueError(str(e)) from e
+    if not m.model_name.strip():
+        raise ValueError("model_name model part cannot be empty")
     return model_name
 
 
