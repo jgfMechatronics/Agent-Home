@@ -17,17 +17,17 @@ from typing import AsyncIterator
 
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.models.anthropic import AnthropicModelSettings  # TODO: replace with per-provider model_settings (see multi-provider discussion)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
 from agent.crud import get_agent_record
-from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError, validate_model_name
+from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
 
 # Re-export exceptions for backward compatibility (canonical location is agent.types)
-__all__ = ["AgentFactory", "AgentNotFoundError", "AgentLockedError", "get_model"]
+__all__ = ["AgentFactory", "AgentNotFoundError", "AgentLockedError"]
 
 
 LOCK_TIMEOUT_SECONDS: int = 60
@@ -105,7 +105,7 @@ class AgentFactory:
         it does, it doesn't null out the resources actually associated with the lock!!!! Oops.
         """
         async with self.build_deps() as deps:
-            model = get_model(deps.config.model_name)
+            model = _resolve_model(deps.config.model_name)
             
             model_settings = AnthropicModelSettings(
                 anthropic_cache_instructions=True,
@@ -154,12 +154,12 @@ def _construct_toolsets(toolset_names: list[str]) -> list:
     return toolsets
 
 
-def get_model(model_name: str) -> AnthropicModel:
-    """Map a model name string to a Pydantic AI model instance.
-    
-    Raises ValueError for unknown or unsupported model names.
-    AgentConfig.validate_model_name already enforces this at config creation time,
-    so this is a belt-and-suspenders guard.
+def _resolve_model(model_name: str):
+    """Return a model string or object for use by pydantic-ai Agent().
+
+    Pydantic-ai accepts 'provider:model' strings (e.g. 'anthropic:claude-haiku-4-5')
+    and resolves provider + API key automatically. This function is a no-op by default
+    and serves as a patchable seam for tests that need to inject test model instances.
     """
-    validate_model_name(model_name)  # raises ValueError for unknown names
-    return AnthropicModel(model_name)
+    return model_name
+

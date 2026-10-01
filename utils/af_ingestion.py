@@ -59,6 +59,24 @@ def _get_referenced_items(agent: dict, id_key: str, data: dict, items_key: str) 
     return [item for item in all_items if item["id"] in ids]
 
 
+_LETTA_ENDPOINT_TYPE_TO_PROVIDER: dict[str, str] = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+}
+
+def _add_provider_prefix(model: str, llm_config: dict) -> str:
+    """Convert a bare Letta model name to the 'provider:model' format Agent Home expects.
+
+    Uses llm_config.model_endpoint_type to determine the provider. Falls back to
+    'anthropic' if the endpoint type is unknown (all historical .AF files are Anthropic).
+    """
+    if ":" in model:
+        return model  # already prefixed
+    endpoint_type = llm_config.get("model_endpoint_type", "")
+    provider = _LETTA_ENDPOINT_TYPE_TO_PROVIDER.get(endpoint_type, "anthropic")
+    return f"{provider}:{model}"
+
+
 def _parse_af(data: dict) -> tuple[dict, list[dict]]:
     """Parse and validate the .AF structure, returning (agent_payload, blocks_payload).
 
@@ -78,6 +96,7 @@ def _parse_af(data: dict) -> tuple[dict, list[dict]]:
     system = _extract_or_raise(agent, "system", context="agents[0]")
     llm_config = _extract_or_raise(agent, "llm_config", context="agents[0]")
     model = _extract_or_raise(llm_config, "model", context="agents[0].llm_config")
+    model = _add_provider_prefix(model, llm_config)
     context_window = _extract_or_raise(llm_config, "context_window", context="agents[0].llm_config")
     enable_reasoner = _extract_or_raise(llm_config, "enable_reasoner", context="agents[0].llm_config")
 

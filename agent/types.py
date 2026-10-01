@@ -8,10 +8,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from typing import Literal, get_args, get_origin
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from pydantic_ai.models.anthropic import AnthropicModelName
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -20,23 +17,29 @@ if TYPE_CHECKING:
     from db.models import AgentRecord, MemoryBlockRecord
 
 
-# AnthropicModelName is str | Literal['claude-...', ...]. Extract only the known
-# Literal values — the str arm is a forward-compat escape hatch, not a validation target.
-_literal_type = next(arg for arg in get_args(AnthropicModelName) if get_origin(arg) is Literal)
-VALID_MODEL_NAMES: frozenset[str] = frozenset(get_args(_literal_type))
-
-
 def validate_model_name(model_name: str) -> str:
-    """Validate that model_name is a known Anthropic model string.
+    """Validate that model_name follows the 'provider:model' format.
 
-    Raises ValueError for empty or unrecognised names. Returns the name unchanged.
+    Examples of valid names:
+        'anthropic:claude-haiku-4-5'
+        'together:meta-llama/Llama-3.3-70B-Instruct-Turbo'
+        'openai:gpt-4o'
+
+    Raises ValueError for empty, whitespace-only, or incorrectly formatted names.
+    Returns the name unchanged.
     """
     if not model_name.strip():
         raise ValueError("model_name cannot be empty")
-    if model_name not in VALID_MODEL_NAMES:
+    if ":" not in model_name:
         raise ValueError(
-            f"Unknown model {model_name!r}. Must be one of: {sorted(VALID_MODEL_NAMES)}"
+            f"model_name {model_name!r} must include a provider prefix "
+            f"(e.g. 'anthropic:claude-haiku-4-5', 'together:glm-4-flash')"
         )
+    provider, _, model = model_name.partition(":")
+    if not provider.strip():
+        raise ValueError("model_name provider part cannot be empty")
+    if not model.strip():
+        raise ValueError("model_name model part cannot be empty")
     return model_name
 
 
@@ -75,7 +78,7 @@ class AgentConfig(BaseModel):
     Agent configuration stored as JSON in AgentRecord.agent_config.
     
     Required fields:
-    - model_name: The LLM to use (e.g., "claude-haiku-4-5")
+    - model_name: The LLM to use in 'provider:model' format (e.g., "anthropic:claude-haiku-4-5", "together:glm-4-flash")
     - tool_names: List of tool names the agent can use
     - soft_compaction_limit: Token threshold for triggering compaction
     
