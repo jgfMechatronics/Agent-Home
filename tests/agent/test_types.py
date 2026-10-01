@@ -13,18 +13,6 @@ from pydantic import ValidationError
 
 from agent.types import AgentConfig, AgentDeps
 
-# --- Fixtures ---
-
-@pytest.fixture(autouse=True)
-def patch_infer_model(mocker):
-    """Patch infer_model for all tests in this module.
-
-    validate_model_name calls infer_model() to validate the provider, which
-    requires API keys to be configured. Tests here are for validation logic only,
-    not provider connectivity — patching avoids the API key dependency.
-    """
-    mocker.patch("agent.types.infer_model")
-
 
 @pytest.fixture
 def valid_config_data() -> dict:
@@ -119,9 +107,8 @@ def test_agentconfig_accepts_provider_model_format(valid_config_data: dict, mode
     assert config.model_name == model_name
 
 
-def test_agentconfig_rejects_unknown_provider(valid_config_data: dict, mocker):
+def test_agentconfig_rejects_unknown_provider(valid_config_data: dict):
     """Unknown providers should be rejected via infer_model, surfacing as ValidationError."""
-    mocker.patch("agent.types.infer_model", side_effect=ValueError("Unknown provider: badprovider"))
     valid_config_data["model_name"] = "badprovider:some-model"
     with pytest.raises(ValidationError):
         AgentConfig(**valid_config_data)
