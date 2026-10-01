@@ -19,7 +19,7 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.settings import ModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,38 +40,33 @@ logger = logging.getLogger(__name__)
 def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     """Return provider-appropriate ModelSettings for the given agent config.
 
-    Uses pydantic-ai's infer_model() to resolve the provider, then dispatches
-    on the concrete model type — no string mapping required. Any future
-    OpenAI-compatible provider that pydantic-ai maps to OpenAIChatModel
-    automatically gets OpenAIChatModelSettings.
+    Uses infer_model() to resolve the provider type, then dispatches on
+    AnthropicModel for Anthropic-specific settings. All other providers
+    (OpenAI, Together, Fireworks, etc.) receive base ModelSettings with
+    the unified 'thinking' field, which pydantic-ai maps to each provider's
+    native reasoning parameter.
 
     parallel_tool_calls=False is applied for all providers: our orphan remover
     is not compatible with parallel tool calls.
     """
     m = infer_model(config.model_name)
+    base = ModelSettings(parallel_tool_calls=False)
 
     if isinstance(m, AnthropicModel):
         return AnthropicModelSettings(
+            **base,
             anthropic_cache_instructions=True,
             anthropic_cache_tool_definitions=True,
             anthropic_cache_messages=True,
             # Anthropic requires max_tokens > budget_tokens when thinking is enabled
             **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
-                "max_tokens": 16000}
-               if config.thinking_enabled else {}),
-            parallel_tool_calls=False,
+                "max_tokens": 16000} if config.thinking_enabled else {}),
         )
 
-    if isinstance(m, OpenAIChatModel):
-        return OpenAIChatModelSettings(
-            parallel_tool_calls=False,
-            # 'thinking' is the unified field pydantic-ai maps to openai_reasoning_effort.
-            # Ignored by models that don't support reasoning; no-op for Together etc. if unsupported.
-            **({"thinking": "high"} if config.thinking_enabled else {}),
-        )
-
-    # Unknown provider — apply only the settings all providers share
-    return ModelSettings(parallel_tool_calls=False)
+    # All other providers: unified 'thinking' field — pydantic-ai maps it to the
+    # provider's native reasoning parameter (e.g. openai_reasoning_effort for OpenAI).
+    # Ignored by models that don't support reasoning.
+    return ModelSettings(**base, **({"thinking": "high"} if config.thinking_enabled else {}))
 
 
 def _construct_toolsets(toolset_names: list[str]) -> list:
