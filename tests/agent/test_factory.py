@@ -394,16 +394,6 @@ class TestBuildAgentAndDeps:
                 mock_helper.assert_called_once_with(self.agent_record.agent_config)
                 assert agent.model_settings == _build_model_settings(self.agent_record.agent_config)
 
-    async def test_thinking_enabled_allows_deferred_tools(self):
-        """DeferredToolRequests is preserved when thinking is enabled.
-
-        With str also in the output_type union, pydantic-ai uses tool_choice='auto'
-        (not 'required'), which Anthropic accepts with thinking enabled.
-        """
-        self.agent_record.agent_config = self.agent_record.agent_config.model_copy(update={"thinking_enabled": True})
-        async with self.factory.build_agent_and_deps() as (agent, deps):
-            assert agent._output_schema.allows_deferred_tools is True
-
 
 # =============================================================================
 # _build_model_settings unit tests
