@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from openai import OpenAIError
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import infer_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,15 +42,17 @@ def validate_model_name(model_name: str) -> str:
     """
     if not model_name.strip():
         raise ValueError("model_name cannot be empty")
-    _, _, model = model_name.partition(":")
+    provider, _, model = model_name.partition(":")
+    if not provider.strip():
+        raise ValueError("model_name provider part cannot be empty")
     if not model.strip():
         raise ValueError("model_name model part cannot be empty")
     try:
         infer_model(model_name)
     except ValueError as e:
         raise ValueError(f"Invalid model_name {model_name!r}: {e}") from e
-    except Exception:
-        pass  # Provider is valid; exception is a config issue (e.g. missing API key).
+    except (UserError, OpenAIError) as e:
+        raise ValueError(str(e)) from e
     return model_name
 
 

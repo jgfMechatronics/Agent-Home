@@ -12,7 +12,19 @@ from conftest import SAMPLE_AGENT_CONFIG_DATA
 from pydantic import ValidationError
 
 from agent.types import AgentConfig, AgentDeps
+
 # --- Fixtures ---
+
+@pytest.fixture(autouse=True)
+def patch_infer_model(mocker):
+    """Patch infer_model for all tests in this module.
+
+    validate_model_name calls infer_model() to validate the provider, which
+    requires API keys to be configured. Tests here are for validation logic only,
+    not provider connectivity — patching avoids the API key dependency.
+    """
+    mocker.patch("agent.types.infer_model")
+
 
 @pytest.fixture
 def valid_config_data() -> dict:
@@ -57,9 +69,8 @@ def test_agentconfig_requires_field(valid_config_data: dict, missing_field: str)
     ("model_name", "", "model_name cannot be empty"),
     ("model_name", "   ", "model_name cannot be empty"),
     ("model_name", "claude-haiku-4-5", "model_name missing colon — empty model part"),
-    ("model_name", ":claude-haiku-4-5", "model_name empty provider — rejected by infer_model"),
+    ("model_name", ":claude-haiku-4-5", "model_name empty provider"),
     ("model_name", "anthropic:", "model_name empty model part"),
-    ("model_name", "badprovider:some-model", "model_name unknown provider"),
     ("tool_names", "not_a_list", "tool_names must be a list"),
     ("tool_names", [1, 2, 3], "tool_names must be list of strings"),
     ("soft_compaction_limit", 0, "soft_compaction_limit must be positive"),
@@ -106,6 +117,14 @@ def test_agentconfig_accepts_provider_model_format(valid_config_data: dict, mode
     valid_config_data["model_name"] = model_name
     config = AgentConfig(**valid_config_data)
     assert config.model_name == model_name
+
+
+def test_agentconfig_rejects_unknown_provider(valid_config_data: dict, mocker):
+    """Unknown providers should be rejected via infer_model, surfacing as ValidationError."""
+    mocker.patch("agent.types.infer_model", side_effect=ValueError("Unknown provider: badprovider"))
+    valid_config_data["model_name"] = "badprovider:some-model"
+    with pytest.raises(ValidationError):
+        AgentConfig(**valid_config_data)
 
 
 # --- AgentConfig defaults ---
