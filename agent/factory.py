@@ -37,6 +37,61 @@ _MCP_FILESYSTEM_URL = "http://host.docker.internal:8080/mcp"
 logger = logging.getLogger(__name__)
 
 
+def _build_model_settings(config: "AgentConfig") -> ModelSettings:
+    """Return provider-appropriate ModelSettings for the given agent config.
+
+    Uses pydantic-ai's infer_model() to resolve the provider, then dispatches
+    on the concrete model type — no string mapping required. Any future
+    OpenAI-compatible provider that pydantic-ai maps to OpenAIChatModel
+    automatically gets OpenAIChatModelSettings.
+
+    parallel_tool_calls=False is applied for all providers: our orphan remover
+    is not compatible with parallel tool calls.
+    """
+    m = infer_model(config.model_name)
+
+    if isinstance(m, AnthropicModel):
+        return AnthropicModelSettings(
+            anthropic_cache_instructions=True,
+            anthropic_cache_tool_definitions=True,
+            anthropic_cache_messages=True,
+            # Anthropic requires max_tokens > budget_tokens when thinking is enabled
+            **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
+                "max_tokens": 16000}
+               if config.thinking_enabled else {}),
+            parallel_tool_calls=False,
+        )
+
+    if isinstance(m, OpenAIChatModel):
+        return OpenAIChatModelSettings(
+            parallel_tool_calls=False,
+        )
+
+    # Unknown provider — apply only the settings all providers share
+    return ModelSettings(parallel_tool_calls=False)
+
+
+def _construct_toolsets(toolset_names: list[str]) -> list:
+    """Construct toolset instances from a list of toolset names.
+
+    Maps toolset names to their constructors and builds instances.
+
+    Args:
+        toolset_names: List of toolset identifiers (e.g., ["mcp_filesystem"])
+
+    Returns:
+        List of constructed toolset instances ready for Agent consumption.
+    """
+    # TODO: Consider module-level instances for connection reuse
+    toolsets = []
+    for name in toolset_names:
+        if name == "mcp_filesystem":
+            toolsets.append(MCPToolset(_MCP_FILESYSTEM_URL))
+        else:
+            logger.warning("Unknown toolset name %r — skipping. Check agent config for typos.", name)
+    return toolsets
+
+
 class AgentFactory:
     """Per-agent, per-request factory for building agents with locking.
 
@@ -121,57 +176,3 @@ class AgentFactory:
             
             yield (agent, deps)
 
-
-def _build_model_settings(config: "AgentConfig") -> ModelSettings:
-    """Return provider-appropriate ModelSettings for the given agent config.
-
-    Uses pydantic-ai's infer_model() to resolve the provider, then dispatches
-    on the concrete model type — no string mapping required. Any future
-    OpenAI-compatible provider that pydantic-ai maps to OpenAIChatModel
-    automatically gets OpenAIChatModelSettings.
-
-    parallel_tool_calls=False is applied for all providers: our orphan remover
-    is not compatible with parallel tool calls.
-    """
-    m = infer_model(config.model_name)
-
-    if isinstance(m, AnthropicModel):
-        return AnthropicModelSettings(
-            anthropic_cache_instructions=True,
-            anthropic_cache_tool_definitions=True,
-            anthropic_cache_messages=True,
-            # Anthropic requires max_tokens > budget_tokens when thinking is enabled
-            **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
-                "max_tokens": 16000}
-               if config.thinking_enabled else {}),
-            parallel_tool_calls=False,
-        )
-
-    if isinstance(m, OpenAIChatModel):
-        return OpenAIChatModelSettings(
-            parallel_tool_calls=False,
-        )
-
-    # Unknown provider — apply only the settings all providers share
-    return ModelSettings(parallel_tool_calls=False)
-
-
-def _construct_toolsets(toolset_names: list[str]) -> list:
-    """Construct toolset instances from a list of toolset names.
-
-    Maps toolset names to their constructors and builds instances.
-
-    Args:
-        toolset_names: List of toolset identifiers (e.g., ["mcp_filesystem"])
-
-    Returns:
-        List of constructed toolset instances ready for Agent consumption.
-    """
-    # TODO: Consider module-level instances for connection reuse
-    toolsets = []
-    for name in toolset_names:
-        if name == "mcp_filesystem":
-            toolsets.append(MCPToolset(_MCP_FILESYSTEM_URL))
-        else:
-            logger.warning("Unknown toolset name %r — skipping. Check agent config for typos.", name)
-    return toolsets
