@@ -56,7 +56,7 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     # takes precedence over this field (set below), so both can coexist safely.
     settings = ModelSettings(
         parallel_tool_calls=False,
-        **({"thinking": "high"} if config.thinking_enabled else {}),
+        thinking=config.thinking_enabled,
     )
 
     if isinstance(m, AnthropicModel):

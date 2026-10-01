@@ -428,46 +428,47 @@ class TestBuildModelSettings:
         assert settings.get("anthropic_cache_messages") is True
         assert settings.get("parallel_tool_calls") is False
 
-    def test_anthropic_thinking_disabled_by_default(self):
-        """thinking_enabled=False → no anthropic_thinking key in settings."""
+    def test_anthropic_thinking_disabled(self):
+        """thinking_enabled=False → thinking=False set, no anthropic_thinking."""
         from agent.factory import _build_model_settings
 
         settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_enabled=False))
+        assert settings.get("thinking") is False
         assert "anthropic_thinking" not in settings
 
     def test_anthropic_thinking_enabled(self):
-        """thinking_enabled=True → anthropic_thinking, max_tokens, and unified thinking all set."""
+        """thinking_enabled=True → anthropic_thinking, max_tokens, and unified thinking=True all set."""
         from agent.factory import _build_model_settings
 
         settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_enabled=True))
         assert settings.get("anthropic_thinking") == {"type": "enabled", "budget_tokens": 10000}
         assert settings.get("max_tokens") == 16000
-        assert settings.get("thinking") == "high"  # from common base; anthropic_thinking takes precedence
+        assert settings.get("thinking") is True  # from common base; anthropic_thinking takes precedence
 
     @pytest.mark.parametrize("model_name", [
         "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
         "openai-chat:gpt-4o",
     ])
     def test_non_anthropic_base_settings(self, model_name: str):
-        """Non-Anthropic providers → base ModelSettings: parallel_tool_calls=False, no Anthropic fields."""
+        """Non-Anthropic providers → parallel_tool_calls=False, thinking=False, no Anthropic fields."""
         from agent.factory import _build_model_settings
 
         settings = _build_model_settings(self._config(model_name))
 
         assert settings.get("parallel_tool_calls") is False
+        assert settings.get("thinking") is False
         assert "anthropic_cache_instructions" not in settings
-        assert "thinking" not in settings
 
     @pytest.mark.parametrize("model_name", [
         "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
         "openai-chat:gpt-4o",
     ])
     def test_non_anthropic_thinking_enabled(self, model_name: str):
-        """thinking_enabled=True → unified thinking='high' for all non-Anthropic providers."""
+        """thinking_enabled=True → unified thinking=True for all non-Anthropic providers."""
         from agent.factory import _build_model_settings
 
         settings = _build_model_settings(self._config(model_name, thinking_enabled=True))
-        assert settings.get("thinking") == "high"
+        assert settings.get("thinking") is True
         assert "anthropic_thinking" not in settings
 
 
