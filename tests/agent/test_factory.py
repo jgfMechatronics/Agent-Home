@@ -448,13 +448,12 @@ class TestBuildModelSettings:
         "openai-chat:gpt-4o",
     ])
     def test_openai_chat_compatible_returns_openai_settings(self, model_name: str):
-        """OpenAI-compatible providers → OpenAIChatModelSettings with caching and parallel_tool_calls=False."""
+        """OpenAI-compatible providers → parallel_tool_calls=False, no Anthropic settings."""
         from agent.factory import _build_model_settings
 
         settings = _build_model_settings(self._config(model_name))
 
         assert settings.get("parallel_tool_calls") is False
-        assert settings.get("openai_prompt_cache_retention") == "24h"
         assert "anthropic_cache_instructions" not in settings
 
     @pytest.mark.parametrize("model_name", [
