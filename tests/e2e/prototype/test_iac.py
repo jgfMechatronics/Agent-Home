@@ -3,18 +3,20 @@
 Tests the full IAC flow:
 1. Agent A is instructed to send a message to Agent B
 2. Agent A calls send_message tool
-3. Background task delivers message to Agent B
+3. Background task delivers message to Agent B (visible via broadcast stream)
 4. Agent B processes the message
-5. We verify via Agent B's message history
+5. We verify via Agent B's message history and broadcast events
 """
 
 import asyncio
+from dataclasses import dataclass, field
 
 import pytest
 import pytest_asyncio
 import httpx
+from httpx_sse import aconnect_sse
 
-from tests.e2e.conftest import send_message, AgentRefused, SERVER_URL
+from tests.e2e.conftest import send_message, sse_to_dict, AgentRefused
 
 
 # Agent A: has send_message tool, will be instructed to message Agent B
@@ -33,7 +35,7 @@ Keep responses brief. If you do not wish to participate, respond with only 'REFU
 IAC_DELIVERY_TIMEOUT_SEC = 30
 IAC_POLL_INTERVAL_SEC = 1.0
 
-# Agent config — sender needs send_message tool
+# Agent config — both agents need send_message tool
 SENDER_CONFIG = {
     "model_name": "claude-haiku-4-5",
     "tool_names": ["send_message"],
@@ -46,35 +48,20 @@ RECIPIENT_CONFIG = {
     "soft_compaction_limit": 10000,
 }
 
-
-@pytest.fixture
-def server_url(live_server):
-    """Alias for clarity in tests."""
-    return live_server
+TEST_CONTENT = "Hello from the E2E test! Please acknowledge."
 
 
-@pytest_asyncio.fixture
-async def sender_agent(client: httpx.AsyncClient, server_url: str):
-    """Create sender agent (Agent A) with send_message tool."""
-    resp = await client.post(f"{server_url}/agents", json={
-        "name": "sender-agent",
-        "system_instructions": SENDER_INSTRUCTIONS,
-        "config": SENDER_CONFIG,
-    })
-    assert resp.status_code == 201, f"Failed to create sender: {resp.text}"
-    return resp.json()
-
-
-@pytest_asyncio.fixture
-async def recipient_agent(client: httpx.AsyncClient, server_url: str):
-    """Create recipient agent (Agent B)."""
-    resp = await client.post(f"{server_url}/agents", json={
-        "name": "recipient-agent",
-        "system_instructions": RECIPIENT_INSTRUCTIONS,
-        "config": RECIPIENT_CONFIG,
-    })
-    assert resp.status_code == 201, f"Failed to create recipient: {resp.text}"
-    return resp.json()
+@dataclass
+class IACTestData:
+    """Results from running the IAC exchange, used by multiple test cases."""
+    sender_id: str
+    recipient_id: str
+    sender_events: list = field(default_factory=list)  # Events from sender's /messages call
+    recipient_messages: list = field(default_factory=list)  # Recipient's message history
+    sender_messages: list = field(default_factory=list)  # Sender's message history (after reply)
+    recipient_broadcast_events: list = field(default_factory=list)  # Broadcast events for recipient
+    skipped: bool = False
+    skip_reason: str = ""
 
 
 async def get_agent_messages(client: httpx.AsyncClient, server_url: str, agent_id: str) -> list:
@@ -94,96 +81,160 @@ async def wait_for_iac_message(
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         messages = await get_agent_messages(client, server_url, agent_id)
-        # Check if any message contains the IAC marker
         if messages and "INTER AGENT MESSAGE" in str(messages):
             return messages
         await asyncio.sleep(IAC_POLL_INTERVAL_SEC)
     return []
 
 
+async def subscribe_to_stream(
+    client: httpx.AsyncClient,
+    server_url: str,
+    agent_id: str,
+    events: list,
+    ready_event: asyncio.Event,
+):
+    """Subscribe to agent's broadcast stream and collect events."""
+    async with aconnect_sse(client, "GET", f"{server_url}/agents/{agent_id}/stream") as event_source:
+        ready_event.set()
+        async for sse in event_source.aiter_sse():
+            events.append(sse_to_dict(sse))
+
+
 class TestInterAgentCommunication:
-    """E2E tests for send_message tool."""
+    """E2E tests for send_message tool and broadcast visibility."""
 
-    async def test_bi_directional_agent_messaging(
-        self,
-        client: httpx.AsyncClient,
-        server_url: str,
-        sender_agent: dict,
-        recipient_agent: dict,
-    ):
-        """Agent A sends message to Agent B via send_message tool.
+    @pytest_asyncio.fixture(scope="class")
+    async def iac_exchange(self, live_server: str) -> IACTestData:
+        """Run full IAC exchange once, collect all data for assertions.
         
-        Flow:
-        1. Instruct Agent A to send a specific message to recipient-agent
-        2. Agent A should use send_message tool
-        3. Background task delivers to Agent B
-        4. Agent B processes and responds
-        5. Verify Agent B's history contains the inter-agent message
+        Creates agents, subscribes to recipient's broadcast stream, drives the
+        A→B→A message exchange, and collects results for individual test methods.
         """
-        sender_id = sender_agent["id"]
-        recipient_id = recipient_agent["id"]
+        data = IACTestData(sender_id="", recipient_id="")
         
-        # Unique content to verify delivery
-        test_content = "Hello from the E2E test! Please acknowledge."
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # Create sender agent (Agent A)
+            resp = await client.post(f"{live_server}/agents", json={
+                "name": "sender-agent",
+                "system_instructions": SENDER_INSTRUCTIONS,
+                "config": SENDER_CONFIG,
+            })
+            assert resp.status_code == 201, f"Failed to create sender: {resp.text}"
+            data.sender_id = resp.json()["id"]
+            
+            # Create recipient agent (Agent B)
+            resp = await client.post(f"{live_server}/agents", json={
+                "name": "recipient-agent",
+                "system_instructions": RECIPIENT_INSTRUCTIONS,
+                "config": RECIPIENT_CONFIG,
+            })
+            assert resp.status_code == 201, f"Failed to create recipient: {resp.text}"
+            data.recipient_id = resp.json()["id"]
+            
+            # Subscribe to recipient's broadcast stream before triggering IAC
+            subscription_ready = asyncio.Event()
+            subscription_task = asyncio.create_task(
+                subscribe_to_stream(
+                    client, live_server, data.recipient_id,
+                    data.recipient_broadcast_events, subscription_ready
+                )
+            )
+            
+            try:
+                await asyncio.wait_for(subscription_ready.wait(), timeout=5.0)
+                await asyncio.sleep(0.1)  # Ensure subscription is fully established
+                
+                # Instruct Agent A to send message to Agent B
+                prompt = f"Please send the following message to 'recipient-agent': {TEST_CONTENT}"
+                
+                try:
+                    data.sender_events = await send_message(
+                        client, live_server, data.sender_id, prompt
+                    )
+                except AgentRefused:
+                    data.skipped = True
+                    data.skip_reason = "Sender agent declined to participate"
+                    return data
+                
+                # Wait for Agent B to receive the message
+                data.recipient_messages = await wait_for_iac_message(
+                    client, live_server, data.recipient_id
+                )
+                
+                # Wait for Agent A to receive B's reply
+                data.sender_messages = await wait_for_iac_message(
+                    client, live_server, data.sender_id
+                )
+                
+                # Give broadcast events time to arrive
+                await asyncio.sleep(0.5)
+                
+            finally:
+                subscription_task.cancel()
+                try:
+                    await subscription_task
+                except asyncio.CancelledError:
+                    pass
+        
+        return data
 
-        # Step 1: Instruct Agent A to send the message
-        prompt = f"Please send the following message to 'recipient-agent': {test_content}"
+    def test_sender_calls_send_message_tool(self, iac_exchange: IACTestData):
+        """Sender agent uses send_message tool and gets delivery confirmation."""
+        if iac_exchange.skipped:
+            pytest.skip(iac_exchange.skip_reason)
         
-        try:
-            events = await send_message(client, server_url, sender_id, prompt)
-        except AgentRefused:
-            pytest.skip("Sender agent declined to participate")
-        
-        # Verify Agent A completed (got tool result and final response)
+        events = iac_exchange.sender_events
         event_types = [e.get("event") for e in events]
+        
+        # Agent completed
         assert "AgentRunResultEvent" in event_types, f"Sender didn't complete. Events: {event_types}"
         
-        # Check for tool call in response (FunctionToolCallEvent, not ToolCallPartEvent)
+        # Used send_message tool
         tool_call_events = [e for e in events if e.get("event") == "FunctionToolCallEvent"]
-        assert tool_call_events, f"Sender didn't call any tools — expected send_message. All events: {events}"
-        
-        # Verify it was send_message tool
+        assert tool_call_events, f"Sender didn't call any tools. Events: {events}"
         tool_names = [e.get("data", {}).get("part", {}).get("tool_name") for e in tool_call_events]
         assert "send_message" in tool_names, f"Expected send_message tool, got: {tool_names}"
         
-        # Verify sender got successful delivery confirmation (FunctionToolResultEvent)
+        # Got delivery confirmation
         tool_result_events = [e for e in events if e.get("event") == "FunctionToolResultEvent"]
         assert tool_result_events, "Sender didn't receive tool result"
         tool_result_content = str([e.get("data", {}).get("part", {}).get("content") for e in tool_result_events])
-        assert "delivered" in tool_result_content.lower(), (
-            f"Expected delivery confirmation, got: {tool_result_content}"
-        )
+        assert "delivered" in tool_result_content.lower(), f"Expected delivery confirmation, got: {tool_result_content}"
+
+    def test_recipient_receives_message(self, iac_exchange: IACTestData):
+        """Recipient agent receives inter-agent message with correct content."""
+        if iac_exchange.skipped:
+            pytest.skip(iac_exchange.skip_reason)
         
-        # Step 2: Wait for Agent B to receive the message from A
-        recipient_messages = await wait_for_iac_message(
-            client, server_url, recipient_id
-        )
-        assert recipient_messages, "Recipient (B) never received any IAC messages"
+        assert iac_exchange.recipient_messages, "Recipient never received any IAC messages"
         
-        # Verify B received A's message
-        recipient_content = str(recipient_messages)
-        assert "INTER AGENT MESSAGE" in recipient_content, (
-            f"Expected inter-agent marker in B's history. Got: {recipient_messages}"
-        )
-        assert test_content in recipient_content, (
-            f"Expected test content in B's history. Got: {recipient_messages}"
-        )
-        assert "sender-agent" in recipient_content, (
-            f"Expected sender name in B's history. Got: {recipient_messages}"
-        )
+        content = str(iac_exchange.recipient_messages)
+        assert "INTER AGENT MESSAGE" in content, f"Missing IAC marker. Got: {content}"
+        assert TEST_CONTENT in content, f"Missing test content. Got: {content}"
+        assert "sender-agent" in content, f"Missing sender name. Got: {content}"
+
+    def test_sender_receives_reply(self, iac_exchange: IACTestData):
+        """Sender agent receives reply from recipient."""
+        if iac_exchange.skipped:
+            pytest.skip(iac_exchange.skip_reason)
         
-        # Step 3: Wait for Agent A to receive B's reply (B should auto-respond via send_message)
-        # Give B time to process and send reply back
-        sender_messages = await wait_for_iac_message(
-            client, server_url, sender_id
-        )
-        assert sender_messages, "Sender (A) never received reply from B"
+        assert iac_exchange.sender_messages, "Sender never received reply from recipient"
         
-        # Verify A received B's reply
-        sender_content = str(sender_messages)
-        assert "INTER AGENT MESSAGE" in sender_content, (
-            f"Expected inter-agent marker in A's history (B's reply). Got: {sender_messages}"
-        )
-        assert "recipient-agent" in sender_content, (
-            f"Expected B's name in A's history. Got: {sender_messages}"
-        )
+        content = str(iac_exchange.sender_messages)
+        assert "INTER AGENT MESSAGE" in content, f"Missing IAC marker in reply. Got: {content}"
+        assert "recipient-agent" in content, f"Missing recipient name in reply. Got: {content}"
+
+    def test_recipient_broadcast_stream_received_events(self, iac_exchange: IACTestData):
+        """Recipient's broadcast stream received run events (IAC uses broadcast runner)."""
+        if iac_exchange.skipped:
+            pytest.skip(iac_exchange.skip_reason)
+        
+        events = iac_exchange.recipient_broadcast_events
+        assert events, "No broadcast events received for recipient"
+        
+        event_types = [e.get("event") for e in events]
+        
+        # Should have synthetic bookend events
+        assert "RunStartedEvent" in event_types, f"Missing RunStartedEvent. Got: {event_types}"
+        assert "RunCompletedEvent" in event_types, f"Missing RunCompletedEvent. Got: {event_types}"
