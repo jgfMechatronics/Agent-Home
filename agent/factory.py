@@ -17,12 +17,15 @@ from typing import AsyncIterator
 
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.models.anthropic import AnthropicModelSettings  # TODO: replace with per-provider model_settings (see multi-provider discussion)
+from pydantic_ai.models import infer_model
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings
+from pydantic_ai.settings import ModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
 from agent.crud import get_agent_record
-from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError
+from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
 
@@ -102,16 +105,7 @@ class AgentFactory:
         it does, it doesn't null out the resources actually associated with the lock!!!! Oops.
         """
         async with self.build_deps() as deps:
-            model_settings = AnthropicModelSettings(
-                anthropic_cache_instructions=True,
-                anthropic_cache_tool_definitions=True,
-                anthropic_cache_messages=True,
-                # Anthropic requires max_tokens > budget_tokens when thinking is enabled
-                **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
-                    "max_tokens": 16000}
-                   if deps.config.thinking_enabled else {}),
-                parallel_tool_calls=False, # our current orphan remover isn't compatible with parallel tool calls
-            )
+            model_settings = _build_model_settings(deps.config)
             toolsets = _construct_toolsets(deps.config.toolset_names)
             
             agent = Agent(deps.config.model_name,
@@ -126,6 +120,40 @@ class AgentFactory:
                           capabilities=[CompactionWarner()])
             
             yield (agent, deps)
+
+
+def _build_model_settings(config: "AgentConfig") -> ModelSettings:
+    """Return provider-appropriate ModelSettings for the given agent config.
+
+    Uses pydantic-ai's infer_model() to resolve the provider, then dispatches
+    on the concrete model type — no string mapping required. Any future
+    OpenAI-compatible provider that pydantic-ai maps to OpenAIChatModel
+    automatically gets OpenAIChatModelSettings.
+
+    parallel_tool_calls=False is applied for all providers: our orphan remover
+    is not compatible with parallel tool calls.
+    """
+    m = infer_model(config.model_name)
+
+    if isinstance(m, AnthropicModel):
+        return AnthropicModelSettings(
+            anthropic_cache_instructions=True,
+            anthropic_cache_tool_definitions=True,
+            anthropic_cache_messages=True,
+            # Anthropic requires max_tokens > budget_tokens when thinking is enabled
+            **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
+                "max_tokens": 16000}
+               if config.thinking_enabled else {}),
+            parallel_tool_calls=False,
+        )
+
+    if isinstance(m, OpenAIChatModel):
+        return OpenAIChatModelSettings(
+            parallel_tool_calls=False,
+        )
+
+    # Unknown provider — apply only the settings all providers share
+    return ModelSettings(parallel_tool_calls=False)
 
 
 def _construct_toolsets(toolset_names: list[str]) -> list:

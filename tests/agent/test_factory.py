@@ -25,7 +25,7 @@ from pydantic_ai.mcp import MCPToolset
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory
-from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError
+from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError
 from memory.system_prompt_compilation import get_system_prompt
 from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord
@@ -405,6 +405,56 @@ class TestBuildAgentAndDeps:
             }
             assert agent.model_settings.get("max_tokens") == 16000
             assert agent._output_schema.allows_deferred_tools is True
+
+
+# =============================================================================
+# _build_model_settings unit tests
+# =============================================================================
+
+class TestBuildModelSettings:
+    """Unit tests for _build_model_settings — called directly as a pure function."""
+
+    def _config(self, model_name: str, thinking_enabled: bool = False) -> "AgentConfig":
+        return SAMPLE_AGENT_CONFIG.model_copy(update={"model_name": model_name, "thinking_enabled": thinking_enabled})
+
+    def test_anthropic_returns_anthropic_settings(self):
+        """Anthropic model → AnthropicModelSettings with all three cache flags."""
+        from agent.factory import _build_model_settings
+
+        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5"))
+
+        assert settings.get("anthropic_cache_instructions") is True
+        assert settings.get("anthropic_cache_tool_definitions") is True
+        assert settings.get("anthropic_cache_messages") is True
+        assert settings.get("parallel_tool_calls") is False
+
+    def test_anthropic_thinking_disabled_by_default(self):
+        """thinking_enabled=False → no anthropic_thinking key in settings."""
+        from agent.factory import _build_model_settings
+
+        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_enabled=False))
+        assert "anthropic_thinking" not in settings
+
+    def test_anthropic_thinking_enabled(self):
+        """thinking_enabled=True → anthropic_thinking and max_tokens set."""
+        from agent.factory import _build_model_settings
+
+        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_enabled=True))
+        assert settings.get("anthropic_thinking") == {"type": "enabled", "budget_tokens": 10000}
+        assert settings.get("max_tokens") == 16000
+
+    @pytest.mark.parametrize("model_name", [
+        "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        "openai-chat:gpt-4o",
+    ])
+    def test_openai_chat_compatible_returns_openai_settings(self, model_name: str):
+        """OpenAI-compatible providers → OpenAIChatModelSettings with parallel_tool_calls=False."""
+        from agent.factory import _build_model_settings
+
+        settings = _build_model_settings(self._config(model_name))
+
+        assert settings.get("parallel_tool_calls") is False
+        assert "anthropic_cache_instructions" not in settings
 
 
 @pytest.mark.asyncio
