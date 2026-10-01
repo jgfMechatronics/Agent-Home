@@ -74,15 +74,13 @@ class TestCompactionWarnerIntegration:
         await self.session.flush()
 
         agent_app_state_reg: dict[str, AgentAppState] = {}
-        with (
-            patch("agent.factory._resolve_model", return_value=model),
-            patch("agent.runner.is_compaction_needed", return_value=False),
-        ):
+        with patch("agent.runner.is_compaction_needed", return_value=False):
             factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
             async with factory.build_agent_and_deps() as (agent, deps):
-                events = [e async for e in run_stateful_agent(
-                    agent, deps, agent_app_state_reg[self.agent_record.id], "Hello"
-                )]
+                with agent.override(model=model):
+                    events = [e async for e in run_stateful_agent(
+                        agent, deps, agent_app_state_reg[self.agent_record.id], "Hello"
+                    )]
         assert events, "Should have received events"
 
         records = await load_messages(self.session, self.agent_record.id)

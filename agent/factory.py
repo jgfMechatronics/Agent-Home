@@ -105,8 +105,6 @@ class AgentFactory:
         it does, it doesn't null out the resources actually associated with the lock!!!! Oops.
         """
         async with self.build_deps() as deps:
-            model = _resolve_model(deps.config.model_name)
-            
             model_settings = AnthropicModelSettings(
                 anthropic_cache_instructions=True,
                 anthropic_cache_tool_definitions=True,
@@ -119,7 +117,7 @@ class AgentFactory:
             )
             toolsets = _construct_toolsets(deps.config.toolset_names)
             
-            agent = Agent(model,
+            agent = Agent(deps.config.model_name,
                           instructions=get_system_prompt,
                           deps_type=AgentDeps,
                           name=deps.name,
@@ -154,12 +152,5 @@ def _construct_toolsets(toolset_names: list[str]) -> list:
     return toolsets
 
 
-def _resolve_model(model_name: str):
-    """Return a model string or object for use by pydantic-ai Agent().
 
-    Pydantic-ai accepts 'provider:model' strings (e.g. 'anthropic:claude-haiku-4-5')
-    and resolves provider + API key automatically. This function is a no-op by default
-    and serves as a patchable seam for tests that need to inject test model instances.
-    """
-    return model_name
 

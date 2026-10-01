@@ -3,7 +3,6 @@ Tests for utils/ctx_reconstructor.py — context reconstruction from stored snap
 """
 import dataclasses
 import json
-from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -239,11 +238,11 @@ class TestReconstructContextIntegration:
         """
         agent_app_state_reg: dict[str, AgentAppState] = {}
 
-        with patch("agent.factory._resolve_model", return_value=test_model):
-            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
-            async with factory.build_agent_and_deps() as (pydantic_agent, deps):
-                # Capture expected tool definitions from the live agent (ground truth)
-                expected_tool_definitions = await _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
+        factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
+        async with factory.build_agent_and_deps() as (pydantic_agent, deps):
+            # Capture expected tool definitions from the live agent (ground truth)
+            expected_tool_definitions = await _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
+            with pydantic_agent.override(model=test_model):
                 async for _ in run_stateful_agent(pydantic_agent, deps, agent_app_state_reg[self.agent_record.id], prompt):
                     pass
 
