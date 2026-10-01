@@ -147,4 +147,3 @@ def _construct_toolsets(toolset_names: list[str]) -> list:
         else:
             logger.warning("Unknown toolset name %r — skipping. Check agent config for typos.", name)
     return toolsets
-
