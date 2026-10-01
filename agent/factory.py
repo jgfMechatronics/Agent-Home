@@ -65,6 +65,12 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     if isinstance(m, OpenAIChatModel):
         return OpenAIChatModelSettings(
             parallel_tool_calls=False,
+            # Prompt caching — safe for all OpenAI-compatible providers.
+            # Together.ai and others may silently ignore this; it won't error.
+            openai_prompt_cache_retention="24h",
+            # 'thinking' is the unified field pydantic-ai maps to openai_reasoning_effort.
+            # Ignored by models that don't support reasoning; no-op for Together etc. if unsupported.
+            **({"thinking": "high"} if config.thinking_enabled else {}),
         )
 
     # Unknown provider — apply only the settings all providers share

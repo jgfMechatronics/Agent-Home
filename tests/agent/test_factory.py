@@ -448,13 +448,36 @@ class TestBuildModelSettings:
         "openai-chat:gpt-4o",
     ])
     def test_openai_chat_compatible_returns_openai_settings(self, model_name: str):
-        """OpenAI-compatible providers → OpenAIChatModelSettings with parallel_tool_calls=False."""
+        """OpenAI-compatible providers → OpenAIChatModelSettings with caching and parallel_tool_calls=False."""
         from agent.factory import _build_model_settings
 
         settings = _build_model_settings(self._config(model_name))
 
         assert settings.get("parallel_tool_calls") is False
+        assert settings.get("openai_prompt_cache_retention") == "24h"
         assert "anthropic_cache_instructions" not in settings
+
+    @pytest.mark.parametrize("model_name", [
+        "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        "openai-chat:gpt-4o",
+    ])
+    def test_openai_thinking_enabled(self, model_name: str):
+        """thinking_enabled=True → unified thinking='high' set for OpenAI-compatible providers."""
+        from agent.factory import _build_model_settings
+
+        settings = _build_model_settings(self._config(model_name, thinking_enabled=True))
+        assert settings.get("thinking") == "high"
+
+    @pytest.mark.parametrize("model_name", [
+        "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        "openai-chat:gpt-4o",
+    ])
+    def test_openai_thinking_disabled_by_default(self, model_name: str):
+        """thinking_enabled=False → no thinking key for OpenAI-compatible providers."""
+        from agent.factory import _build_model_settings
+
+        settings = _build_model_settings(self._config(model_name, thinking_enabled=False))
+        assert "thinking" not in settings
 
 
 @pytest.mark.asyncio
