@@ -67,7 +67,7 @@ class TestCompactionWarnerIntegration:
     async def _run_and_get_messages(self, model: TestModel, soft_limit: int = 100) -> list[ModelMessage]:
         """Run agent with given model and return persisted messages."""
         self.agent_record.agent_config = AgentConfig(
-            model_name="anthropic:claude-sonnet-4-20250514",
+            model_name="test",
             tool_names=["duckduckgo_search"],
             soft_compaction_limit=soft_limit,
         )
