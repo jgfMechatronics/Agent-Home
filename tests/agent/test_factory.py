@@ -436,12 +436,13 @@ class TestBuildModelSettings:
         assert "anthropic_thinking" not in settings
 
     def test_anthropic_thinking_enabled(self):
-        """thinking_enabled=True → anthropic_thinking and max_tokens set."""
+        """thinking_enabled=True → anthropic_thinking, max_tokens, and unified thinking all set."""
         from agent.factory import _build_model_settings
 
         settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_enabled=True))
         assert settings.get("anthropic_thinking") == {"type": "enabled", "budget_tokens": 10000}
         assert settings.get("max_tokens") == 16000
+        assert settings.get("thinking") == "high"  # from common base; anthropic_thinking takes precedence
 
     @pytest.mark.parametrize("model_name", [
         "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",

@@ -50,11 +50,20 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     is not compatible with parallel tool calls.
     """
     m = infer_model(config.model_name)
-    base = ModelSettings(parallel_tool_calls=False)
+
+    # Common settings for all providers. 'thinking' is the unified field pydantic-ai
+    # maps to each provider's native reasoning parameter. For Anthropic, anthropic_thinking
+    # takes precedence over this field (set below), so both can coexist safely.
+    settings = ModelSettings(
+        parallel_tool_calls=False,
+        **({"thinking": "high"} if config.thinking_enabled else {}),
+    )
 
     if isinstance(m, AnthropicModel):
-        return AnthropicModelSettings(
-            **base,
+        # Unpack common settings, then add Anthropic-specific fields.
+        # anthropic_thinking takes precedence over the unified 'thinking' field above.
+        settings = AnthropicModelSettings(
+            **settings,
             anthropic_cache_instructions=True,
             anthropic_cache_tool_definitions=True,
             anthropic_cache_messages=True,
@@ -63,10 +72,7 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
                 "max_tokens": 16000} if config.thinking_enabled else {}),
         )
 
-    # All other providers: unified 'thinking' field — pydantic-ai maps it to the
-    # provider's native reasoning parameter (e.g. openai_reasoning_effort for OpenAI).
-    # Ignored by models that don't support reasoning.
-    return ModelSettings(**base, **({"thinking": "high"} if config.thinking_enabled else {}))
+    return settings
 
 
 def _construct_toolsets(toolset_names: list[str]) -> list:
