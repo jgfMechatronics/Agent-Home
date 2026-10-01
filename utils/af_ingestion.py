@@ -63,13 +63,18 @@ def _add_provider_prefix(model: str, llm_config: dict) -> str:
     """Convert a bare Letta model name to 'provider:model' format.
 
     Uses llm_config.model_endpoint_type directly as the provider prefix.
-    Falls back to 'anthropic' if the endpoint type is absent (all historical
-    .AF files are Anthropic). Validation happens downstream when AgentConfig
-    is constructed — an unknown provider surfaces as a 422.
+    Raises AFIngestionError if the endpoint type is missing or empty.
+    Further validation (unknown provider etc.) happens downstream when
+    AgentConfig is constructed — an unknown provider surfaces as a 422.
     """
     if ":" in model:
         return model  # already prefixed
-    provider = llm_config.get("model_endpoint_type", "anthropic") or "anthropic"
+    provider = llm_config.get("model_endpoint_type") or ""
+    if not provider:
+        raise AFIngestionError(
+            f"Cannot determine provider for model {model!r}: "
+            "llm_config.model_endpoint_type is missing or empty"
+        )
     return f"{provider}:{model}"
 
 

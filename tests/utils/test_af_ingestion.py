@@ -165,6 +165,23 @@ class TestAFIngestion:
         ),
         pytest.param(
             {
+                "agents": [{
+                    **_VALID_AGENT_BASE,
+                    "llm_config": {
+                        # bare model name with no model_endpoint_type — can't determine provider
+                        "model": "claude-haiku-4-5",
+                        "context_window": 8000,
+                        "enable_reasoner": False,
+                    },
+                    "block_ids": [],
+                }],
+                "blocks": [],
+                "tools": [],
+            },
+            id="missing_model_endpoint_type",
+        ),
+        pytest.param(
+            {
                 "agents": [_VALID_AGENT_BASE],
                 "blocks": [
                     {
