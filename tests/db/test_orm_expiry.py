@@ -32,7 +32,7 @@ from agent.types import AgentConfig, AgentDeps
 from db.models import AgentRecord, Base
 
 SAMPLE_CONFIG = AgentConfig(
-    model_name="claude-sonnet-4-20250514",
+    model_name="anthropic:claude-sonnet-4-20250514",
     tool_names=["memory_replace"],
     soft_compaction_limit=10000,
 )

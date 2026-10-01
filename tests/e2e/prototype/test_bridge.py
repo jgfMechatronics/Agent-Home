@@ -112,7 +112,7 @@ async def e2e_agent(live_server: str) -> AsyncIterator[str]:
                 "name": "e2e-bridge-test",
                 "system_instructions": TEST_AGENT_INSTRUCTIONS,
                 "config": {
-                    "model_name": "claude-haiku-4-5-20251001",
+                    "model_name": "anthropic:claude-haiku-4-5-20251001",
                     "tool_names": [],
                     "soft_compaction_limit": 100000,
                 },

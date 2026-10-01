@@ -55,7 +55,7 @@ class TestAFIngestion:
         expected_metadata = AgentMetadataResponse(
             id=returned_metadata.id,  # dynamic, just copy
             name="AF_Ingestion_Integration",
-            model="claude-haiku-4-5-20251001",
+            model="anthropic:claude-haiku-4-5-20251001",
             created_at=returned_metadata.created_at,  # dynamic
             updated_at=returned_metadata.updated_at,  # dynamic
         )
@@ -67,7 +67,7 @@ class TestAFIngestion:
 
         expected_config = AgentConfig(
             # From .AF file:
-            model_name="claude-haiku-4-5-20251001",
+            model_name="anthropic:claude-haiku-4-5-20251001",
             tool_names=["memory_insert", "memory_replace", "web_fetch", "duckduckgo_search"],
             soft_compaction_limit=32000,
             thinking_enabled=True,
@@ -140,7 +140,7 @@ class TestAFIngestion:
         "tool_ids": [],
         "block_ids": ["block-1"],
         "llm_config": {
-            "model": "claude-haiku-4-5-20251001",
+            "model": "anthropic:claude-haiku-4-5-20251001",
             "context_window": 8000,
             "enable_reasoner": False,
         },

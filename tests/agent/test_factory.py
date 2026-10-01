@@ -6,7 +6,6 @@ Agent factory and dependency management:
   - _get_or_create_agent_app_state: Per-agent state registry management (static)
   - build_deps: Async context manager yielding AgentDeps with lock acquisition
   - build_agent_and_deps: Async context manager yielding (Agent, AgentDeps)
-- get_model: Module-level function mapping model name strings to Pydantic AI model instances
 
 NOTE: This got a little ugly with the move from a simple lock reg to AgentAppState. Since we might move to a different OO design with a 
 StatefulAgent class, I don't think its worth cleaning this up right now though.
@@ -23,10 +22,9 @@ import pytest_asyncio
 from pytest_mock import MockerFixture
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.models.anthropic import AnthropicModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError, get_model
+from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError
 from agent.types import AgentAppState, AgentDeps
 from memory.system_prompt_compilation import get_system_prompt
 from conftest import SAMPLE_AGENT_CONFIG
@@ -73,30 +71,6 @@ def agent_app_state_reg() -> dict[str, AgentAppState]:
 def agent_factory(agent_record: AgentRecord, agent_app_state_reg: dict, session: AsyncSession) -> AgentFactory:
     """Per-agent, per-request AgentFactory with agent_id, agent_app_state_reg, and session bound."""
     return AgentFactory(agent_record.id, agent_app_state_reg, session)
-
-
-# --- get_model tests (module-level function) ---
-
-def test_get_model_returns_model_for_valid_name():
-    """get_model should return an AnthropicModel instance for a valid model name."""
-    model_str = "claude-sonnet-4-20250514"
-    model = get_model(model_str)
-    
-    assert isinstance(model, AnthropicModel)
-    assert model.model_name == model_str
-
-
-@pytest.mark.parametrize("invalid_name", [
-    "not-a-real-model",
-    "gpt-4",  # Wrong provider
-    "",
-    "claude-unknown-version",
-])
-def test_get_model_raises_for_invalid_name(invalid_name: str):
-    """get_model should raise for unknown/unsupported model names."""
-    # TODO: Match exception in implementation when set
-    with pytest.raises((ValueError)):
-        get_model(invalid_name)
 
 
 # --- AgentFactory._get_or_create_agent_app_state tests ---
@@ -374,8 +348,9 @@ class TestBuildAgentAndDeps:
     async def test_uses_correct_model(self):
         """Constructed agent should use the model from agent_config.model_name."""
         async with self.factory.build_agent_and_deps() as (agent, deps):
-            assert isinstance(agent.model, AnthropicModel)
-            assert agent.model.model_name == self.agent_record.agent_config.model_name
+            # pydantic-ai resolves 'provider:model' strings to a model instance;
+            # model_name is on the resolved object for Anthropic models
+            assert agent.model.model_name == self.agent_record.agent_config.model_name.split(":", 1)[1]
 
     async def test_has_cache_settings(self):
         """Constructed agent should have Anthropic prompt caching enabled in model_settings.

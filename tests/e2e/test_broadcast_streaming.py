@@ -41,7 +41,7 @@ async def get_or_create_test_agent(client: httpx.AsyncClient, server_url: str) -
             "name": "e2e-broadcast-test",
             "system_instructions": TEST_AGENT_INSTRUCTIONS,
             "config": {
-                "model_name": "claude-haiku-4-5-20251001",
+                "model_name": "anthropic:claude-haiku-4-5-20251001",
                 "tool_names": [],
                 "soft_compaction_limit": 100000,
             },

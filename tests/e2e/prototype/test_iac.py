@@ -37,13 +37,13 @@ IAC_POLL_INTERVAL_SEC = 1.0
 
 # Agent config — both agents need send_message tool
 SENDER_CONFIG = {
-    "model_name": "claude-haiku-4-5",
+    "model_name": "anthropic:claude-haiku-4-5",
     "tool_names": ["send_message"],
     "soft_compaction_limit": 10000,
 }
 
 RECIPIENT_CONFIG = {
-    "model_name": "claude-haiku-4-5",
+    "model_name": "anthropic:claude-haiku-4-5",
     "tool_names": ["send_message"],
     "soft_compaction_limit": 10000,
 }

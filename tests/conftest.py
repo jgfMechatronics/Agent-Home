@@ -58,7 +58,7 @@ def mock_run_context(deps: AgentDeps):
     return ctx
 
 
-SAMPLE_AGENT_CONFIG_DATA = { "model_name": "claude-sonnet-4-20250514",
+SAMPLE_AGENT_CONFIG_DATA = { "model_name": "anthropic:claude-sonnet-4-20250514",
     "tool_names": ["memory_replace", "memory_insert"],
     "soft_compaction_limit": 10000,
 }

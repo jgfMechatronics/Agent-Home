@@ -11,7 +11,7 @@ import pytest
 from conftest import SAMPLE_AGENT_CONFIG_DATA
 from pydantic import ValidationError
 
-from agent.types import AgentConfig, AgentDeps, VALID_MODEL_NAMES
+from agent.types import AgentConfig, AgentDeps
 # --- Fixtures ---
 
 @pytest.fixture
@@ -55,7 +55,10 @@ def test_agentconfig_requires_field(valid_config_data: dict, missing_field: str)
 
 @pytest.mark.parametrize("field,invalid_value,description", [
     ("model_name", "", "model_name cannot be empty"),
-    ("model_name", "   ", "model_name cannot be whitespace-only"),
+    ("model_name", "   ", "model_name cannot be empty"),
+    ("model_name", "claude-haiku-4-5", "model_name missing provider prefix"),
+    ("model_name", ":claude-haiku-4-5", "model_name empty provider"),
+    ("model_name", "anthropic:", "model_name empty model part"),
     ("tool_names", "not_a_list", "tool_names must be a list"),
     ("tool_names", [1, 2, 3], "tool_names must be list of strings"),
     ("soft_compaction_limit", 0, "soft_compaction_limit must be positive"),
@@ -88,18 +91,17 @@ def test_agentconfig_retries_non_negative_is_valid(valid_config_data: dict, vali
     assert config.retries == valid_retries
 
 
-# --- AgentConfig model_name validation against known models ---
+# --- AgentConfig model_name provider:model format ---
 
-def test_agentconfig_rejects_unknown_model_name(valid_config_data: dict):
-    """model_name must correspond to a known Anthropic model."""
-    valid_config_data["model_name"] = "claude-totally-fake-model"
-    with pytest.raises(ValidationError):
-        AgentConfig(**valid_config_data)
-
-
-@pytest.mark.parametrize("model_name", VALID_MODEL_NAMES)
-def test_agentconfig_accepts_known_model_name(valid_config_data: dict, model_name: str):
-    """Every model name in VALID_MODEL_NAMES should be accepted."""
+@pytest.mark.parametrize("model_name", [
+    "anthropic:claude-haiku-4-5",
+    "anthropic:claude-sonnet-4-20250514",
+    "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
+    "together:THUDM/glm-4-9b-chat",
+    "openai:gpt-4o",
+])
+def test_agentconfig_accepts_provider_model_format(valid_config_data: dict, model_name: str):
+    """model_name in 'provider:model' format should be accepted for any known provider."""
     valid_config_data["model_name"] = model_name
     config = AgentConfig(**valid_config_data)
     assert config.model_name == model_name
