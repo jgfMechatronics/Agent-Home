@@ -6,7 +6,6 @@ Run with: pytest tests/e2e -m e2e
 
 import os
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
