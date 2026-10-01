@@ -81,7 +81,7 @@ class AgentConfig(BaseModel):
     
     Required fields:
     - model_name: The LLM to use in 'provider:model' format (e.g., "anthropic:claude-haiku-4-5", "together:glm-4-flash")
-      Straight model names are also supported for some models (e.g. some anthropic model names will auto-infer anthropic provider)
+      Straight model names will technically work in some cases as of Oct 1, 2026 but pydantic-ai plans to deprecate support for this
     - tool_names: List of tool names the agent can use
     - soft_compaction_limit: Token threshold for triggering compaction
     

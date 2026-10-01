@@ -59,21 +59,17 @@ def _get_referenced_items(agent: dict, id_key: str, data: dict, items_key: str) 
     return [item for item in all_items if item["id"] in ids]
 
 
-_LETTA_ENDPOINT_TYPE_TO_PROVIDER: dict[str, str] = {
-    "anthropic": "anthropic",
-    "openai": "openai",
-}
-
 def _add_provider_prefix(model: str, llm_config: dict) -> str:
-    """Convert a bare Letta model name to the 'provider:model' format Agent Home expects.
+    """Convert a bare Letta model name to 'provider:model' format.
 
-    Uses llm_config.model_endpoint_type to determine the provider. Falls back to
-    'anthropic' if the endpoint type is unknown (all historical .AF files are Anthropic).
+    Uses llm_config.model_endpoint_type directly as the provider prefix.
+    Falls back to 'anthropic' if the endpoint type is absent (all historical
+    .AF files are Anthropic). Validation happens downstream when AgentConfig
+    is constructed — an unknown provider surfaces as a 422.
     """
     if ":" in model:
         return model  # already prefixed
-    endpoint_type = llm_config.get("model_endpoint_type", "")
-    provider = _LETTA_ENDPOINT_TYPE_TO_PROVIDER.get(endpoint_type, "anthropic")
+    provider = llm_config.get("model_endpoint_type", "anthropic") or "anthropic"
     return f"{provider}:{model}"
 
 
