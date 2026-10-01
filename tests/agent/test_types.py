@@ -56,9 +56,10 @@ def test_agentconfig_requires_field(valid_config_data: dict, missing_field: str)
 @pytest.mark.parametrize("field,invalid_value,description", [
     ("model_name", "", "model_name cannot be empty"),
     ("model_name", "   ", "model_name cannot be empty"),
-    ("model_name", "claude-haiku-4-5", "model_name missing provider prefix"),
-    ("model_name", ":claude-haiku-4-5", "model_name empty provider"),
+    ("model_name", "claude-haiku-4-5", "model_name missing colon — empty model part"),
+    ("model_name", ":claude-haiku-4-5", "model_name empty provider — rejected by infer_model"),
     ("model_name", "anthropic:", "model_name empty model part"),
+    ("model_name", "badprovider:some-model", "model_name unknown provider"),
     ("tool_names", "not_a_list", "tool_names must be a list"),
     ("tool_names", [1, 2, 3], "tool_names must be list of strings"),
     ("soft_compaction_limit", 0, "soft_compaction_limit must be positive"),

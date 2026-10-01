@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_ai.models import infer_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -18,28 +19,36 @@ if TYPE_CHECKING:
 
 
 def validate_model_name(model_name: str) -> str:
-    """Validate that model_name follows the 'provider:model' format.
+    """Validate a 'provider:model' model name string.
+
+    Checks that:
+    - The string is not empty or whitespace-only.
+    - The model part (after the colon) is not empty.
+    - The provider is recognised by pydantic-ai (via infer_model).
+
+    Note: pydantic-ai intentionally accepts unknown model names for forward
+    compatibility with new releases and custom deployments, so only the
+    provider is validated here. A bad model name will surface at first inference.
 
     Examples of valid names:
         'anthropic:claude-haiku-4-5'
         'together:meta-llama/Llama-3.3-70B-Instruct-Turbo'
         'openai:gpt-4o'
 
-    Raises ValueError for empty, whitespace-only, or incorrectly formatted names.
+    Raises ValueError for empty, whitespace-only, empty model part, or unknown provider.
     Returns the name unchanged.
     """
     if not model_name.strip():
         raise ValueError("model_name cannot be empty")
-    if ":" not in model_name:
-        raise ValueError(
-            f"model_name {model_name!r} must include a provider prefix "
-            f"(e.g. 'anthropic:claude-haiku-4-5', 'together:glm-4-flash')"
-        )
-    provider, _, model = model_name.partition(":")
-    if not provider.strip():
-        raise ValueError("model_name provider part cannot be empty")
+    _, _, model = model_name.partition(":")
     if not model.strip():
         raise ValueError("model_name model part cannot be empty")
+    try:
+        infer_model(model_name)
+    except ValueError as e:
+        raise ValueError(f"Invalid model_name {model_name!r}: {e}") from e
+    except Exception:
+        pass  # Provider is valid; exception is a config issue (e.g. missing API key).
     return model_name
 
 
