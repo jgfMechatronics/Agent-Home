@@ -11,7 +11,22 @@ import pytest
 from conftest import SAMPLE_AGENT_CONFIG_DATA
 from pydantic import ValidationError
 
-from agent.types import AgentConfig, AgentDeps
+from agent.types import AgentConfig, AgentDeps, validate_model_name
+
+
+def test_validate_model_name_works_without_api_keys(monkeypatch):
+    """Validation must not require provider API keys.
+
+    Standalone DB readers (integrity checker, CLI tools, migration scripts)
+    run outside the server environment and have no keys set. Guards against
+    regression to instantiation-based validation (e.g. via infer_model),
+    which crashed the integrity checker on production DBs.
+    """
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    # Prefixed and legacy bare names both validate without any keys
+    assert validate_model_name("anthropic:claude-haiku-4-5") == "anthropic:claude-haiku-4-5"
+    assert validate_model_name("claude-haiku-4-5-20251001") == "claude-haiku-4-5-20251001"
 
 
 @pytest.fixture
