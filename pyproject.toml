@@ -25,6 +25,7 @@ test = [
     "pytest",
     "pytest-asyncio",
     "pytest-mock",
+    "pytest-xdist",
 ]
 
 [tool.pytest.ini_options]
@@ -34,7 +35,7 @@ markers = [
     "note: important info/caveats about tests",
     "e2e: end-to-end tests requiring live server",
 ]
-addopts = "-m 'not e2e' --ignore=tests/e2e"
+addopts = "-n auto -m 'not e2e' --ignore=tests/e2e"
 
 [tool.uv]
 package = false

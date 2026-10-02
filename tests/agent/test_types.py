@@ -97,7 +97,7 @@ def test_agentconfig_rejects_unknown_model_name(valid_config_data: dict):
         AgentConfig(**valid_config_data)
 
 
-@pytest.mark.parametrize("model_name", VALID_MODEL_NAMES)
+@pytest.mark.parametrize("model_name", sorted(VALID_MODEL_NAMES))
 def test_agentconfig_accepts_known_model_name(valid_config_data: dict, model_name: str):
     """Every model name in VALID_MODEL_NAMES should be accepted."""
     valid_config_data["model_name"] = model_name
