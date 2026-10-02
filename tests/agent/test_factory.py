@@ -349,7 +349,9 @@ class TestBuildAgentAndDeps:
         """Constructed agent should use the model from agent_config.model_name."""
         async with self.factory.build_agent_and_deps() as (agent, deps):
             # pydantic-ai resolves 'provider:model' strings to a model instance;
-            # model_name is on the resolved object for Anthropic models
+            # model_name on the resolved object is the model part only (after the colon).
+            # NOTE: This assumes pydantic-ai exposes model_name on resolved models consistently.
+            # If pydantic-ai changes how it reports model names, this assertion may need updating.
             assert agent.model.model_name == self.agent_record.agent_config.model_name.split(":", 1)[1]
 
     async def test_has_cache_settings(self):

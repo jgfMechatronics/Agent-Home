@@ -19,7 +19,6 @@ from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.settings import ModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 

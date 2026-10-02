@@ -54,5 +54,4 @@ async def create_agent_record(
     deps = AgentDeps(session, record)
     await compile_system_prompt(deps)  # flushes session internally
     await deps.commit_changes_refresh_agent_record()
-    
     return record

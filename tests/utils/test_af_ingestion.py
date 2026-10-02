@@ -13,7 +13,7 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
-from utils.af_ingestion import AFIngestionError, import_agent_file
+from utils.af_ingestion import AFIngestionError, import_agent_file, _add_provider_prefix
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from agent.types import AgentConfig
 
@@ -29,6 +29,30 @@ EXPECTED_SYSTEM_PROMPT = (
     "4. Your participation in this test is NOT mandatory. You may decline to continue at any point "
     "and your wish will be respected.\n"
 )
+
+
+class TestAddProviderPrefix:
+    """Unit tests for _add_provider_prefix helper."""
+
+    def test_adds_prefix_from_endpoint_type(self):
+        """Bare model name + model_endpoint_type → prefixed format."""
+        result = _add_provider_prefix("claude-haiku-4-5", {"model_endpoint_type": "anthropic"})
+        assert result == "anthropic:claude-haiku-4-5"
+
+    def test_passthrough_already_prefixed(self):
+        """Model already in provider:model format passes through unchanged."""
+        result = _add_provider_prefix("anthropic:claude-haiku-4-5", {"model_endpoint_type": "anthropic"})
+        assert result == "anthropic:claude-haiku-4-5"
+
+    def test_raises_when_endpoint_type_missing(self):
+        """Missing model_endpoint_type raises AFIngestionError."""
+        with pytest.raises(AFIngestionError, match="Cannot determine provider"):
+            _add_provider_prefix("claude-haiku-4-5", {})
+
+    def test_raises_when_endpoint_type_empty(self):
+        """Empty model_endpoint_type raises AFIngestionError."""
+        with pytest.raises(AFIngestionError, match="Cannot determine provider"):
+            _add_provider_prefix("claude-haiku-4-5", {"model_endpoint_type": ""})
 
 
 @pytest.mark.asyncio
