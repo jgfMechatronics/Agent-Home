@@ -9,9 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from openai import OpenAIError
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import infer_model
+from pydantic_ai.models import parse_model_id
+from pydantic_ai.providers import infer_provider_class
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -21,26 +20,31 @@ if TYPE_CHECKING:
 
 
 def validate_model_name(model_name: str) -> str:
-    """Validate a model name string via pydantic-ai's infer_model().
+    """Validate a model name string via pydantic-ai's provider registry.
 
-    Accepts any format pydantic-ai accepts: 'provider:model' (e.g.
-    'anthropic:claude-haiku-4-5') or bare model names that pydantic-ai can
-    resolve to a provider (e.g. 'claude-haiku-4-5').
+    Uses parse_model_id + infer_provider_class to check the provider is known
+    WITHOUT instantiating it — no API keys required. This makes validation safe
+    for standalone DB readers (integrity checker, CLI tools, migration scripts).
 
-    The only case we check ourselves is an empty resolved model name
-    (e.g. 'anthropic:') since infer_model() accepts that silently.
+    Accepts 'provider:model' format (e.g. 'anthropic:claude-haiku-4-5') and
+    legacy bare names that pydantic-ai can resolve (e.g. 'claude-haiku-4-5',
+    which emits a DeprecationWarning).
 
-    ValueError from infer_model (unknown provider) propagates naturally.
-    UserError / OpenAIError (missing API key) are re-raised as ValueError
-    so they surface as a 422 ValidationError with the original message.
+    Full instantiation (which requires API keys) happens naturally in
+    factory._build_model_settings when the agent actually runs.
 
     Returns the name unchanged.
     """
+    if model_name == "test":
+        return model_name  # pydantic-ai magic string — instantiates TestModel
+    provider, model = parse_model_id(model_name)
+    if provider is None:
+        raise ValueError(f"Unknown model {model_name!r}: no provider prefix and no recognized model prefix")
     try:
-        m = infer_model(model_name)
-    except (UserError, OpenAIError) as e:
-        raise ValueError(str(e)) from e
-    if not m.model_name.strip():
+        infer_provider_class(provider)
+    except ValueError as e:
+        raise ValueError(f"Invalid model_name {model_name!r}: {e}") from e
+    if not model.strip():
         raise ValueError("model_name model part cannot be empty")
     return model_name
 
