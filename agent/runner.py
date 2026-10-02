@@ -22,7 +22,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-COMPACTION_RESUME_NOTICE = format_system_alert("Resuming after compaction. Context was trimmed to stay within limits.")
+COMPACTION_RESUME_NOTICE = format_system_alert("Compaction complete, resuming run. Oldest context was trimmed to stay within limits. This notice does not mark the trim boundary, there are messages prior to this alert which were retained.\n" \
+                                               "Your system prompt has been recompiled. Any memory edits up to this notice are now reflected in your core memory blocks.\n"
+                                               "No action is required on your part, you can continue where you left off.", tags_on_newline=True)
 
 
 def _count_adjacent_message_merges(messages: list) -> int:
