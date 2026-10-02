@@ -51,6 +51,8 @@ async def create_agent_record(
     """Create a new agent, persist it, and return the AgentRecord."""
     record = AgentRecord(name=name, system_instructions=system_instructions, agent_config=config)
     session.add(record)
-    await compile_system_prompt(AgentDeps(session, record))  # flushes session internally
-    # TODO: Should commit here?
+    deps = AgentDeps(session, record)
+    await compile_system_prompt(deps)  # flushes session internally
+    await deps.commit_changes_refresh_agent_record()
+    
     return record
