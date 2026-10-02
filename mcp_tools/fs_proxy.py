@@ -10,6 +10,7 @@ Or with uv:
     uv run python -m mcp_tools.fs_proxy
 """
 import argparse
+import os
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -79,24 +80,28 @@ async def _warmup_lifespan(server: "FastMCPProxy"):
     yield
 
 
-def create_fs_proxy():
+def create_fs_proxy(env: dict[str, str] | None = None):
     """Create a FastMCP proxy for the Desktop Commander MCP server.
 
     Only tools in _ALLOWED_TOOLS are exposed — the rest are hidden via allowlist
     to keep context lean and exclude DC-internal/junk tools.
 
+    Args:
+        env: Environment variables to pass through to the Desktop Commander subprocess.
+            These are merged with the MCP SDK's default inherited vars (PATH, HOME, etc.).
+
     Returns:
         FastMCP proxy server instance.
     """
+    server_config: dict = {
+        "command": "npx",
+        "args": ["-y", "@wonderwhy-er/desktop-commander@0.2.47", "--no-onboarding"],
+    }
+    if env:
+        server_config["env"] = env
+
     proxy = create_proxy(
-        {
-            "mcpServers": {
-                "desktop-commander": {
-                    "command": "npx",
-                    "args": ["-y", "@wonderwhy-er/desktop-commander@0.2.47", "--no-onboarding"],
-                }
-            }
-        },
+        {"mcpServers": {"desktop-commander": server_config}},
         name="desktop-commander-proxy",
         lifespan=_warmup_lifespan,
     )
@@ -113,6 +118,19 @@ def create_fs_proxy():
         )
     }))
     return proxy
+
+
+def _build_passthrough_env(var_names: list[str]) -> dict[str, str]:
+    """Build env dict from current environment for the given variable names.
+
+    Only includes variables that are actually set in the environment.
+    """
+    env = {}
+    for name in var_names:
+        value = os.environ.get(name)
+        if value is not None:
+            env[name] = value
+    return env
 
 
 def main():
@@ -135,9 +153,23 @@ def main():
         default="ellm-dev",
         help="Hostname to allow in Host header validation (default: ellm-dev). Should match this container's name on the Docker network.",
     )
+    parser.add_argument(
+        "--pass-env",
+        type=str,
+        default="",
+        help="Comma-separated list of environment variable names to pass through to the subprocess (e.g., 'UV_PYTHON_INSTALL_DIR,UV_MANAGED_PYTHON')",
+    )
     args = parser.parse_args()
 
-    proxy = create_fs_proxy()
+    # Build env passthrough dict from specified variable names
+    env = None
+    if args.pass_env:
+        var_names = [name.strip() for name in args.pass_env.split(",") if name.strip()]
+        env = _build_passthrough_env(var_names)
+        if env:
+            print(f"Passing through environment variables: {list(env.keys())}")
+
+    proxy = create_fs_proxy(env=env)
     print(f"Starting Desktop Commander MCP proxy on http://{args.host}:{args.port}/mcp")
     print(f"Allowed host: {args.allowed_host}")
     proxy.run(
