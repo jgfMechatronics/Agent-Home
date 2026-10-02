@@ -22,8 +22,8 @@ from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError
-from agent.types import AgentAppState, AgentDeps
+from agent.factory import AgentFactory
+from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError
 from api.fastapi_deps import get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_session_dep
 from tests.conftest import TEST_BASE_URL
 

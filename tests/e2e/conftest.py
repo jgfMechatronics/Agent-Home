@@ -99,6 +99,36 @@ async def client():
         yield client
 
 
+async def get_or_create_agent(client: httpx.AsyncClient, server_url: str, model_name: str) -> str:
+    """Get or create an agent for the given model, named after it. Returns agent_id.
+
+    Name is derived from the model string so parametrized tests don't collide.
+    Agents persist for the lifetime of the session-scoped live_server (tmp DB).
+    """
+    agent_name = "e2e-" + model_name.replace(":", "-").replace("/", "-")
+
+    resp = await client.get(f"{server_url}/agents")
+    resp.raise_for_status()
+    for agent in resp.json():
+        if agent.get("name") == agent_name:
+            return agent["id"]
+
+    resp = await client.post(
+        f"{server_url}/agents",
+        json={
+            "name": agent_name,
+            "system_instructions": TEST_AGENT_INSTRUCTIONS,
+            "config": {
+                "model_name": model_name,
+                "tool_names": [],
+                "soft_compaction_limit": 100000,
+            },
+        },
+    )
+    resp.raise_for_status()
+    return resp.json()["id"]
+
+
 def sse_to_dict(sse: ServerSentEvent) -> dict:
     """Convert SSE event to dict with event type and parsed JSON data."""
     result = {"event": sse.event}

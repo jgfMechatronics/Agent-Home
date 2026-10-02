@@ -8,10 +8,10 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from typing import Literal, get_args, get_origin
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from pydantic_ai.models.anthropic import AnthropicModelName
+from openai import OpenAIError
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import infer_model
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -20,23 +20,28 @@ if TYPE_CHECKING:
     from db.models import AgentRecord, MemoryBlockRecord
 
 
-# AnthropicModelName is str | Literal['claude-...', ...]. Extract only the known
-# Literal values — the str arm is a forward-compat escape hatch, not a validation target.
-_literal_type = next(arg for arg in get_args(AnthropicModelName) if get_origin(arg) is Literal)
-VALID_MODEL_NAMES: frozenset[str] = frozenset(get_args(_literal_type))
-
-
 def validate_model_name(model_name: str) -> str:
-    """Validate that model_name is a known Anthropic model string.
+    """Validate a model name string via pydantic-ai's infer_model().
 
-    Raises ValueError for empty or unrecognised names. Returns the name unchanged.
+    Accepts any format pydantic-ai accepts: 'provider:model' (e.g.
+    'anthropic:claude-haiku-4-5') or bare model names that pydantic-ai can
+    resolve to a provider (e.g. 'claude-haiku-4-5').
+
+    The only case we check ourselves is an empty resolved model name
+    (e.g. 'anthropic:') since infer_model() accepts that silently.
+
+    ValueError from infer_model (unknown provider) propagates naturally.
+    UserError / OpenAIError (missing API key) are re-raised as ValueError
+    so they surface as a 422 ValidationError with the original message.
+
+    Returns the name unchanged.
     """
-    if not model_name.strip():
-        raise ValueError("model_name cannot be empty")
-    if model_name not in VALID_MODEL_NAMES:
-        raise ValueError(
-            f"Unknown model {model_name!r}. Must be one of: {sorted(VALID_MODEL_NAMES)}"
-        )
+    try:
+        m = infer_model(model_name)
+    except (UserError, OpenAIError) as e:
+        raise ValueError(str(e)) from e
+    if not m.model_name.strip():
+        raise ValueError("model_name model part cannot be empty")
     return model_name
 
 
@@ -75,7 +80,8 @@ class AgentConfig(BaseModel):
     Agent configuration stored as JSON in AgentRecord.agent_config.
     
     Required fields:
-    - model_name: The LLM to use (e.g., "claude-haiku-4-5")
+    - model_name: The LLM to use in 'provider:model' format (e.g., "anthropic:claude-haiku-4-5", "together:glm-4-flash")
+      Straight model names will technically work in some cases as of Oct 1, 2026 but pydantic-ai plans to deprecate support for this
     - tool_names: List of tool names the agent can use
     - soft_compaction_limit: Token threshold for triggering compaction
     

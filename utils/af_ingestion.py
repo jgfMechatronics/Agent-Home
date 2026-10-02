@@ -59,6 +59,25 @@ def _get_referenced_items(agent: dict, id_key: str, data: dict, items_key: str) 
     return [item for item in all_items if item["id"] in ids]
 
 
+def _add_provider_prefix(model: str, llm_config: dict) -> str:
+    """Convert a bare Letta model name to 'provider:model' format.
+
+    Uses llm_config.model_endpoint_type directly as the provider prefix.
+    Raises AFIngestionError if the endpoint type is missing or empty.
+    Further validation (unknown provider etc.) happens downstream when
+    AgentConfig is constructed — an unknown provider surfaces as a 422.
+    """
+    if ":" in model:
+        return model  # already prefixed
+    provider = llm_config.get("model_endpoint_type") or ""
+    if not provider:
+        raise AFIngestionError(
+            f"Cannot determine provider for model {model!r}: "
+            "llm_config.model_endpoint_type is missing or empty"
+        )
+    return f"{provider}:{model}"
+
+
 def _parse_af(data: dict) -> tuple[dict, list[dict]]:
     """Parse and validate the .AF structure, returning (agent_payload, blocks_payload).
 
@@ -78,6 +97,7 @@ def _parse_af(data: dict) -> tuple[dict, list[dict]]:
     system = _extract_or_raise(agent, "system", context="agents[0]")
     llm_config = _extract_or_raise(agent, "llm_config", context="agents[0]")
     model = _extract_or_raise(llm_config, "model", context="agents[0].llm_config")
+    model = _add_provider_prefix(model, llm_config)
     context_window = _extract_or_raise(llm_config, "context_window", context="agents[0].llm_config")
     enable_reasoner = _extract_or_raise(llm_config, "enable_reasoner", context="agents[0].llm_config")
 

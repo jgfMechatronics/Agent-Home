@@ -67,22 +67,20 @@ class TestCompactionWarnerIntegration:
     async def _run_and_get_messages(self, model: TestModel, soft_limit: int = 100) -> list[ModelMessage]:
         """Run agent with given model and return persisted messages."""
         self.agent_record.agent_config = AgentConfig(
-            model_name="claude-sonnet-4-20250514",
+            model_name="test",
             tool_names=["duckduckgo_search"],
             soft_compaction_limit=soft_limit,
         )
         await self.session.flush()
 
         agent_app_state_reg: dict[str, AgentAppState] = {}
-        with (
-            patch("agent.factory.get_model", return_value=model),
-            patch("agent.runner.is_compaction_needed", return_value=False),
-        ):
+        with patch("agent.runner.is_compaction_needed", return_value=False):
             factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
             async with factory.build_agent_and_deps() as (agent, deps):
-                events = [e async for e in run_stateful_agent(
-                    agent, deps, agent_app_state_reg[self.agent_record.id], "Hello"
-                )]
+                with agent.override(model=model):
+                    events = [e async for e in run_stateful_agent(
+                        agent, deps, agent_app_state_reg[self.agent_record.id], "Hello"
+                    )]
         assert events, "Should have received events"
 
         records = await load_messages(self.session, self.agent_record.id)

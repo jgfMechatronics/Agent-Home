@@ -37,7 +37,7 @@ def _make_config(
 ) -> AgentConfig:
     """Create AgentConfig with specified compaction settings."""
     return AgentConfig(
-        model_name="claude-sonnet-4-20250514",
+        model_name="anthropic:claude-sonnet-4-20250514",
         tool_names=["memory_replace"],
         soft_compaction_limit=soft_compaction_limit,
         compaction_target_fraction=compaction_target_fraction,

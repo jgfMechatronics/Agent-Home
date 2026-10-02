@@ -42,7 +42,7 @@ class TestCreateAgent:
     """POST /agents — create a new agent."""
 
     _NAME = "test-agent"
-    _MODEL = "claude-sonnet-4-20250514"
+    _MODEL = "anthropic:claude-sonnet-4-20250514"
     _VALID_BODY: dict = {
         "name": _NAME,
         "system_instructions": "Be helpful.",
@@ -382,7 +382,7 @@ class TestHealthCheck:
 
 # --- Shared test data for parametrized PUT endpoint tests ---
 _VALID_CONFIG_BODY = {
-    "model_name": "claude-sonnet-4-20250514",
+    "model_name": "anthropic:claude-sonnet-4-20250514",
     "tool_names": [],
     "soft_compaction_limit": 1000,
 }

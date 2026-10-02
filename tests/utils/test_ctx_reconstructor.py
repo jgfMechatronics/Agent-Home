@@ -3,7 +3,6 @@ Tests for utils/ctx_reconstructor.py — context reconstruction from stored snap
 """
 import dataclasses
 import json
-from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -38,7 +37,7 @@ UNIT_TEST_TOOL_DEF = ToolDefinition(
 )
 
 UNIT_TEST_AGENT_CONFIG = AgentConfig(
-    model_name="claude-sonnet-4-20250514",
+    model_name="anthropic:claude-sonnet-4-20250514",
     tool_names=["test_tool"],
     soft_compaction_limit=10000,
 )
@@ -73,7 +72,7 @@ class TestReconstructContext:
         if request.param:
             noise_prompt = "You are a different assistant entirely."
             noise_tools_json = json.dumps([{"name": "noise_tool", "description": "Not the tool you want"}], sort_keys=True)
-            noise_config = AgentConfig(model_name="claude-haiku-4-5", tool_names=["noise_tool"], soft_compaction_limit=999)
+            noise_config = AgentConfig(model_name="anthropic:claude-haiku-4-5", tool_names=["noise_tool"], soft_compaction_limit=999)
             noise_config_json = noise_config.model_dump_json()
             session.add_all([
                 SystemPromptSnapshot(id=_compute_sha256(noise_prompt), content=noise_prompt, created_at=utcnow()),
@@ -210,7 +209,7 @@ ALL_TOOL_NAMES = list(TOOL_REGISTRY.keys())
 INTEGRATION_SYSTEM_INSTRUCTIONS = "You are an integration test agent."
 EXPECTED_COMPILED_SYS_PROMPT = "<system_instructions>\n" + INTEGRATION_SYSTEM_INSTRUCTIONS + "\n</system_instructions>"
 INTEGRATION_AGENT_CONFIG = AgentConfig(
-    model_name="claude-sonnet-4-20250514",
+    model_name="test",
     tool_names=ALL_TOOL_NAMES,
     soft_compaction_limit=10000,
 )
@@ -239,11 +238,11 @@ class TestReconstructContextIntegration:
         """
         agent_app_state_reg: dict[str, AgentAppState] = {}
 
-        with patch("agent.factory.get_model", return_value=test_model):
-            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
-            async with factory.build_agent_and_deps() as (pydantic_agent, deps):
-                # Capture expected tool definitions from the live agent (ground truth)
-                expected_tool_definitions = await _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
+        factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
+        async with factory.build_agent_and_deps() as (pydantic_agent, deps):
+            # Capture expected tool definitions from the live agent (ground truth)
+            expected_tool_definitions = await _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
+            with pydantic_agent.override(model=test_model):
                 async for _ in run_stateful_agent(pydantic_agent, deps, agent_app_state_reg[self.agent_record.id], prompt):
                     pass
 
@@ -307,7 +306,7 @@ class TestReconstructContextIntegration:
         # Mutate config
         new_instructions = "MUTATED personality."
         mutated_config = AgentConfig(
-            model_name="claude-sonnet-4-20250514", tool_names=["memory_replace"], soft_compaction_limit=10000
+            model_name="test", tool_names=["memory_replace"], soft_compaction_limit=10000
         )
         self.agent_record.system_instructions = new_instructions
         self.agent_record.agent_config = mutated_config

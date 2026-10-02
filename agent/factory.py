@@ -17,17 +17,16 @@ from typing import AsyncIterator
 
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.models import infer_model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.settings import ModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
 from agent.crud import get_agent_record
-from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError, validate_model_name
+from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
-
-# Re-export exceptions for backward compatibility (canonical location is agent.types)
-__all__ = ["AgentFactory", "AgentNotFoundError", "AgentLockedError", "get_model"]
 
 
 LOCK_TIMEOUT_SECONDS: int = 60
@@ -35,6 +34,65 @@ LOCK_TIMEOUT_FAST: int = 2
 _MCP_FILESYSTEM_URL = "http://host.docker.internal:8080/mcp"
 
 logger = logging.getLogger(__name__)
+
+
+def _build_model_settings(config: "AgentConfig") -> ModelSettings:
+    """Return provider-appropriate ModelSettings for the given agent config.
+
+    Uses infer_model() to resolve the provider type, then dispatches on
+    AnthropicModel for Anthropic-specific settings. All other providers
+    (OpenAI, Together, Fireworks, etc.) receive base ModelSettings with
+    the unified 'thinking' field, which pydantic-ai maps to each provider's
+    native reasoning parameter.
+
+    parallel_tool_calls=False is applied for all providers: our orphan remover
+    is not compatible with parallel tool calls.
+    """
+    m = infer_model(config.model_name)
+
+    # Common settings for all providers. 'thinking' is the unified field pydantic-ai
+    # maps to each provider's native reasoning parameter. For Anthropic, anthropic_thinking
+    # takes precedence over this field (set below), so both can coexist safely.
+    settings = ModelSettings(
+        parallel_tool_calls=False,
+        thinking=config.thinking_enabled,
+    )
+
+    if isinstance(m, AnthropicModel):
+        # Unpack common settings, then add Anthropic-specific fields.
+        # anthropic_thinking takes precedence over the unified 'thinking' field above.
+        settings = AnthropicModelSettings(
+            **settings,
+            anthropic_cache_instructions=True,
+            anthropic_cache_tool_definitions=True,
+            anthropic_cache_messages=True,
+            # Anthropic requires max_tokens > budget_tokens when thinking is enabled
+            **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
+                "max_tokens": 16000} if config.thinking_enabled else {}),
+        )
+
+    return settings
+
+
+def _construct_toolsets(toolset_names: list[str]) -> list:
+    """Construct toolset instances from a list of toolset names.
+
+    Maps toolset names to their constructors and builds instances.
+
+    Args:
+        toolset_names: List of toolset identifiers (e.g., ["mcp_filesystem"])
+
+    Returns:
+        List of constructed toolset instances ready for Agent consumption.
+    """
+    # TODO: Consider module-level instances for connection reuse
+    toolsets = []
+    for name in toolset_names:
+        if name == "mcp_filesystem":
+            toolsets.append(MCPToolset(_MCP_FILESYSTEM_URL))
+        else:
+            logger.warning("Unknown toolset name %r — skipping. Check agent config for typos.", name)
+    return toolsets
 
 
 class AgentFactory:
@@ -105,21 +163,10 @@ class AgentFactory:
         it does, it doesn't null out the resources actually associated with the lock!!!! Oops.
         """
         async with self.build_deps() as deps:
-            model = get_model(deps.config.model_name)
-            
-            model_settings = AnthropicModelSettings(
-                anthropic_cache_instructions=True,
-                anthropic_cache_tool_definitions=True,
-                anthropic_cache_messages=True,
-                # Anthropic requires max_tokens > budget_tokens when thinking is enabled
-                **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
-                    "max_tokens": 16000}
-                   if deps.config.thinking_enabled else {}),
-                parallel_tool_calls=False, # our current orphan remover isn't compatible with parallel tool calls
-            )
+            model_settings = _build_model_settings(deps.config)
             toolsets = _construct_toolsets(deps.config.toolset_names)
             
-            agent = Agent(model,
+            agent = Agent(deps.config.model_name,
                           instructions=get_system_prompt,
                           deps_type=AgentDeps,
                           name=deps.name,
@@ -132,34 +179,3 @@ class AgentFactory:
             
             yield (agent, deps)
 
-
-def _construct_toolsets(toolset_names: list[str]) -> list:
-    """Construct toolset instances from a list of toolset names.
-
-    Maps toolset names to their constructors and builds instances.
-
-    Args:
-        toolset_names: List of toolset identifiers (e.g., ["mcp_filesystem"])
-
-    Returns:
-        List of constructed toolset instances ready for Agent consumption.
-    """
-    # TODO: Consider module-level instances for connection reuse
-    toolsets = []
-    for name in toolset_names:
-        if name == "mcp_filesystem":
-            toolsets.append(MCPToolset(_MCP_FILESYSTEM_URL))
-        else:
-            logger.warning("Unknown toolset name %r — skipping. Check agent config for typos.", name)
-    return toolsets
-
-
-def get_model(model_name: str) -> AnthropicModel:
-    """Map a model name string to a Pydantic AI model instance.
-    
-    Raises ValueError for unknown or unsupported model names.
-    AgentConfig.validate_model_name already enforces this at config creation time,
-    so this is a belt-and-suspenders guard.
-    """
-    validate_model_name(model_name)  # raises ValueError for unknown names
-    return AnthropicModel(model_name)

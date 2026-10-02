@@ -63,7 +63,7 @@ SAMPLE_TOOL_SCHEMAS = [
 ]
 
 MUTATED_AGENT_CONFIG = AgentConfig(
-    model_name="claude-haiku-4-5-20251001",
+    model_name="anthropic:claude-haiku-4-5-20251001",
     tool_names=["memory_replace"],
     soft_compaction_limit=20000,
     thinking_enabled=True,

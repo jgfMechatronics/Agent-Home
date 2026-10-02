@@ -6,7 +6,6 @@ Agent factory and dependency management:
   - _get_or_create_agent_app_state: Per-agent state registry management (static)
   - build_deps: Async context manager yielding AgentDeps with lock acquisition
   - build_agent_and_deps: Async context manager yielding (Agent, AgentDeps)
-- get_model: Module-level function mapping model name strings to Pydantic AI model instances
 
 NOTE: This got a little ugly with the move from a simple lock reg to AgentAppState. Since we might move to a different OO design with a 
 StatefulAgent class, I don't think its worth cleaning this up right now though.
@@ -23,11 +22,10 @@ import pytest_asyncio
 from pytest_mock import MockerFixture
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.models.anthropic import AnthropicModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.factory import AgentFactory, AgentLockedError, AgentNotFoundError, get_model
-from agent.types import AgentAppState, AgentDeps
+from agent.factory import AgentFactory, _build_model_settings
+from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError
 from memory.system_prompt_compilation import get_system_prompt
 from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord
@@ -73,30 +71,6 @@ def agent_app_state_reg() -> dict[str, AgentAppState]:
 def agent_factory(agent_record: AgentRecord, agent_app_state_reg: dict, session: AsyncSession) -> AgentFactory:
     """Per-agent, per-request AgentFactory with agent_id, agent_app_state_reg, and session bound."""
     return AgentFactory(agent_record.id, agent_app_state_reg, session)
-
-
-# --- get_model tests (module-level function) ---
-
-def test_get_model_returns_model_for_valid_name():
-    """get_model should return an AnthropicModel instance for a valid model name."""
-    model_str = "claude-sonnet-4-20250514"
-    model = get_model(model_str)
-    
-    assert isinstance(model, AnthropicModel)
-    assert model.model_name == model_str
-
-
-@pytest.mark.parametrize("invalid_name", [
-    "not-a-real-model",
-    "gpt-4",  # Wrong provider
-    "",
-    "claude-unknown-version",
-])
-def test_get_model_raises_for_invalid_name(invalid_name: str):
-    """get_model should raise for unknown/unsupported model names."""
-    # TODO: Match exception in implementation when set
-    with pytest.raises((ValueError)):
-        get_model(invalid_name)
 
 
 # --- AgentFactory._get_or_create_agent_app_state tests ---
@@ -374,8 +348,11 @@ class TestBuildAgentAndDeps:
     async def test_uses_correct_model(self):
         """Constructed agent should use the model from agent_config.model_name."""
         async with self.factory.build_agent_and_deps() as (agent, deps):
-            assert isinstance(agent.model, AnthropicModel)
-            assert agent.model.model_name == self.agent_record.agent_config.model_name
+            # pydantic-ai resolves 'provider:model' strings to a model instance;
+            # model_name on the resolved object is the model part only (after the colon).
+            # NOTE: This assumes pydantic-ai exposes model_name on resolved models consistently.
+            # If pydantic-ai changes how it reports model names, this assertion may need updating.
+            assert agent.model.model_name == self.agent_record.agent_config.model_name.split(":", 1)[1]
 
     async def test_has_cache_settings(self):
         """Constructed agent should have Anthropic prompt caching enabled in model_settings.
@@ -408,28 +385,76 @@ class TestBuildAgentAndDeps:
             assert get_system_prompt in agent._instructions, "get_system_prompt must be registered as the instructions function"
             assert agent._output_schema.allows_deferred_tools, "output_type must include DeferredToolRequests for the tool approval flow"
 
-    async def test_thinking_disabled_by_default(self):
-        """When thinking_enabled=False (default), no anthropic_thinking setting and deferred tools allowed."""
-        assert self.agent_record.agent_config.thinking_enabled is False
-        async with self.factory.build_agent_and_deps() as (agent, deps):
-            assert "anthropic_thinking" not in agent.model_settings
-            assert agent._output_schema.allows_deferred_tools is True
+    async def test_model_settings_applied_from_helper(self):
+        """build_agent_and_deps applies the result of _build_model_settings to the agent.
 
-    async def test_thinking_enabled_sets_anthropic_thinking(self):
-        """When thinking_enabled=True, anthropic_thinking and max_tokens are set.
-
-        DeferredToolRequests is kept regardless of thinking mode — with str also in the output_type union,
-        pydantic-ai uses tool_choice='auto' (not 'required'), which Anthropic accepts with thinking.
-        Also requires max_tokens > budget_tokens.
+        Provider-specific correctness is covered by TestBuildModelSettings unit tests.
+        Here we just verify the helper is wired up and its output reaches the agent.
         """
-        self.agent_record.agent_config = self.agent_record.agent_config.model_copy(update={"thinking_enabled": True})
-        async with self.factory.build_agent_and_deps() as (agent, deps):
-            assert agent.model_settings.get("anthropic_thinking") == {
-                "type": "enabled",
-                "budget_tokens": 10000,
-            }
-            assert agent.model_settings.get("max_tokens") == 16000
-            assert agent._output_schema.allows_deferred_tools is True
+        with patch("agent.factory._build_model_settings", wraps=_build_model_settings) as mock_helper:
+            async with self.factory.build_agent_and_deps() as (agent, deps):
+                mock_helper.assert_called_once_with(self.agent_record.agent_config)
+
+
+# =============================================================================
+# _build_model_settings unit tests
+# =============================================================================
+
+class TestBuildModelSettings:
+    """Unit tests for _build_model_settings — called directly as a pure function."""
+
+    def _config(self, model_name: str, thinking_enabled: bool = False) -> AgentConfig:
+        return SAMPLE_AGENT_CONFIG.model_copy(update={"model_name": model_name, "thinking_enabled": thinking_enabled})
+
+    # --- Base settings (common to all providers) ---
+
+    @pytest.mark.parametrize("model_name", [
+        "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        "openai-chat:gpt-4o",
+        "anthropic:claude-haiku-4-5",
+    ])
+    def test_base_settings_defaults(self, model_name: str):
+        """All providers: parallel_tool_calls=False, thinking=False by default."""
+        settings = _build_model_settings(self._config(model_name))
+        assert settings.get("parallel_tool_calls") is False
+        assert settings.get("thinking") is False
+
+    @pytest.mark.parametrize("model_name", [
+        "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        "openai-chat:gpt-4o",
+        "anthropic:claude-haiku-4-5",
+    ])
+    def test_base_settings_thinking_enabled(self, model_name: str):
+        """All providers: thinking=True when thinking_enabled."""
+        settings = _build_model_settings(self._config(model_name, thinking_enabled=True))
+        assert settings.get("thinking") is True
+
+    # --- Anthropic-specific settings ---
+
+    def test_anthropic_cache_flags(self):
+        """Anthropic model → all three prompt cache flags enabled."""
+        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5"))
+        assert settings.get("anthropic_cache_instructions") is True
+        assert settings.get("anthropic_cache_tool_definitions") is True
+        assert settings.get("anthropic_cache_messages") is True
+
+    def test_anthropic_thinking_sets_budget(self):
+        """thinking_enabled=True → anthropic_thinking with budget and max_tokens."""
+        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_enabled=True))
+        assert settings.get("anthropic_thinking") == {"type": "enabled", "budget_tokens": 10000}
+        assert settings.get("max_tokens") == 16000
+
+    def test_anthropic_thinking_disabled_no_budget(self):
+        """thinking_enabled=False → no anthropic_thinking set."""
+        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_enabled=False))
+        assert "anthropic_thinking" not in settings
+
+    def test_non_anthropic_no_cache_flags(self):
+        """Non-Anthropic providers → no Anthropic-specific cache fields."""
+        for model_name in ("together:meta-llama/Llama-3.3-70B-Instruct-Turbo", "openai-chat:gpt-4o"):
+            settings = _build_model_settings(self._config(model_name))
+            assert "anthropic_cache_instructions" not in settings
+            assert "anthropic_thinking" not in settings
 
 
 @pytest.mark.asyncio

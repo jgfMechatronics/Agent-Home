@@ -14,7 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from agent.broadcast_streaming import BroadcastHub
-from agent.factory import AgentLockedError, AgentNotFoundError
+from agent.types import AgentLockedError, AgentNotFoundError
 from memory.block_crud import BlockNotFoundError, DuplicateBlockError, DuplicatePositionError
 from api.routes import router
 from prototype.iac.send_message import configure_iac  # TODO: Remove with IAC redesign

@@ -22,14 +22,14 @@ from api.schemas import (
 # --- Shared fixtures for serialization tests ---
 
 _NOW = datetime(2026, 1, 1)
-_CONFIG = AgentConfig(model_name="claude-sonnet-4-20250514", tool_names=[], soft_compaction_limit=1000)
+_CONFIG = AgentConfig(model_name="anthropic:claude-sonnet-4-20250514", tool_names=[], soft_compaction_limit=1000)
 _BLOCK = MemoryBlockResponse(label="persona", description="desc", content="content", char_limit=1000, updated_at=_NOW)
 
 
 @pytest.mark.parametrize("instance", [
     pytest.param(MessageRequest(message="hello"), id="MessageRequest"),
     pytest.param(CreateAgentRequest(name="test", system_instructions="sys", config=_CONFIG), id="CreateAgentRequest"),
-    pytest.param(AgentMetadataResponse(id="abc", name="test", model="claude-sonnet-4-20250514", created_at=_NOW, updated_at=_NOW), id="AgentMetadataResponse"),
+    pytest.param(AgentMetadataResponse(id="abc", name="test", model="anthropic:claude-sonnet-4-20250514", created_at=_NOW, updated_at=_NOW), id="AgentMetadataResponse"),
     pytest.param(_BLOCK, id="MemoryBlockResponse"),
     pytest.param(CoreMemoryResponse(blocks=[_BLOCK]), id="CoreMemoryResponse"),
     pytest.param(MessageItem(id="abc", seq_id=0, type="ModelRequest", content="{}", timestamp=_NOW), id="MessageItem"),

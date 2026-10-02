@@ -17,8 +17,12 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
 from db.connection import _configure_sqlite_conn
 
-# Prevent AnthropicModel construction from failing in tests that don't make real API calls
-os.environ.setdefault("ANTHROPIC_API_KEY", "test")
+# Fake API keys so infer_model() can instantiate providers without real credentials.
+# Using setdefault preserves real keys when present (e.g. in CI or local dev with .env).
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-fake-key")
+os.environ.setdefault("OPENAI_API_KEY", "test-fake-key")
+os.environ.setdefault("TOGETHER_API_KEY", "test-fake-key")
+os.environ.setdefault("GROQ_API_KEY", "test-fake-key")
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -58,7 +62,7 @@ def mock_run_context(deps: AgentDeps):
     return ctx
 
 
-SAMPLE_AGENT_CONFIG_DATA = { "model_name": "claude-sonnet-4-20250514",
+SAMPLE_AGENT_CONFIG_DATA = { "model_name": "anthropic:claude-sonnet-4-20250514",
     "tool_names": ["memory_replace", "memory_insert"],
     "soft_compaction_limit": 10000,
 }
