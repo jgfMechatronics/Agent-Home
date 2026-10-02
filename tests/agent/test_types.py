@@ -69,9 +69,9 @@ def test_agentconfig_requires_field(valid_config_data: dict, missing_field: str)
 # --- AgentConfig type validation ---
 
 @pytest.mark.parametrize("field,invalid_value,description", [
-    ("model_name", "", "empty string — infer_model rejects"),
-    ("model_name", "   ", "whitespace only — infer_model rejects"),
-    ("model_name", ":claude-haiku-4-5", "empty provider — infer_model rejects"),
+    ("model_name", "", "empty string — caught by empty check"),
+    ("model_name", "   ", "whitespace only — caught by empty check"),
+    ("model_name", ":claude-haiku-4-5", "empty provider — registry rejects"),
     ("model_name", "anthropic:", "empty model part — our check"),
     ("model_name", "anthropic:   ", "whitespace model part — our check"),
     ("tool_names", "not_a_list", "tool_names must be a list"),

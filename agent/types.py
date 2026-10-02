@@ -37,6 +37,8 @@ def validate_model_name(model_name: str) -> str:
     """
     if model_name == "test":
         return model_name  # pydantic-ai magic string — instantiates TestModel
+    if not model_name.strip():
+        raise ValueError("model_name cannot be empty")
     provider, model = parse_model_id(model_name)
     if provider is None:
         raise ValueError(f"Unknown model {model_name!r}: no provider prefix and no recognized model prefix")
