@@ -59,6 +59,11 @@ class SequentialTestModel(TestModel):
 class TestCompactionWarnerIntegration:
     """Integration tests for CompactionWarner capability."""
 
+    @pytest.fixture(autouse=True)
+    def _fake_provider_keys(self, fake_provider_keys):
+        """Fake keys — _run_and_get_messages constructs real provider clients
+        via build_agent_and_deps, then overrides the model with TestModel."""
+
     @pytest_asyncio.fixture(autouse=True)
     async def setup(self, session: AsyncSession, agent_record: AgentRecord):
         self.session = session
@@ -67,7 +72,7 @@ class TestCompactionWarnerIntegration:
     async def _run_and_get_messages(self, model: TestModel, soft_limit: int = 100) -> list[ModelMessage]:
         """Run agent with given model and return persisted messages."""
         self.agent_record.agent_config = AgentConfig(
-            model_name="test",
+            model_name="anthropic:claude-sonnet-4-20250514",
             tool_names=["duckduckgo_search"],
             soft_compaction_limit=soft_limit,
         )

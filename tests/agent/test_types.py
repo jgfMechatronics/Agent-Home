@@ -114,7 +114,6 @@ def test_agentconfig_retries_non_negative_is_valid(valid_config_data: dict, vali
     "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
     "together:THUDM/glm-4-9b-chat",
     "openai-chat:gpt-4o",
-    "test",  # pydantic-ai magic string — instantiates TestModel
 ])
 def test_agentconfig_accepts_valid_model_name(valid_config_data: dict, model_name: str):
     """Any model name pydantic-ai can resolve should be accepted."""

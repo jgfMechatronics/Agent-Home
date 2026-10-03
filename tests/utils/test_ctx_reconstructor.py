@@ -209,7 +209,7 @@ ALL_TOOL_NAMES = list(TOOL_REGISTRY.keys())
 INTEGRATION_SYSTEM_INSTRUCTIONS = "You are an integration test agent."
 EXPECTED_COMPILED_SYS_PROMPT = "<system_instructions>\n" + INTEGRATION_SYSTEM_INSTRUCTIONS + "\n</system_instructions>"
 INTEGRATION_AGENT_CONFIG = AgentConfig(
-    model_name="test",
+    model_name="anthropic:claude-sonnet-4-20250514",
     tool_names=ALL_TOOL_NAMES,
     soft_compaction_limit=10000,
 )
@@ -217,6 +217,11 @@ INTEGRATION_AGENT_CONFIG = AgentConfig(
 @pytest.mark.asyncio
 class TestReconstructContextIntegration:
     """Integration tests: run_stateful_agent → DB persistence → reconstruct_context."""
+
+    @pytest.fixture(autouse=True)
+    def _fake_provider_keys(self, fake_provider_keys):
+        """Fake keys — construction uses a real model name, then the model is
+        overridden with TestModel for the actual run."""
 
     @pytest_asyncio.fixture(autouse=True)
     async def setup(self, session: AsyncSession, agent_record: AgentRecord, agent_deps: AgentDeps):
@@ -306,7 +311,7 @@ class TestReconstructContextIntegration:
         # Mutate config
         new_instructions = "MUTATED personality."
         mutated_config = AgentConfig(
-            model_name="test", tool_names=["memory_replace"], soft_compaction_limit=10000
+            model_name="anthropic:claude-sonnet-4-20250514", tool_names=["memory_replace"], soft_compaction_limit=10000
         )
         self.agent_record.system_instructions = new_instructions
         self.agent_record.agent_config = mutated_config

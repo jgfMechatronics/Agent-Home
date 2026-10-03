@@ -35,8 +35,6 @@ def validate_model_name(model_name: str) -> str:
 
     Returns the name unchanged.
     """
-    if model_name == "test":
-        return model_name  # pydantic-ai magic string — instantiates TestModel
     if not model_name.strip():
         raise ValueError("model_name cannot be empty")
     provider, model = parse_model_id(model_name)
