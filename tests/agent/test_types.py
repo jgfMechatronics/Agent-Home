@@ -11,7 +11,22 @@ import pytest
 from conftest import SAMPLE_AGENT_CONFIG_DATA
 from pydantic import ValidationError
 
-from agent.types import AgentConfig, AgentDeps
+from agent.types import AgentConfig, AgentDeps, validate_model_name
+
+
+def test_validate_model_name_works_without_api_keys(monkeypatch):
+    """Validation must not require provider API keys.
+
+    Standalone DB readers (integrity checker, CLI tools, migration scripts)
+    run outside the server environment and have no keys set. Guards against
+    regression to instantiation-based validation (e.g. via infer_model),
+    which crashed the integrity checker on production DBs.
+    """
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    # Prefixed and legacy bare names both validate without any keys
+    assert validate_model_name("anthropic:claude-haiku-4-5") == "anthropic:claude-haiku-4-5"
+    assert validate_model_name("claude-haiku-4-5-20251001") == "claude-haiku-4-5-20251001"
 
 
 @pytest.fixture
@@ -54,9 +69,9 @@ def test_agentconfig_requires_field(valid_config_data: dict, missing_field: str)
 # --- AgentConfig type validation ---
 
 @pytest.mark.parametrize("field,invalid_value,description", [
-    ("model_name", "", "empty string — infer_model rejects"),
-    ("model_name", "   ", "whitespace only — infer_model rejects"),
-    ("model_name", ":claude-haiku-4-5", "empty provider — infer_model rejects"),
+    ("model_name", "", "empty string — caught by empty check"),
+    ("model_name", "   ", "whitespace only — caught by empty check"),
+    ("model_name", ":claude-haiku-4-5", "empty provider — registry rejects"),
     ("model_name", "anthropic:", "empty model part — our check"),
     ("model_name", "anthropic:   ", "whitespace model part — our check"),
     ("tool_names", "not_a_list", "tool_names must be a list"),
@@ -108,7 +123,7 @@ def test_agentconfig_accepts_valid_model_name(valid_config_data: dict, model_nam
 
 
 def test_agentconfig_rejects_unknown_provider(valid_config_data: dict):
-    """Unknown providers should be rejected via infer_model, surfacing as ValidationError."""
+    """Unknown providers should be rejected via provider registry lookup, surfacing as ValidationError."""
     valid_config_data["model_name"] = "badprovider:some-model"
     with pytest.raises(ValidationError):
         AgentConfig(**valid_config_data)

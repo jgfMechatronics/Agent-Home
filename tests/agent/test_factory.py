@@ -55,6 +55,12 @@ def assert_lock_acquired_and_released(lock: asyncio.Lock) -> None:
 
 # --- Fixtures ---
 
+@pytest.fixture(autouse=True)
+def _fake_provider_keys(fake_provider_keys):
+    """Fake keys for every factory test — all construct real provider clients
+    via infer_model() in build_agent_and_deps / _build_model_settings."""
+
+
 @pytest.fixture
 def agent_app_state_reg() -> dict[str, AgentAppState]:
     """

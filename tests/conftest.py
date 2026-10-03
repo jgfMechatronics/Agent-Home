@@ -17,12 +17,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
 from db.connection import _configure_sqlite_conn
 
-# Fake API keys so infer_model() can instantiate providers without real credentials.
-# Using setdefault preserves real keys when present (e.g. in CI or local dev with .env).
-os.environ.setdefault("ANTHROPIC_API_KEY", "test-fake-key")
-os.environ.setdefault("OPENAI_API_KEY", "test-fake-key")
-os.environ.setdefault("TOGETHER_API_KEY", "test-fake-key")
-os.environ.setdefault("GROQ_API_KEY", "test-fake-key")
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -88,6 +82,22 @@ class _FrozenAgentConfig(AgentConfig):
 
 
 SAMPLE_AGENT_CONFIG = _FrozenAgentConfig(**SAMPLE_AGENT_CONFIG_DATA)
+
+
+@pytest.fixture
+def fake_provider_keys(monkeypatch):
+    """Fake API keys for provider client construction.
+
+    Building agents via infer_model() instantiates provider clients, which
+    require API keys at construction time. No API calls are made in unit
+    tests — keys are only needed to satisfy client constructors.
+
+    The rest of the suite runs keyless, matching standalone DB readers
+    (integrity checker, CLI tools) and guarding against validation
+    regressing to require keys.
+    """
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY"):
+        monkeypatch.setenv(key, "test-fake-key")
 
 
 # ---------------------------------------------------------------------------

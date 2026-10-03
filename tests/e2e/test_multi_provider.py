@@ -1,53 +1,26 @@
 """E2E tests for multi-provider support.
 
 Verifies that a single-turn agent run completes successfully across providers.
-Each provider case is skipped if the required API key env var is not set.
+Requires API keys for each provider (via .env or exported env) — missing keys
+fail loudly rather than skipping.
 
 Run with: pytest tests/e2e -m e2e
 """
-import os
-
 import httpx
 import pytest
 
 from tests.e2e.conftest import get_or_create_agent, send_message
 
 
-# ---------------------------------------------------------------------------
-# Provider matrix
-# ---------------------------------------------------------------------------
-
-PROVIDERS = [
-    pytest.param(
-        ("anthropic:claude-haiku-4-5", "ANTHROPIC_API_KEY"),
-        id="anthropic",
-    ),
-    pytest.param(
-        ("together:zai-org/GLM-5.3-Flash", "TOGETHER_API_KEY"),
-        id="together-glm-5.3-flash",
-    ),
-]
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(params=PROVIDERS)
-def provider_config(request) -> tuple[str, str]:
-    """Yield (model_name, api_key_env) for each provider, skipping if key absent."""
-    model_name, key_env = request.param
-    if not os.environ.get(key_env):
-        pytest.skip(f"{key_env} not set")
-    return model_name, key_env
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        pytest.param("anthropic:claude-haiku-4-5", id="anthropic"),
+        pytest.param("together:zai-org/GLM-5.3-Flash", id="together-glm-5.3-flash"),
+    ],
+)
 async def test_single_turn_responds(
-    provider_config: tuple[str, str],
+    model_name: str,
     live_server: str,
     client: httpx.AsyncClient,
 ):
@@ -57,7 +30,6 @@ async def test_single_turn_responds(
     that the response is not a refusal. A non-empty event list confirms the
     run completed and the provider is wired correctly end-to-end.
     """
-    model_name, _ = provider_config
     agent_id = await get_or_create_agent(client, live_server, model_name)
     events = await send_message(client, live_server, agent_id, "Say 'hello' and nothing else.")
 
