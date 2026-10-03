@@ -55,6 +55,22 @@ def assert_lock_acquired_and_released(lock: asyncio.Lock) -> None:
 
 # --- Fixtures ---
 
+@pytest.fixture(autouse=True)
+def _fake_provider_keys(monkeypatch):
+    """Fake API keys for provider client construction.
+
+    Building agents via infer_model() instantiates provider clients, which
+    require API keys at construction time. No API calls are made in unit
+    tests — keys are only needed to satisfy client constructors.
+
+    Deliberately scoped to this module: the rest of the suite runs keyless,
+    matching standalone DB readers (integrity checker, CLI tools) and
+    guarding against validation regressing to require keys.
+    """
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY"):
+        monkeypatch.setenv(key, "test-fake-key")
+
+
 @pytest.fixture
 def agent_app_state_reg() -> dict[str, AgentAppState]:
     """
