@@ -22,11 +22,12 @@ def test_validate_model_name_works_without_api_keys(monkeypatch):
     regression to instantiation-based validation (e.g. via infer_model),
     which crashed the integrity checker on production DBs.
     """
-    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY"):
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY", "ZAI_API_KEY"):
         monkeypatch.delenv(key, raising=False)
-    # Prefixed and legacy bare names both validate without any keys
+    # Prefixed names validate without any keys
     assert validate_model_name("anthropic:claude-haiku-4-5") == "anthropic:claude-haiku-4-5"
-    assert validate_model_name("claude-haiku-4-5-20251001") == "claude-haiku-4-5-20251001"
+    assert validate_model_name("together:glm-5.3") == "together:glm-5.3"
+    assert validate_model_name("zai:glm-5.3") == "zai:glm-5.3"
 
 
 @pytest.fixture

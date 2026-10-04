@@ -26,9 +26,8 @@ def validate_model_name(model_name: str) -> str:
     WITHOUT instantiating it — no API keys required. This makes validation safe
     for standalone DB readers (integrity checker, CLI tools, migration scripts).
 
-    Accepts 'provider:model' format (e.g. 'anthropic:claude-haiku-4-5') and
-    legacy bare names that pydantic-ai can resolve (e.g. 'claude-haiku-4-5',
-    which emits a DeprecationWarning).
+    Accepts 'provider:model' format (e.g. 'anthropic:claude-haiku-4-5', 'zai:glm-5.3').
+    Bare names are not supported (pydantic-ai 2.x dropped legacy resolution).
 
     Full instantiation (which requires API keys) happens naturally in
     factory._build_model_settings when the agent actually runs.
