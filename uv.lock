@@ -608,7 +608,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=3.4.3" },
     { name = "httpx" },
     { name = "markdownify", specifier = ">=1.2.3" },
-    { name = "pydantic-ai", specifier = ">=1.105" },
+    { name = "pydantic-ai", specifier = ">=2.54.0" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pytest-asyncio", marker = "extra == 'test'" },
     { name = "pytest-mock", marker = "extra == 'test'" },
