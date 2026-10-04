@@ -388,7 +388,8 @@ class TestBuildAgentAndDeps:
         async with self.factory.build_agent_and_deps() as (agent, deps):
             assert agent.name == self.agent_record.name, "Agent name should come from the agent record"
             assert agent._deps_type is AgentDeps, "deps_type must be AgentDeps for tool functions to receive correct deps"
-            assert get_system_prompt in agent._instructions, "get_system_prompt must be registered as the instructions function"
+            instructions = [si.instruction for si in agent._instructions]
+            assert get_system_prompt in instructions, "get_system_prompt must be registered as the instructions function"
             assert agent._output_schema.allows_deferred_tools, "output_type must include DeferredToolRequests for the tool approval flow"
 
     async def test_model_settings_applied_from_helper(self):
