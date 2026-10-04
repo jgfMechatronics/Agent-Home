@@ -5,6 +5,7 @@ Run with: pytest tests/e2e -m e2e
 """
 
 import os
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -60,14 +61,48 @@ def pytest_configure(config):
     config.option.tx = []
 
 
+def _require_port_free(server_url: str) -> None:
+    """Fail fast with a helpful message if the target port is already occupied.
+
+    A stray server (e.g. orphaned by a crashed previous run) on the port makes
+    e2e tests fail in confusing ways — health checks pass against the WRONG
+    server, or the fresh server fails to bind. Detecting it up front turns
+    that into an immediate, actionable error.
+    """
+    parsed = httpx.URL(server_url)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        if s.connect_ex((str(parsed.host), parsed.port)) != 0:
+            return  # Port is free
+
+    # Something is listening — classify it for a better message.
+    what = "another process"
+    try:
+        resp = httpx.get(f"{server_url}/health", timeout=1.0)
+        if resp.status_code == 200:
+            what = "an Agent Home server (likely a stray from a previous run)"
+    except httpx.RequestError:
+        pass
+
+    pytest.fail(
+        f"Port {parsed.port} is already in use by {what}.\n"
+        f"Find it:    ps aux | grep -E 'uvicorn|start_server' | grep -v grep\n"
+        f"Kill it:    kill <PID>   (or run stop_server.sh if the PID file exists)"
+    )
+
+
 @pytest.fixture(scope="session")
 def live_server(tmp_path_factory):
     """Start server before E2E tests, stop after.
-    
+
     Uses start_server.sh and stop_server.sh from project root.
     Session-scoped so server starts once for all E2E tests.
     Uses a temp directory for the database to ensure test isolation.
     """
+    # Pre-flight: fail fast (with remediation) if the port is already occupied —
+    # a stray server from a previous run makes tests fail in confusing ways.
+    _require_port_free(SERVER_URL)
+
     start_script = PROJECT_ROOT / "start_server.sh"
     stop_script = PROJECT_ROOT / "stop_server.sh"
     
