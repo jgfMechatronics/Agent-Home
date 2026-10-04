@@ -44,6 +44,22 @@ def pytest_collection_modifyitems(items):
             item.add_marker(pytest.mark.e2e)
 
 
+def pytest_configure(config):
+    """Force serial execution for e2e runs.
+
+    E2E tests manage live servers on fixed ports — parallel xdist workers
+    would each spawn a conflicting server. This conftest only loads on the
+    controller when tests/e2e is given as a run path, so clearing the xdist
+    options here disables parallelism for e2e runs while leaving the default
+    suite parallel. All three options must be cleared: xdist populates
+    option.tx (worker specs) during cmdline_main, before configure hooks run,
+    and worker spawning is driven by tx/dist — numprocesses alone is ignored.
+    """
+    config.option.numprocesses = 0
+    config.option.dist = "no"
+    config.option.tx = []
+
+
 @pytest.fixture(scope="session")
 def live_server(tmp_path_factory):
     """Start server before E2E tests, stop after.
