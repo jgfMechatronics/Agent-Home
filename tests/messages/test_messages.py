@@ -3,12 +3,14 @@ Tests for messages/messages.py — persist_messages, load_messages, deserialize_
 """
 import json
 import time
+from collections.abc import Sequence
 
 import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock, patch
 
 from pydantic_ai import Agent
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -129,7 +131,7 @@ class DBTestBase:
         self.agent = agent_record
         self.deps = agent_deps
 
-    async def _persist(self, messages, toolsets=None, *, deps=None) -> int | None:
+    async def _persist(self, messages: list[ModelMessage], toolsets: Sequence[AbstractToolset] | None = None, *, deps: AgentDeps | None = None) -> int | None:
         """Persist messages with real toolset extraction. Defaults to no toolsets."""
         return await persist_messages(
             deps if deps is not None else self.deps,
@@ -137,7 +139,7 @@ class DBTestBase:
             toolsets if toolsets is not None else [],
         )
 
-    async def _persist_and_fetch(self, messages, toolsets=None) -> list[MessageRecord]:
+    async def _persist_and_fetch(self, messages: list[ModelMessage], toolsets: Sequence[AbstractToolset] | None = None) -> list[MessageRecord]:
         await self._persist(messages, toolsets)
         return await fetch_all_records(self.session, self.agent.id)
 
@@ -417,7 +419,7 @@ class TestPersistMessagesSnapshots(DBTestBase):
     here because the point of these tests is to verify snapshot *content*, not extraction.
     """
 
-    async def _persist(self, messages, tool_schemas=None, *, deps=None) -> int | None:
+    async def _persist(self, messages: list[ModelMessage], tool_schemas: list[ToolDefinition] | None = None, *, deps: AgentDeps | None = None) -> int | None:
         schemas = tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS
         with patch("messages.messages._extract_tool_definitions", AsyncMock(return_value=schemas)):
             return await persist_messages(
@@ -426,7 +428,7 @@ class TestPersistMessagesSnapshots(DBTestBase):
                 [],
             )
 
-    async def _persist_and_fetch(self, messages, tool_schemas=None) -> list[MessageRecord]:
+    async def _persist_and_fetch(self, messages: list[ModelMessage], tool_schemas: list[ToolDefinition] | None = None) -> list[MessageRecord]:
         await self._persist(messages, tool_schemas)
         return await fetch_all_records(self.session, self.agent.id)
 
