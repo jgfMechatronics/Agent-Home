@@ -353,7 +353,7 @@ async def persist_messages(
     if errors:
         if _is_error_pass:
             raise RuntimeError("Persistence errors during attempt to persist error notifications")
-        await _persist_error_warnings(deps, errors, tool_schemas)
+        await _persist_error_warnings(deps, errors, toolsets)
     else:
         await deps.session.flush()
 

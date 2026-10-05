@@ -45,6 +45,21 @@ from agent.types import AgentDeps
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _make_function_toolset():
+    """Return a real FunctionToolset with one dummy tool.
+
+    Called at module load time for use in parametrize — Agent construction and
+    tool registration are synchronous so this is safe outside an event loop.
+    """
+    _agent = Agent("test")
+
+    @_agent.tool
+    async def dummy_tool(ctx, x: str) -> str:  # pragma: no cover
+        return x
+
+    return _agent.toolsets
+
+
 SAMPLE_TOOL_SCHEMAS = [
     ToolDefinition(
         name="memory_replace",
@@ -114,25 +129,19 @@ class DBTestBase:
         self.agent = agent_record
         self.deps = agent_deps
 
-    async def _persist(self, messages, tool_schemas=None, *, deps=None) -> int | None:
-        """Persist messages with controlled tool schemas; use self.deps unless deps is provided.
+    async def _persist(self, messages, toolsets=None, *, deps=None) -> int | None:
+        """Persist messages with real toolset extraction. Defaults to no toolsets."""
+        return await persist_messages(
+            deps if deps is not None else self.deps,
+            messages,
+            toolsets if toolsets is not None else [],
+        )
 
-        Patches _extract_tool_definitions so tests can supply ToolDefinition lists directly
-        without needing real toolsets. Passes empty toolsets to persist_messages since
-        extraction is handled by the patch.
-        This approach is intended for compatibility with existing tests after a change to persist_messages signature
-        """
-        schemas = tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS
-        with patch("messages.messages._extract_tool_definitions", AsyncMock(return_value=schemas)):
-            return await persist_messages(
-                deps if deps is not None else self.deps,
-                messages,
-                [],
-            )
-
-    async def _persist_and_fetch(self, messages, tool_schemas=None) -> list[MessageRecord]:
-        await self._persist(messages, tool_schemas)
+    async def _persist_and_fetch(self, messages, toolsets=None) -> list[MessageRecord]:
+        await self._persist(messages, toolsets)
         return await fetch_all_records(self.session, self.agent.id)
+
+
 
 
 @pytest.mark.asyncio
@@ -344,11 +353,19 @@ class TestPersistMessages(DBTestBase):
         _, orphan_request = pair_fn()  # discard the matching call
         await self._assert_orphan_replaced(orphan_request, orphaned_part_type, expected_error)
 
-    async def test_serialization_failure_injects_error_response(self, caplog):
+    @pytest.mark.parametrize("toolsets", [
+        pytest.param([], id="no_tools"),
+        pytest.param(_make_function_toolset(), id="with_function_toolset"),
+    ])
+    async def test_serialization_failure_injects_error_response(self, caplog, toolsets):
         """
         If dump_json raises for a message, an error ModelResponse is stored in place of
         the bad message, remaining messages continue to be persisted, and a summary warning
         is appended at the end of the chain so the model/user can't miss it.
+
+        Parametrized over empty and non-empty toolsets: the non-empty case is a regression
+        guard for a bug where _persist_error_warnings received tool_schemas (list[ToolDefinition])
+        instead of toolsets, causing AttributeError on ts.label in _extract_tool_definitions.
         TODO: It would be nice to have an explicit error designator for model messages or responses.
         Possibly we should add a subtype to ModelRecord for stuff like easy tracking of "Tool Call", "Tool Return", "Error"
         """
@@ -366,7 +383,7 @@ class TestPersistMessages(DBTestBase):
             return original_dump(messages_arg)
 
         with patch.object(ModelMessagesTypeAdapter, "dump_json", side_effect=controlled_dump):
-            await self._persist([good, bad, good2])
+            await self._persist([good, bad, good2], toolsets=toolsets)
 
         records = await fetch_all_records(self.session, self.agent.id)
         assert len(records) == 4  # good, positional error, good2, summary warning
@@ -395,7 +412,25 @@ class TestPersistMessages(DBTestBase):
 
 @pytest.mark.asyncio
 class TestPersistMessagesSnapshots(DBTestBase):
-    """Tests for the snapshot and context-capture fields added to persist_messages."""
+    """Tests for the snapshot and context-capture fields added to persist_messages.
+
+    Shadows _persist/_persist_and_fetch to patch _extract_tool_definitions, so tests
+    can supply exact ToolDefinition lists without needing real toolsets. This is appropriate
+    here because the point of these tests is to verify snapshot *content*, not extraction.
+    """
+
+    async def _persist(self, messages, tool_schemas=None, *, deps=None) -> int | None:
+        schemas = tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS
+        with patch("messages.messages._extract_tool_definitions", AsyncMock(return_value=schemas)):
+            return await persist_messages(
+                deps if deps is not None else self.deps,
+                messages,
+                [],
+            )
+
+    async def _persist_and_fetch(self, messages, tool_schemas=None) -> list[MessageRecord]:
+        await self._persist(messages, tool_schemas)
+        return await fetch_all_records(self.session, self.agent.id)
 
     async def _sys_snapshots(self):
         return (await self.session.execute(select(SystemPromptSnapshot))).scalars().all()
