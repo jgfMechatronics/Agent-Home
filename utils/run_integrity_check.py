@@ -23,7 +23,8 @@ from pathlib import Path
 
 from agent.crud import get_all_agents
 from db.connection import create_sqlite_engine, get_session
-from utils.integrity_checker import check_agent_integrity, load_dismissals, filter_dismissed_issues, INTEGRITY_LOCKFILE_NAME
+from utils.integrity_checker import check_agent_integrity, load_dismissals, filter_dismissed_issues
+from common.constants import INTEGRITY_LOCKFILE_NAME
 
 _RESULTS_FILENAME = "integrity_checker_results.txt"
 _DISMISSALS_FILENAME = "integrity_issue_dismissals.json"
