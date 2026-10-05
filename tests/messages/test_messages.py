@@ -142,8 +142,6 @@ class DBTestBase:
         return await fetch_all_records(self.session, self.agent.id)
 
 
-
-
 @pytest.mark.asyncio
 class TestPersistMessages(DBTestBase):
     """Tests for persist_messages(deps, messages).
