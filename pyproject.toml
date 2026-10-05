@@ -36,15 +36,13 @@ test = [
 packages = [
     "src/agent",
     "src/api",
+    "src/common",
     "src/db",
     "src/memory",
     "src/messages",
     "src/mcp_tools",
     "src/prototype",
 ]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/constants.py" = "constants.py"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
