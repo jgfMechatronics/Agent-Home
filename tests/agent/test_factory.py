@@ -22,9 +22,17 @@ import pytest_asyncio
 from pytest_mock import MockerFixture
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
+from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.factory import AgentFactory, _build_model_settings
+from agent.compaction_warner import CompactionWarner
+from agent.factory import (
+    AgentFactory,
+    TOOL_OUTPUT_SPILL_CLEANUP_AFTER,
+    TOOL_OUTPUT_SPILL_THRESHOLD_CHARS,
+    _build_capabilities,
+    _build_model_settings,
+)
 from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError
 from memory.system_prompt_compilation import get_system_prompt
 from conftest import SAMPLE_AGENT_CONFIG
@@ -402,6 +410,18 @@ class TestBuildAgentAndDeps:
             async with self.factory.build_agent_and_deps() as (agent, deps):
                 mock_helper.assert_called_once_with(self.agent_record.agent_config)
 
+    async def test_capabilities_applied_from_helper(self):
+        """build_agent_and_deps applies the result of _build_capabilities to the agent.
+
+        Capability contents are covered by TestBuildCapabilities unit tests. Here we just
+        verify the helper is wired up (same pattern as the model settings helper test —
+        the Agent wraps capabilities into a CombinedCapability, so list-level inspection
+        is not practical).
+        """
+        with patch("agent.factory._build_capabilities", wraps=_build_capabilities) as mock_helper:
+            async with self.factory.build_agent_and_deps() as (agent, deps):
+                mock_helper.assert_called_once()
+
 
 # =============================================================================
 # _build_model_settings unit tests
@@ -462,6 +482,37 @@ class TestBuildModelSettings:
             settings = _build_model_settings(self._config(model_name))
             assert "anthropic_cache_instructions" not in settings
             assert "anthropic_thinking" not in settings
+
+
+# =============================================================================
+# _build_capabilities unit tests
+# =============================================================================
+
+class TestBuildCapabilities:
+    """Unit tests for _build_capabilities — called directly as a pure function.
+
+    Behavioral coverage (spill actually happening) lives in test_tool_output_limits.py;
+    these tests pin the *configuration* the factory injects.
+    """
+
+    def test_returns_compaction_warner_and_tool_output_limits(self):
+        """Every agent gets the compaction warner and the tool output spill capability."""
+        caps = _build_capabilities()
+        assert [type(c) for c in caps] == [CompactionWarner, ToolOutputLimits]
+
+    def test_tool_output_limits_config(self):
+        """ToolOutputLimits is configured for straight spill with truncate fallback and a TTL'd local store."""
+        tol = _build_capabilities()[1]
+
+        assert isinstance(tol.store, LocalFileStore)
+        assert tol.store.cleanup_after == TOOL_OUTPUT_SPILL_CLEANUP_AFTER
+
+        assert len(tol.bands) == 1
+        band = tol.bands[0]
+        assert isinstance(band, Band)
+        assert band.over == TOOL_OUTPUT_SPILL_THRESHOLD_CHARS
+        assert isinstance(band.action, Spill)
+        assert isinstance(band.action.then, Truncate)
 
 
 @pytest.mark.asyncio

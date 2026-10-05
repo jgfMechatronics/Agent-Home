@@ -13,13 +13,16 @@ StatefulAgent Pattern:
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import AsyncIterator
 
 from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
@@ -93,6 +96,34 @@ def _construct_toolsets(toolset_names: list[str]) -> list:
         else:
             logger.warning("Unknown toolset name %r — skipping. Check agent config for typos.", name)
     return toolsets
+
+
+# --- Auto-injected capability constants ---
+
+# Tool returns at or above this size (chars) are spilled to the overflow store instead of
+# persisting in message history. Value matches the library default for now; tune with experience.
+TOOL_OUTPUT_SPILL_THRESHOLD_CHARS: int = 10_000
+
+# Spilled payloads are pruned (best-effort, background) after this age. Containers get no
+# system-level temp cleanup, so this bounds disk growth between server container rebuilds.
+TOOL_OUTPUT_SPILL_CLEANUP_AFTER: timedelta = timedelta(days=14)
+
+
+def _build_capabilities() -> list[AgentCapability[AgentDeps]]:
+    """Auto-injected capabilities applied to every constructed agent.
+
+    - CompactionWarner: warns when the context window approaches the compaction threshold.
+    - ToolOutputLimits: spills oversized tool returns to a store, replacing them in history
+      with a handle + preview the model can page back through via the read_tool_result tool.
+      Spill is lossless; Truncate is the fallback when the store cannot accept the write.
+    """
+    return [
+        CompactionWarner(),
+        ToolOutputLimits(
+            bands=[Band(over=TOOL_OUTPUT_SPILL_THRESHOLD_CHARS, action=Spill(then=Truncate()))],
+            store=LocalFileStore(cleanup_after=TOOL_OUTPUT_SPILL_CLEANUP_AFTER),
+        ),
+    ]
 
 
 class AgentFactory:
@@ -175,7 +206,7 @@ class AgentFactory:
                           retries=deps.config.retries,
                           output_type=[str, DeferredToolRequests],
                           model_settings=model_settings,
-                          capabilities=[CompactionWarner()])
+                          capabilities=_build_capabilities())
             
             yield (agent, deps)
 

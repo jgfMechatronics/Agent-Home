@@ -22,6 +22,7 @@ dependencies = [
     "ddgs>=9.14.4",
     "markdownify>=1.2.3",
     "fastmcp>=3.4.3",
+    "pydantic-ai-harness>=0.54.0",
 ]
 
 [project.optional-dependencies]
