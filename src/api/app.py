@@ -20,7 +20,7 @@ from api.routes import router
 from prototype.iac.send_message import configure_iac  # TODO: Remove with IAC redesign
 from api.schemas import HealthResponse
 from db.connection import create_sqlite_engine, init_db
-from utils.integrity_checker import INTEGRITY_LOCKFILE_NAME
+from constants import INTEGRITY_LOCKFILE_NAME
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,9 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "e-llm-agent-server"
+name = "agent-home"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -28,9 +32,20 @@ test = [
     "pytest-xdist",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/agent",
+    "src/api",
+    "src/db",
+    "src/memory",
+    "src/messages",
+    "src/mcp_tools",
+    "src/prototype",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-pythonpath = [".", "tests"]
+pythonpath = ["src", ".", "tests"]
 markers = [
     "note: important info/caveats about tests",
     "e2e: end-to-end tests requiring live server",
@@ -38,7 +53,7 @@ markers = [
 addopts = "-n auto -m 'not e2e' --ignore=tests/e2e"
 
 [tool.uv]
-package = false
+package = true
 
 [tool.pyright]
-extraPaths = ["."]
+extraPaths = ["src", "."]

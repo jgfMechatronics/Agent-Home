@@ -19,8 +19,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 from db.models import MessageRecord
 from messages.messages import load_messages, deserialize_messages, is_valid_tool_pair, is_system_alert
-
-INTEGRITY_LOCKFILE_NAME = "INTEGRITY_CHECK_FAILED"
+from constants import INTEGRITY_LOCKFILE_NAME
 
 
 class Severity(Enum):
