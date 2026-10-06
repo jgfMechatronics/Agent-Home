@@ -49,8 +49,8 @@ def _payload() -> str:
     line = f"line {{i:05d}}: {filler}"
     line_count = 3 * TOOL_OUTPUT_SPILL_THRESHOLD_CHARS // len(line.format(i=0)) + 1
     lines = [line.format(i=i) for i in range(line_count)]
-    needle = line_count // 2
-    lines[needle] = f"line {needle:05d}: {PAYLOAD_MARKER}"
+    needle_idx = line_count // 2
+    lines[needle_idx] = f"line {needle_idx:05d}: {PAYLOAD_MARKER}"
     payload = "\n".join(lines)
     assert len(payload) > TOOL_OUTPUT_SPILL_THRESHOLD_CHARS
     return payload
