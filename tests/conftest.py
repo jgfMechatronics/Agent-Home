@@ -96,7 +96,7 @@ def fake_provider_keys(monkeypatch):
     (integrity checker, CLI tools) and guarding against validation
     regressing to require keys.
     """
-    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY"):
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY"):
         monkeypatch.setenv(key, "test-fake-key")
 
 

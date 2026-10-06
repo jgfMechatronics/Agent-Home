@@ -17,6 +17,7 @@ from tests.e2e.conftest import get_or_create_agent, send_message
     [
         pytest.param("anthropic:claude-haiku-4-5", id="anthropic"),
         pytest.param("together:zai-org/GLM-5.3-Flash", id="together-glm-5.3-flash"),
+        pytest.param("openrouter:z-ai/glm-5.3", id="openrouter-glm-5.3"),
     ],
 )
 async def test_single_turn_responds(

@@ -430,8 +430,8 @@ class TestBuildAgentAndDeps:
 class TestBuildModelSettings:
     """Unit tests for _build_model_settings — called directly as a pure function."""
 
-    def _config(self, model_name: str, thinking_enabled: bool = False) -> AgentConfig:
-        return SAMPLE_AGENT_CONFIG.model_copy(update={"model_name": model_name, "thinking_enabled": thinking_enabled})
+    def _config(self, model_name: str, thinking_mode: "bool | str" = False) -> AgentConfig:
+        return SAMPLE_AGENT_CONFIG.model_copy(update={"model_name": model_name, "thinking_mode": thinking_mode})
 
     # --- Base settings (common to all providers) ---
 
@@ -439,6 +439,7 @@ class TestBuildModelSettings:
         "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
         "openai-chat:gpt-4o",
         "anthropic:claude-haiku-4-5",
+        "openrouter:z-ai/glm-5.3",
     ])
     def test_base_settings_defaults(self, model_name: str):
         """All providers: parallel_tool_calls=False, thinking=False by default."""
@@ -450,11 +451,13 @@ class TestBuildModelSettings:
         "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
         "openai-chat:gpt-4o",
         "anthropic:claude-haiku-4-5",
+        "openrouter:z-ai/glm-5.3",
     ])
-    def test_base_settings_thinking_enabled(self, model_name: str):
-        """All providers: thinking=True when thinking_enabled."""
-        settings = _build_model_settings(self._config(model_name, thinking_enabled=True))
-        assert settings.get("thinking") is True
+    @pytest.mark.parametrize("thinking_mode", [True, "high", "low"])
+    def test_base_settings_thinking_mode(self, model_name: str, thinking_mode: "bool | str"):
+        """All providers: thinking passes through thinking_mode (bool or effort level)."""
+        settings = _build_model_settings(self._config(model_name, thinking_mode=thinking_mode))
+        assert settings.get("thinking") is thinking_mode
 
     # --- Anthropic-specific settings ---
 
@@ -466,14 +469,14 @@ class TestBuildModelSettings:
         assert settings.get("anthropic_cache_messages") is True
 
     def test_anthropic_thinking_sets_budget(self):
-        """thinking_enabled=True → anthropic_thinking with budget and max_tokens."""
-        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_enabled=True))
+        """thinking_mode=True → anthropic_thinking with budget and max_tokens."""
+        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_mode=True))
         assert settings.get("anthropic_thinking") == {"type": "enabled", "budget_tokens": 10000}
         assert settings.get("max_tokens") == 16000
 
     def test_anthropic_thinking_disabled_no_budget(self):
-        """thinking_enabled=False → no anthropic_thinking set."""
-        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_enabled=False))
+        """thinking_mode=False → no anthropic_thinking set."""
+        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_mode=False))
         assert "anthropic_thinking" not in settings
 
     def test_non_anthropic_no_cache_flags(self):
@@ -482,6 +485,26 @@ class TestBuildModelSettings:
             settings = _build_model_settings(self._config(model_name))
             assert "anthropic_cache_instructions" not in settings
             assert "anthropic_thinking" not in settings
+
+    # --- OpenRouter-specific settings ---
+
+    def test_openrouter_routing_prefs(self):
+        """OpenRouter model → fp8-only routing, price sort (Auto Exacto off), data collection denied."""
+        settings = _build_model_settings(self._config("openrouter:z-ai/glm-5.3"))
+        provider = settings.get("openrouter_provider")
+        assert provider == {"quantizations": ["fp8"], "sort": "price", "data_collection": "deny"}
+
+    def test_openrouter_usage_included(self):
+        """OpenRouter model → usage details included in responses."""
+        settings = _build_model_settings(self._config("openrouter:z-ai/glm-5.3"))
+        assert settings.get("openrouter_usage") == {"include": True}
+
+    def test_non_openrouter_no_routing_prefs(self):
+        """Non-OpenRouter providers → no openrouter fields."""
+        for model_name in ("together:meta-llama/Llama-3.3-70B-Instruct-Turbo", "anthropic:claude-haiku-4-5"):
+            settings = _build_model_settings(self._config(model_name))
+            assert "openrouter_provider" not in settings
+            assert "openrouter_usage" not in settings
 
 
 # =============================================================================

@@ -105,7 +105,7 @@ def default_agent_config() -> dict:
         "model_name": DEFAULT_MODEL,
         "tool_names": DEFAULT_MEMORY_TOOLS,
         "soft_compaction_limit": DEFAULT_SOFT_COMPACTION_LIMIT,
-        "thinking_enabled": True,
+        "thinking_mode": True,
     }
 
 
@@ -337,8 +337,14 @@ def run_config_wizard(state: CLIState) -> dict:
     is_deletable_str = prompt_with_default(state, "Is deletable (true/false)", "false")
     is_deletable = is_deletable_str.lower() in ("true", "yes", "1")
     
-    thinking_str = prompt_with_default(state, "Enable thinking (true/false)", "true")
-    thinking_enabled = thinking_str.lower() in ("true", "yes", "1")
+    thinking_str = prompt_with_default(state, "Thinking mode (true/false or effort: minimal/low/medium/high/xhigh)", "true")
+    thinking_str = thinking_str.strip().lower()
+    if thinking_str in ("true", "yes", "1"):
+        thinking_mode = True
+    elif thinking_str in ("false", "no", "0"):
+        thinking_mode = False
+    else:
+        thinking_mode = thinking_str  # effort level, validated by AgentConfig
 
     default_tools = ", ".join(DEFAULT_MEMORY_TOOLS)
     tools_str = prompt_with_default(state, "Tool names (comma-separated)", default_tools)
@@ -355,7 +361,7 @@ def run_config_wizard(state: CLIState) -> dict:
             "soft_compaction_limit": soft_compaction_limit,
             "compaction_target_fraction": compaction_target_fraction,
             "is_deletable": is_deletable,
-            "thinking_enabled": thinking_enabled,
+            "thinking_mode": thinking_mode,
         },
     }
 

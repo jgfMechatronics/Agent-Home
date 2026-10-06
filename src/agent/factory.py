@@ -21,6 +21,7 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,10 +44,10 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     """Return provider-appropriate ModelSettings for the given agent config.
 
     Uses infer_model() to resolve the provider type, then dispatches on
-    AnthropicModel for Anthropic-specific settings. All other providers
-    (OpenAI, Together, Fireworks, etc.) receive base ModelSettings with
-    the unified 'thinking' field, which pydantic-ai maps to each provider's
-    native reasoning parameter.
+    AnthropicModel for Anthropic-specific settings and OpenRouterModel for
+    OpenRouter routing preferences. All other providers receive base
+    ModelSettings with the unified 'thinking' field, which pydantic-ai maps
+    to each provider's native reasoning parameter.
 
     parallel_tool_calls=False is applied for all providers: our orphan remover
     is not compatible with parallel tool calls.
@@ -58,7 +59,7 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     # takes precedence over this field (set below), so both can coexist safely.
     settings = ModelSettings(
         parallel_tool_calls=False,
-        thinking=config.thinking_enabled,
+        thinking=config.thinking_mode,
     )
 
     if isinstance(m, AnthropicModel):
@@ -71,7 +72,24 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
             anthropic_cache_messages=True,
             # Anthropic requires max_tokens > budget_tokens when thinking is enabled
             **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
-                "max_tokens": 16000} if config.thinking_enabled else {}),
+                "max_tokens": 16000} if config.thinking_mode else {}),
+        )
+    elif isinstance(m, OpenRouterModel):
+        # Routing preferences for OpenRouter-served models:
+        # - quantizations: fp8 matches Z.AI's native serving quant — avoids fp4 routes
+        #   with observable quality loss on our workload
+        # - sort: price — cheapest qualifying provider; also opts out of Auto Exacto
+        #   (provider reordering per tool-calling request), which would bust prompt
+        #   caches mid-conversation. With price sort, sticky routing holds.
+        # - data_collection: deny — no provider-side training on our data
+        settings = OpenRouterModelSettings(
+            **settings,
+            openrouter_provider={
+                "quantizations": ["fp8"],
+                "sort": "price",
+                "data_collection": "deny",
+            },
+            openrouter_usage={"include": True},
         )
 
     return settings

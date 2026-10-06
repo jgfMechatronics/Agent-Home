@@ -94,7 +94,7 @@ class TestAFIngestion:
             model_name="anthropic:claude-haiku-4-5-20251001",
             tool_names=["memory_insert", "memory_replace", "web_fetch", "duckduckgo_search"],
             soft_compaction_limit=32000,
-            thinking_enabled=True,
+            thinking_mode=True,
             # remaining values should be default, not set by af ingestion
         )
         # tool_names order may vary
