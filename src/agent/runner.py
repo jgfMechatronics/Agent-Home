@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from typing import AsyncGenerator, TYPE_CHECKING
 
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ToolResultEvent,
@@ -113,7 +114,8 @@ async def run_stateful_agent(agent: Agent,
             try:
                 async with agent.run_stream_events(user_prompt=user_prompt,
                                                     message_history=message_history,
-                                                    deps=deps) as stream:
+                                                    deps=deps,
+                                                    usage_limits=UsageLimits(request_limit=100)) as stream:
                     last_total_tokens_value = None
 
                     async for event in stream:

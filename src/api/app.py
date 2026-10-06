@@ -2,7 +2,6 @@
 import asyncio
 import logging
 import os
-import signal
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
@@ -60,18 +59,6 @@ class OriginValidationMiddleware:
         await self.app(scope, receive, send)
 
 
-def _handle_background_task_exception(loop: asyncio.AbstractEventLoop, context: dict) -> None:
-    """
-    The user is not notified about exceptions in background tasks, and they will typically occur
-    in contexts where agents may be running unmonitored, and critically, may be kicking off new runs for each other
-    in a degraded state.
-    Kill server to prevent dammage
-    """
-    exc = context.get("exception")
-    logger.critical("Unhandled exception in background task, shutting down: %s", exc, exc_info=exc)
-    os.kill(os.getpid(), signal.SIGTERM)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     lockfile = Path(DB_PATH).parent / INTEGRITY_LOCKFILE_NAME
@@ -83,7 +70,6 @@ async def lifespan(app: FastAPI):
         )
         logger.critical(msg)
         raise RuntimeError(msg)
-    asyncio.get_running_loop().set_exception_handler(_handle_background_task_exception)
     engine = create_sqlite_engine(DB_PATH)
     hub = BroadcastHub()
     try:
