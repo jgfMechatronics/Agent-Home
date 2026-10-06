@@ -101,8 +101,10 @@ def _construct_toolsets(toolset_names: list[str]) -> list:
 # --- Auto-injected capability constants ---
 
 # Tool returns at or above this size (chars) are spilled to the overflow store instead of
-# persisting in message history. Value matches the library default for now; tune with experience.
-TOOL_OUTPUT_SPILL_THRESHOLD_CHARS: int = 10_000
+# persisting in message history. ~500 lines of code: whole-file reads of typical source
+# files pass through; larger sweeps, verbose search output, and context bombs spill.
+# Chosen from read-distribution data + a feel-test (Oct 5); tune with live experience.
+TOOL_OUTPUT_SPILL_THRESHOLD_CHARS: int = 20_000
 
 # Spilled payloads are pruned (best-effort, background) after this age. Containers get no
 # system-level temp cleanup, so this bounds disk growth between server container rebuilds.
