@@ -69,6 +69,9 @@ class _ScriptedFunction:
     live message history (list of ModelMessage) and returning a ModelResponse —
     used to script read_tool_result calls that depend on a handle spilled
     earlier in the same run. Running out of steps raises IndexError: fail loudly.
+    
+    TODO: We should consider if this _ScriptedFunction and the corresponding FunctionModel build from it could replace the FunctionModelTestAgent
+    or at least inspire it.
     """
 
     def __init__(self, steps: list):
