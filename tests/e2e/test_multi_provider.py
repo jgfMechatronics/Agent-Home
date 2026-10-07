@@ -28,10 +28,16 @@ async def test_single_turn_responds(
     """Agent completes a single-turn exchange for each provider.
 
     send_message streams the /messages SSE response and validates internally
-    that the response is not a refusal. A non-empty event list confirms the
-    run completed and the provider is wired correctly end-to-end.
+    that the response is not a refusal. Success requires an error-free stream
+    that reaches a result — a non-empty event list alone is NOT sufficient
+    (auth failures mid-stream still yield RunStarted + Error + RunCompleted).
     """
     agent_id = await get_or_create_agent(client, live_server, model_name)
     events = await send_message(client, live_server, agent_id, "Say 'hello' and nothing else.")
 
-    assert len(events) > 0, f"No events received from {model_name}"
+    error_events = [e for e in events if e.get("event") == "Error"]
+    assert not error_events, f"Run errored for {model_name}: {error_events}"
+
+    assert any(e.get("event") == "AgentRunResultEvent" for e in events), (
+        f"Run did not complete for {model_name}: {[e['event'] for e in events]}"
+    )
