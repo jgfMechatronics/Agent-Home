@@ -70,9 +70,6 @@ async def lifespan(app: FastAPI):
         )
         logger.critical(msg)
         raise RuntimeError(msg)
-    # Background task exceptions use Python's default handler (log-only).
-    # Unhandled errors in agent runs surface to subscribers via RunErrorEvent
-    # before re-raising, so callers are notified without killing the server.
     engine = create_sqlite_engine(DB_PATH)
     hub = BroadcastHub()
     try:
