@@ -355,14 +355,13 @@ class TestPersistMessages(DBTestBase):
         await self._assert_orphan_replaced(orphan_request, orphaned_part_type, expected_error)
 
     def _make_output_retry_request(self) -> ModelRequest:
-        """An output-retry ModelRequest as pydantic-ai constructs it after an output-less
-        response: RetryPromptPart with no tool_name (its tool_call_id is auto-generated
+        """An output-retry ModelRequest as pydantic-ai constructs it after a model response
+        which was judged invalid: RetryPromptPart with no tool_name (its tool_call_id is auto-generated
         and matches no real tool call)."""
         return ModelRequest(parts=[RetryPromptPart(content="Please return text or call a tool.")])
 
     async def test_output_retry_after_empty_response_is_preserved(self):
-        """The pydantic-ai v2 output-retry path: model returns an output-less response
-        (e.g. stop-token-only after a completed tool call), pydantic-ai inserts a
+        """The pydantic-ai v2 output-retry path: model returns an invalid response, pydantic-ai inserts a
         RetryPromptPart with no tool_name. It responds to the empty response, not to any
         tool call, so it must NOT be treated as an orphaned tool retry."""
         empty_response = ModelResponse(parts=[])
