@@ -14,6 +14,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
+    ModelRequest,
     ModelResponse,
     RetryPromptPart,
     TextPart,
@@ -352,6 +353,38 @@ class TestPersistMessages(DBTestBase):
         preceded by a matching ToolCallPart should be replaced with an error ModelResponse."""
         _, orphan_request = pair_fn()  # discard the matching call
         await self._assert_orphan_replaced(orphan_request, orphaned_part_type, expected_error)
+
+    def _make_output_retry_request(self) -> ModelRequest:
+        """An output-retry ModelRequest as pydantic-ai constructs it after an output-less
+        response: RetryPromptPart with no tool_name (its tool_call_id is auto-generated
+        and matches no real tool call)."""
+        return ModelRequest(parts=[RetryPromptPart(content="Please return text or call a tool.")])
+
+    async def test_output_retry_after_empty_response_is_preserved(self):
+        """The pydantic-ai v2 output-retry path: model returns an output-less response
+        (e.g. stop-token-only after a completed tool call), pydantic-ai inserts a
+        RetryPromptPart with no tool_name. It responds to the empty response, not to any
+        tool call, so it must NOT be treated as an orphaned tool retry."""
+        empty_response = ModelResponse(parts=[])
+        retry_request = self._make_output_retry_request()
+        records = await self._persist_and_fetch([empty_response, retry_request])
+
+        # Both messages stored as-is; no error replacement, no summary warning appended
+        assert len(records) == 2
+        restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
+        assert restored == [empty_response, retry_request]
+
+    async def test_output_retry_alongside_matched_tool_return_is_preserved(self):
+        """An output retry in the same ModelRequest as a matched ToolReturnPart must not
+        break the pairing check — its synthetic tool_call_id is excluded from comparison
+        because it has no tool_name."""
+        call_response, return_request = make_tool_pair()
+        return_request.parts.append(RetryPromptPart(content="Please return text or call a tool."))
+        records = await self._persist_and_fetch([call_response, return_request])
+
+        assert len(records) == 2
+        restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
+        assert restored == [call_response, return_request]
 
     @pytest.mark.parametrize("toolsets", [
         pytest.param([], id="no_tools"),
