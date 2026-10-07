@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from typing import AsyncGenerator, TYPE_CHECKING
 
 from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
+from pydantic_ai.usage import UsageLimits
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ToolResultEvent,
@@ -21,6 +22,11 @@ if TYPE_CHECKING:
     from pydantic_ai.toolsets import AbstractToolset
 
 logger = logging.getLogger(__name__)
+
+# pydantic-ai's default request_limit is 50, which proved too low for tool-heavy autonomous
+# sessions. 100 gives headroom while still catching genuinely runaway agents.
+# Per-agent configurability (like AgentConfig.retries) is the natural extension if 100 ever proves tight.
+_REQUEST_LIMIT = 100
 
 COMPACTION_RESUME_NOTICE = format_system_alert("Compaction complete, resuming run. Oldest context was trimmed to stay within limits. This notice does not mark the trim boundary, there are messages prior to this alert which were retained.\n" \
                                                "Your system prompt has been recompiled. Any memory edits up to this notice are now reflected in your core memory blocks.\n"
@@ -113,7 +119,8 @@ async def run_stateful_agent(agent: Agent,
             try:
                 async with agent.run_stream_events(user_prompt=user_prompt,
                                                     message_history=message_history,
-                                                    deps=deps) as stream:
+                                                    deps=deps,
+                                                    usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT)) as stream:
                     last_total_tokens_value = None
 
                     async for event in stream:

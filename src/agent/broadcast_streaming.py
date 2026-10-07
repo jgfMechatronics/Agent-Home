@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, AsyncGenerator, AsyncIterator
 from starlette.requests import Request
 
 from agent.runner import run_stateful_agent
+from agent.types import MCPConnError
 
 if TYPE_CHECKING:
     from pydantic_ai import Agent
@@ -33,6 +34,22 @@ class RunStartedEvent:
 class RunCompletedEvent:
     """Emitted after all pydantic-ai events in a run."""
     status: str  # "success" | "cancelled" | "error"
+
+
+@dataclass(frozen=True)
+class RunErrorEvent:
+    """Emitted when an agent run fails with an unhandled exception.
+
+    Broadcast before RunCompletedEvent(status='error') so subscribers see the
+    error details before the terminal signal. Mirrors the Error SSE emitted by
+    the handle_message route for direct (non-background) runs.
+    """
+    message: str
+
+    @classmethod
+    def from_exception(cls, e: Exception) -> "RunErrorEvent":
+        """Format a generic unexpected error (matches historical handle_message output)."""
+        return cls(message=f"\n\nUnexpected internal server error: '{type(e).__name__}: {str(e)}'")
 
 
 @dataclass(frozen=True)
@@ -140,8 +157,13 @@ async def run_agent_with_broadcast(
         async for event in run_stateful_agent(agent, deps, agent_app_state, user_prompt):
             hub.broadcast(agent_id, event)
             yield event
-    except Exception:
+    except MCPConnError as e:
         status = "error"
+        hub.broadcast(agent_id, RunErrorEvent(message=f"\n\n{e}"))
+        raise
+    except Exception as e:
+        status = "error"
+        hub.broadcast(agent_id, RunErrorEvent.from_exception(e))
         raise
     finally:
         if agent_app_state.cancel_requested.is_set():

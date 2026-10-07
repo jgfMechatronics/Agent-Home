@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 
-from agent.broadcast_streaming import RunCompletedEvent, RunStartedEvent
+from agent.broadcast_streaming import RunCompletedEvent, RunErrorEvent, RunStartedEvent
 from api.routes import map_to_sse
 
 
@@ -65,6 +65,7 @@ ALL_EVENTS = [
     pytest.param(AgentRunResultEvent(result=Mock()), "AgentRunResultEvent", id="AgentRunResultEvent"),
     pytest.param(RunStartedEvent(prompt="hello"), "RunStartedEvent", id="RunStartedEvent"),
     pytest.param(RunCompletedEvent(status="success"), "RunCompletedEvent", id="RunCompletedEvent"),
+    pytest.param(RunErrorEvent(message="boom"), "Error", id="RunErrorEvent"),
 ]
 
 # Events that map_to_sse passes through unchanged (data=event, event=type name).
@@ -113,3 +114,11 @@ class TestDataPayload:
         Clients accumulate the response via PartDeltaEvents; this event carries no payload.
         """
         assert serialize_sse_data(map_to_sse(AgentRunResultEvent(result=Mock()))) == {}
+
+    def test_run_error_event_data_matches_handle_message_format(self):
+        """RunErrorEvent maps to event='Error' with {"message": ...} — same format as the
+        Error SSE yielded directly by handle_message for foreground runs.
+        """
+        sse = map_to_sse(RunErrorEvent(message="\n\nUnexpected internal server error: 'ValueError: boom'"))
+        assert sse.event == "Error"
+        assert serialize_sse_data(sse) == {"message": "\n\nUnexpected internal server error: 'ValueError: boom'"}
