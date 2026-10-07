@@ -155,18 +155,12 @@ async def handle_message(
             yield map_to_sse(event)
     except MCPConnError as e:
         logger.error("MCP connection error for agent %s: %s", agent_id, e)
-        yield ServerSentEvent(
-            data={"message": f"\n\n{e}"},
-            event="Error",
-        )
+        yield map_to_sse(RunErrorEvent(message=f"\n\n{e}"))
     except Exception as e:
         # TODO (low priority): put more thought into logging strategy (log levels, handler chain, structured logging)
         logger.exception("Unexpected error in handle_message for agent %s", agent_id)
         await deps.session.rollback()
-        yield ServerSentEvent(
-            data={"message": f"\n\nUnexpected internal server error: '{type(e).__name__}: {str(e)}'"},
-            event="Error",
-        )
+        yield map_to_sse(RunErrorEvent(message=f"\n\nUnexpected internal server error: '{type(e).__name__}: {str(e)}'"))
 
 
 @router.post("/{agent_id}/recompile_system_prompt")
