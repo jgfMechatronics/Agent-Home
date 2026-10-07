@@ -389,6 +389,31 @@ async def local_dummy_tool(ctx: RunContext, text: str) -> str:
     return text
 
 
+class _ScriptedFunction:
+    """FunctionModel non-streamed function consuming one step per model invocation.
+
+    Each step is either a ModelResponse to return, or a callable receiving the
+    live message history (list[ModelMessage]) and returning a ModelResponse —
+    used to script tool calls that depend on state from earlier in the same run.
+    Running out of steps raises IndexError: fail loudly. `invocation` counts
+    model calls, assertable as a no-retry check.
+
+    TODO: We should consider if this _ScriptedFunction and the corresponding FunctionModel build from it could replace the FunctionModelTestAgent
+    or at least inspire it.
+    """
+
+    def __init__(self, steps: list):
+        self._steps = steps
+        self.invocation = 0
+
+    def __call__(self, messages, info) -> ModelResponse:
+        step = self._steps[self.invocation]
+        self.invocation += 1
+        if callable(step):
+            step = step(list(messages))
+        return step
+
+
 @pytest.fixture
 def in_process_mcp_toolset():
     """Real in-process FastMCP server exposing a known tool — no HTTP, no mocking."""
