@@ -18,7 +18,7 @@ from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequ
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 from db.models import MessageRecord
-from messages.messages import load_messages, deserialize_messages, is_valid_tool_pair, is_system_alert
+from messages.messages import load_messages, deserialize_messages, is_valid_msg_pair, is_system_alert
 from common.constants import INTEGRITY_LOCKFILE_NAME
 
 
@@ -367,7 +367,7 @@ def _check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: 
     for i, (record, msg) in enumerate(zip(records, messages)):
         if isinstance(msg, ModelResponse) and any(isinstance(p, ToolCallPart) for p in msg.parts):
             next_msg = messages[i + 1] if i + 1 < len(messages) else None
-            if not is_valid_tool_pair(msg, next_msg):
+            if not is_valid_msg_pair(msg, next_msg):
                 issues.append(IntegrityIssue(
                     check_type="orphaned_tool_call",
                     severity=ERROR,
@@ -376,7 +376,7 @@ def _check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: 
                 ))
         elif isinstance(msg, ModelRequest) and any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in msg.parts):
             prev_msg = messages[i - 1] if i > 0 else None
-            if not is_valid_tool_pair(prev_msg, msg):
+            if not is_valid_msg_pair(prev_msg, msg):
                 issues.append(IntegrityIssue(
                     check_type="orphaned_tool_return",
                     severity=ERROR,

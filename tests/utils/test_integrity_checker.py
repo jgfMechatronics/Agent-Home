@@ -623,7 +623,7 @@ TOOL_PAIRING_TEST_CASES = [
         id="matched_retry_pair",
     ),
     # Structurally valid but mismatched tool_call_ids — call and return are from different pairs.
-    # is_valid_tool_pair currently only checks structure, not IDs, so this slips through.
+    # is_valid_msg_pair currently only checks structure, not IDs, so this slips through.
     pytest.param(
         lambda agent_id: make_message_sequence(agent_id, [
             {},

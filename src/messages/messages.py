@@ -81,27 +81,28 @@ def _make_orphan_replacement(
     return (utcnow(), error_text), ModelResponse(parts=[TextPart(content=error_text)])
 
 
-def is_valid_tool_pair(call_msg: ModelMessage | None, return_msg: ModelMessage | None) -> bool:
-    """True if call_msg/return_msg form a matched tool call/return pair.
+def is_valid_msg_pair(response_msg: ModelMessage | None, request_msg: ModelMessage | None) -> bool:
+    """True if response_msg/request_msg form a valid adjacent ModelResponse/ModelRequest pair.
 
-    Requires call_msg to be a ModelResponse with ToolCallPart(s) and return_msg to be a
-    ModelRequest with ToolReturnPart(s) or RetryPromptPart(s) sharing at least one tool_call_id.
-    Both ToolReturnPart and RetryPromptPart are valid responses to a ToolCallPart.
+    For pairs with tool parts, requires response_msg to be a ModelResponse with ToolCallPart(s)
+    and request_msg a ModelRequest whose ToolReturnPart(s)/RetryPromptPart(s) share those exact
+    tool_call_ids (every call answered, every return answers a call). Both ToolReturnPart and
+    RetryPromptPart are valid responses to a ToolCallPart.
 
     RetryPromptParts without a tool_name (output retries — pydantic-ai inserts these after
-    output-less responses, e.g. thinking-only or stop-token responses; their tool_call_id is
-    a synthetic auto-generated value that matches no real tool call) don't respond to any
-    tool call and are excluded from the id comparison.
+    responses it judges invalid; their tool_call_id is a synthetic auto-generated value that
+    matches no real tool call) don't respond to any tool call and are excluded from the id
+    comparison, so a no-tool-call Response followed by an output-retry Request is a valid pair.
     """
-    if not isinstance(call_msg, ModelResponse) or not isinstance(return_msg, ModelRequest):
+    if not isinstance(response_msg, ModelResponse) or not isinstance(request_msg, ModelRequest):
         return False
-    call_ids = {p.tool_call_id for p in call_msg.parts if isinstance(p, ToolCallPart)}
+    call_ids = {p.tool_call_id for p in response_msg.parts if isinstance(p, ToolCallPart)}
     return_ids = {
         p.tool_call_id
-        for p in return_msg.parts
+        for p in request_msg.parts
         if isinstance(p, ToolReturnPart) or (isinstance(p, RetryPromptPart) and p.tool_name is not None)
     }
-    return call_ids == return_ids  # every call must have a return/retry and vice versa
+    return call_ids == return_ids
 
 
 def _replace_orphaned_tool_messages(
@@ -112,10 +113,10 @@ def _replace_orphaned_tool_messages(
     - Orphaned call: a ModelResponse with ToolCallPart(s) not immediately followed by
       a ModelRequest with matching ToolReturnPart(s).
     - Orphaned return: a ModelRequest with ToolReturnPart(s) or tool-retry RetryPromptPart(s)
-      (those with a tool_name) not immediately preceded by a ModelResponse with matching
-      ToolCallPart(s).
-    - Output retries (RetryPromptPart with no tool_name) respond to output-less responses,
-      not to tool calls, so they are never orphans and pass through unchanged.
+      not immediately preceded by a ModelResponse with matching ToolCallPart(s).
+    - Output retries (RetryPromptPart with no tool_name) are feedback on an invalid response,
+      not responses to tool calls, so they never count as orphans and pass through unchanged
+      (see is_valid_msg_pair).
 
     Returns (processed_messages, errors) where errors is a list of (original_ts, error_text)
     pairs suitable for summary warning appending at end of message chain in persist_messages.
@@ -131,18 +132,14 @@ def _replace_orphaned_tool_messages(
     for i, msg in enumerate(messages):
         if isinstance(msg, ModelResponse) and any(isinstance(p, ToolCallPart) for p in msg.parts):
             next_msg = messages[i + 1] if i + 1 < len(messages) else None
-            if not is_valid_tool_pair(msg, next_msg):
+            if not is_valid_msg_pair(msg, next_msg):
                 error_entry, error_response = _make_orphan_replacement(msg, ToolCallPart)
                 errors.append(error_entry)
                 sanitized_msgs.append(error_response)
                 continue # Skips below append of original msg
-        elif isinstance(msg, ModelRequest) and any(
-            isinstance(p, ToolReturnPart)
-            or (isinstance(p, RetryPromptPart) and p.tool_name is not None)
-            for p in msg.parts
-        ):
+        elif isinstance(msg, ModelRequest) and any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in msg.parts):
             prev_msg = sanitized_msgs[-1] if sanitized_msgs else None
-            if not is_valid_tool_pair(prev_msg, msg):
+            if not is_valid_msg_pair(prev_msg, msg):
                 part_type = ToolReturnPart if any(isinstance(p, ToolReturnPart) for p in msg.parts) else RetryPromptPart
                 error_entry, error_response = _make_orphan_replacement(msg, part_type)
                 errors.append(error_entry)
