@@ -41,6 +41,8 @@ from pathlib import Path
 
 import httpx
 
+from agent.types import THINKING_EFFORT_LEVELS
+
 
 # --- Configuration ---
 
@@ -337,7 +339,8 @@ def run_config_wizard(state: CLIState) -> dict:
     is_deletable_str = prompt_with_default(state, "Is deletable (true/false)", "false")
     is_deletable = is_deletable_str.lower() in ("true", "yes", "1")
     
-    thinking_str = prompt_with_default(state, "Thinking mode (true/false or effort: minimal/low/medium/high/xhigh)", "true")
+    thinking_hint = "/".join(THINKING_EFFORT_LEVELS)
+    thinking_str = prompt_with_default(state, f"Thinking mode (true/false or effort: {thinking_hint})", "true")
     thinking_str = thinking_str.strip().lower()
     if thinking_str in ("true", "yes", "1"):
         thinking_mode = True

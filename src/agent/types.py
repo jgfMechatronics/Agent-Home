@@ -7,6 +7,7 @@ not the reverse.
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING, Literal, get_args, get_origin
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from pydantic_ai.models import parse_model_id
@@ -15,7 +16,6 @@ from pydantic_ai.settings import ThinkingLevel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from db.models import AgentRecord, MemoryBlockRecord
 
@@ -77,6 +77,21 @@ class AgentLockedError(Exception):
 class MCPConnError(Exception):
     """Raised when an attached MCP server is unreachable at run start."""
     pass
+
+
+def _thinking_effort_levels() -> tuple[str, ...]:
+    """Extract the string effort levels from pydantic-ai's ThinkingLevel union.
+
+    ThinkingLevel is `bool | Literal['minimal', ...]` — deriving the Literal's values
+    keeps accepted levels in lockstep with pydantic-ai (no hand-maintained list).
+    """
+    for union_arg in get_args(ThinkingLevel):
+        if get_origin(union_arg) is Literal:
+            return get_args(union_arg)
+    return ()  # unreachable while ThinkingLevel contains a Literal
+
+
+THINKING_EFFORT_LEVELS: tuple[str, ...] = _thinking_effort_levels()
 
 
 class AgentConfig(BaseModel):

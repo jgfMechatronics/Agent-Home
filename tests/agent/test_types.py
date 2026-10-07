@@ -11,7 +11,7 @@ import pytest
 from conftest import SAMPLE_AGENT_CONFIG_DATA
 from pydantic import ValidationError
 
-from agent.types import AgentConfig, AgentDeps, validate_model_name
+from agent.types import THINKING_EFFORT_LEVELS, AgentConfig, AgentDeps, validate_model_name
 
 
 def test_validate_model_name_works_without_api_keys(monkeypatch):
@@ -159,12 +159,18 @@ def test_agentconfig_thinking_mode_can_be_set_true(valid_config_data: dict):
     assert config.thinking_mode is True
 
 
-@pytest.mark.parametrize("effort", ["minimal", "low", "medium", "high", "xhigh"])
+@pytest.mark.parametrize("effort", THINKING_EFFORT_LEVELS)
 def test_agentconfig_thinking_mode_accepts_effort_levels(valid_config_data: dict, effort: str):
-    """thinking_mode accepts pydantic-ai ThinkingLevel effort strings."""
+    """thinking_mode accepts every pydantic-ai ThinkingLevel effort string."""
     valid_config_data["thinking_mode"] = effort
     config = AgentConfig(**valid_config_data)
     assert config.thinking_mode == effort
+
+
+def test_thinking_effort_levels_derived_non_empty():
+    """Guard: derivation from ThinkingLevel must yield values, else the parametrize
+    above silently collects zero tests."""
+    assert THINKING_EFFORT_LEVELS
 
 
 def test_agentconfig_thinking_mode_rejects_invalid_effort(valid_config_data: dict):
@@ -176,18 +182,24 @@ def test_agentconfig_thinking_mode_rejects_invalid_effort(valid_config_data: dic
 
 # --- thinking_mode legacy alias (lazy migration) ---
 
-def test_agentconfig_accepts_legacy_thinking_enabled_alias(valid_config_data: dict):
-    """Stored configs with the old 'thinking_enabled' field name still validate (lazy migration)."""
+@pytest.fixture
+def legacy_config_data(valid_config_data: dict) -> dict:
+    """Config dict in the legacy pre-rename shape: 'thinking_enabled' only, never both."""
     valid_config_data.pop("thinking_mode", None)
     valid_config_data["thinking_enabled"] = True
-    config = AgentConfig(**valid_config_data)
+    return valid_config_data
+
+
+def test_agentconfig_accepts_legacy_thinking_enabled_alias(legacy_config_data: dict):
+    """Stored configs with the old 'thinking_enabled' field name still validate (lazy migration)."""
+    config = AgentConfig(**legacy_config_data)
     assert config.thinking_mode is True
 
 
-def test_agentconfig_dump_emits_thinking_mode(valid_config_data: dict):
+def test_agentconfig_dump_emits_thinking_mode(legacy_config_data: dict):
     """model_dump serializes the new field name — writes converge old records lazily."""
-    valid_config_data["thinking_enabled"] = "high"  # via alias
-    config = AgentConfig(**valid_config_data)
+    legacy_config_data["thinking_enabled"] = "high"
+    config = AgentConfig(**legacy_config_data)
     dumped = config.model_dump()
     assert "thinking_mode" in dumped and dumped["thinking_mode"] == "high"
     assert "thinking_enabled" not in dumped
