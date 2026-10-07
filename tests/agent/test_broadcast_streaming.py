@@ -13,6 +13,7 @@ from agent.broadcast_streaming import (
     RunErrorEvent,
     run_agent_with_broadcast,
 )
+from agent.types import MCPConnError
 from db.models import AgentRecord
 
 
@@ -158,6 +159,25 @@ class TestRunAgentWithBroadcast:
             (("test-agent", RunStartedEvent(prompt="test prompt")),),
             (("test-agent", mock_event),),
             (("test-agent", RunErrorEvent(message="\n\nUnexpected internal server error: 'ValueError: test error'")),),
+            (("test-agent", RunCompletedEvent(status="error")),),
+        ]
+
+    async def test_mcp_conn_error_broadcasts_clean_message(self, mock_deps, mock_state, hub):
+        """MCPConnError broadcasts the domain message directly (no 'Unexpected internal server error' wrapper)."""
+        async def mock_runner(agent, deps, state, prompt):
+            raise MCPConnError("At least 1 attached MCP server is unreachable")
+            yield  # make it an async generator
+
+        with patch("agent.broadcast_streaming.run_stateful_agent", mock_runner):
+            with pytest.raises(MCPConnError):
+                async for _ in run_agent_with_broadcast(
+                    Mock(), mock_deps, mock_state, "test prompt", hub
+                ):
+                    pass
+
+        assert hub.broadcast.call_args_list == [
+            (("test-agent", RunStartedEvent(prompt="test prompt")),),
+            (("test-agent", RunErrorEvent(message="\n\nAt least 1 attached MCP server is unreachable")),),
             (("test-agent", RunCompletedEvent(status="error")),),
         ]
 
