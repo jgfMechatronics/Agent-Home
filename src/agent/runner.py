@@ -3,7 +3,7 @@ import httpx
 from collections.abc import Sequence
 from typing import AsyncGenerator, TYPE_CHECKING
 
-from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
+from pydantic_ai import Agent, AgentRunResultEvent, DeferredToolRequests, capture_run_messages
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -84,7 +84,7 @@ async def _check_and_handle_cancel(
 async def run_stateful_agent(agent: Agent,
                              deps: AgentDeps,
                              agent_app_state: AgentAppState,
-                             user_prompt: str) -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[str], None]:
+                             user_prompt: str) -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[str | DeferredToolRequests | None], None]:
     """
     The core loop that drives the Pydantic AI agent, persists messages, handles cancellation, handles compaction.
     

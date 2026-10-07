@@ -37,6 +37,14 @@ LOCK_TIMEOUT_SECONDS: int = 60
 LOCK_TIMEOUT_FAST: int = 2
 _MCP_FILESYSTEM_URL = "http://host.docker.internal:8080/mcp"
 
+# None in the output union opts into pydantic-ai's allows_none path: empty and
+# thinking-only model responses complete the run with a None result instead of
+# triggering an output retry ("Please return text or call a tool."). Models
+# often finish their work via tool calls and have nothing left to say — in
+# upstream's words, "forcing a retry just makes them produce unnecessary
+# follow-up text."
+AGENT_OUTPUT_TYPES: list = [str, DeferredToolRequests, None]
+
 logger = logging.getLogger(__name__)
 
 
@@ -204,7 +212,7 @@ class AgentFactory:
 
 
     @asynccontextmanager
-    async def build_agent_and_deps(self) -> AsyncIterator[tuple[Agent[AgentDeps, DeferredToolRequests | str], AgentDeps]]:
+    async def build_agent_and_deps(self) -> AsyncIterator[tuple[Agent[AgentDeps, DeferredToolRequests | str | None], AgentDeps]]:
         """Async context manager that yields a configured (Agent, AgentDeps) tuple.
         
         Wraps build_deps and constructs the Pydantic AI Agent with correct model and tools.
@@ -224,7 +232,7 @@ class AgentFactory:
                           tools=get_tools_for_agent(deps.config.tool_names),
                           toolsets=toolsets,
                           retries=deps.config.retries,
-                          output_type=[str, DeferredToolRequests],
+                          output_type=AGENT_OUTPUT_TYPES,
                           model_settings=model_settings,
                           capabilities=_build_capabilities())
             

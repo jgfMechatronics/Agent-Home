@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.compaction_warner import CompactionWarner
 from agent.factory import (
     AgentFactory,
+    AGENT_OUTPUT_TYPES,
     TOOL_OUTPUT_SPILL_CLEANUP_AFTER,
     TOOL_OUTPUT_SPILL_THRESHOLD_CHARS,
     _build_capabilities,
@@ -367,6 +368,17 @@ class TestBuildAgentAndDeps:
             # NOTE: This assumes pydantic-ai exposes model_name on resolved models consistently.
             # If pydantic-ai changes how it reports model names, this assertion may need updating.
             assert agent.model.model_name == self.agent_record.agent_config.model_name.split(":", 1)[1]
+
+    async def test_output_type_matches_agent_output_types(self):
+        """Constructed agent's output union must match AGENT_OUTPUT_TYPES, including None.
+
+        None opts into pydantic-ai's allows_none path so empty/thinking-only responses
+        complete runs instead of triggering output retries. Behavioral coverage in
+        test_none_output.py; this pins the factory wiring.
+        """
+        async with self.factory.build_agent_and_deps() as (agent, deps):
+            assert set(agent.output_type) == set(AGENT_OUTPUT_TYPES)
+            assert None in agent.output_type
 
     async def test_has_cache_settings(self):
         """Constructed agent should have Anthropic prompt caching enabled in model_settings.
