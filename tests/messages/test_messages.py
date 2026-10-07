@@ -305,11 +305,12 @@ class TestPersistMessages(DBTestBase):
         assert record.type == "ModelResponse"
         restored = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
 
-        # Timestamp is persist time (utcnow()) — check stable prefix only
+        # Timestamp is persist time (utcnow()) — check stable prefix only.
+        # Warning is system-alert formatted (persist machinery injects it, not the model).
         expected_prefix = (
-            f"WARNING: A problem was encountered while persisting messages from the last turn: "
+            "<system_alert>WARNING: A problem was encountered while persisting messages from the last turn: "
             f"'{error_text}'. A warning was injected in place of the problematic message, "
-            f"error occurred at "
+            "error occurred at "
         )
         assert restored[0].parts[0].content.startswith(expected_prefix)
 
@@ -325,10 +326,10 @@ class TestPersistMessages(DBTestBase):
             deserialized = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
             assert not any(isinstance(p, orphaned_part_type) for p in deserialized[0].parts)
 
-        # Positional error record has the expected error text
+        # Positional error record has the expected error text, system-alert formatted
         assert records[0].type == "ModelResponse"
         restored = ModelMessagesTypeAdapter.validate_json(f"[{records[0].content}]")
-        assert restored[0].parts[0].content == expected_error
+        assert restored[0].parts[0].content == format_system_alert(expected_error)
 
         self._assert_summary_warning_appended(records, expected_error)
 
@@ -427,10 +428,10 @@ class TestPersistMessages(DBTestBase):
         assert ModelMessagesTypeAdapter.validate_json(f"[{records[0].content}]")[0] == good
         assert ModelMessagesTypeAdapter.validate_json(f"[{records[2].content}]")[0] == good2
 
-        # Positional error record replaces bad in-place
+        # Positional error record replaces bad in-place, system-alert formatted
         assert records[1].type == "ModelResponse"
         positional = ModelMessagesTypeAdapter.validate_json(f"[{records[1].content}]")
-        assert positional[0].parts[0].content == error_text
+        assert positional[0].parts[0].content == format_system_alert(error_text)
 
         # Summary warning appended at end, referencing the error
         self._assert_summary_warning_appended(records, error_text)

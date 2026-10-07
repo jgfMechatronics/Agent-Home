@@ -78,7 +78,7 @@ def _make_orphan_replacement(
     # RetryPromptPart.tool_name may be None — filter to avoid join errors
     tool_names = [p.tool_name for p in msg.parts if isinstance(p, part_type) and p.tool_name is not None]
     error_text = f"[Orphaned tool {label}(s) dropped: {', '.join(tool_names)}]"
-    return (utcnow(), error_text), ModelResponse(parts=[TextPart(content=error_text)])
+    return (utcnow(), error_text), ModelResponse(parts=[TextPart(content=format_system_alert(error_text))])
 
 
 def is_valid_msg_pair(response_msg: ModelMessage | None, request_msg: ModelMessage | None) -> bool:
@@ -170,7 +170,7 @@ def _handle_serialization_error(
         agent_id, e,
     )
     error_text = f"[persist_messages serialization error]: {type(e).__name__}: {e}"
-    error_msg = ModelResponse(parts=[TextPart(content=error_text)])
+    error_msg = ModelResponse(parts=[TextPart(content=format_system_alert(error_text))])
     content = dump_msg_json(error_msg)
     error_to_append = (utcnow(), error_text)
     return content, "ModelResponse", error_msg, error_to_append
@@ -264,7 +264,7 @@ async def _persist_error_warnings(
 ) -> None:
     """Build and persist error warning messages via recursive call to persist_messages."""
     warning_messages = [
-        ModelResponse(parts=[TextPart(content=(
+        ModelResponse(parts=[TextPart(content=format_system_alert(
             f"WARNING: A problem was encountered while persisting messages from the last turn: "
             f"'{error_text}'. A warning was injected in place of the problematic message, "
             f"error occurred at {error_ts}"
