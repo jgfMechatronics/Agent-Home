@@ -113,7 +113,7 @@ def _parse_af(data: dict) -> tuple[dict, list[dict]]:
             "model_name": model,
             "tool_names": tool_names,
             "soft_compaction_limit": context_window,
-            "thinking_enabled": enable_reasoner,
+            "thinking_mode": enable_reasoner,
         },
     }
 

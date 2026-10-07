@@ -7,14 +7,15 @@ not the reverse.
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING, Literal, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from pydantic_ai.models import parse_model_id
 from pydantic_ai.providers import infer_provider_class
+from pydantic_ai.settings import ThinkingLevel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from db.models import AgentRecord, MemoryBlockRecord
 
@@ -78,6 +79,21 @@ class MCPConnError(Exception):
     pass
 
 
+def _thinking_effort_levels() -> tuple[str, ...]:
+    """Extract the string effort levels from pydantic-ai's ThinkingLevel union.
+
+    ThinkingLevel is `bool | Literal['minimal', ...]` — deriving the Literal's values
+    keeps accepted levels in lockstep with pydantic-ai (no hand-maintained list).
+    """
+    for union_arg in get_args(ThinkingLevel):
+        if get_origin(union_arg) is Literal:
+            return get_args(union_arg)
+    return ()  # unreachable while ThinkingLevel contains a Literal
+
+
+THINKING_EFFORT_LEVELS: tuple[str, ...] = _thinking_effort_levels()
+
+
 class AgentConfig(BaseModel):
     """
     Agent configuration stored as JSON in AgentRecord.agent_config.
@@ -93,7 +109,8 @@ class AgentConfig(BaseModel):
     - toolset_names: List of toolset names to attach (e.g., ["mcp_filesystem"]). Typically used for attaching MCP toolsets
     - is_deletable: Whether agent can be deleted (default False)
     - retries: how many times the agent can retry a failed tool call
-    - thinking_enabled
+    - thinking_mode: False (off) | True (on, provider default effort) | effort level
+      ('minimal'/'low'/'medium'/'high'/'xhigh' — pydantic-ai ThinkingLevel, mapped per provider)
     """
     model_config = ConfigDict(extra="forbid") # prevent extra unexpected fields
 
@@ -104,7 +121,13 @@ class AgentConfig(BaseModel):
     compaction_target_fraction: float = 0.25
     is_deletable: bool = False
     retries: int = 4
-    thinking_enabled: bool = False
+    # TODO(alias-cleanup): Drop 'thinking_enabled' from AliasChoices once no stored configs
+    # contain it. Records migrate lazily — any config write re-serializes with the new name.
+    # Verify via: SELECT count(*) FROM agent WHERE agent_config LIKE '%thinking_enabled%';
+    thinking_mode: ThinkingLevel = Field(
+        default=False,
+        validation_alias=AliasChoices("thinking_mode", "thinking_enabled"),
+    )
     
     @field_validator("model_name")
     @classmethod

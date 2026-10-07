@@ -11,7 +11,7 @@ import pytest
 from conftest import SAMPLE_AGENT_CONFIG_DATA
 from pydantic import ValidationError
 
-from agent.types import AgentConfig, AgentDeps, validate_model_name
+from agent.types import THINKING_EFFORT_LEVELS, AgentConfig, AgentDeps, validate_model_name
 
 
 def test_validate_model_name_works_without_api_keys(monkeypatch):
@@ -22,12 +22,13 @@ def test_validate_model_name_works_without_api_keys(monkeypatch):
     regression to instantiation-based validation (e.g. via infer_model),
     which crashed the integrity checker on production DBs.
     """
-    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY", "ZAI_API_KEY"):
+    for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "GROQ_API_KEY", "ZAI_API_KEY", "OPENROUTER_API_KEY"):
         monkeypatch.delenv(key, raising=False)
     # Prefixed names validate without any keys
     assert validate_model_name("anthropic:claude-haiku-4-5") == "anthropic:claude-haiku-4-5"
     assert validate_model_name("together:glm-5.3") == "together:glm-5.3"
     assert validate_model_name("zai:glm-5.3") == "zai:glm-5.3"
+    assert validate_model_name("openrouter:z-ai/glm-5.3") == "openrouter:z-ai/glm-5.3"
 
 
 @pytest.fixture
@@ -145,17 +146,63 @@ def test_agentconfig_is_deletable_can_be_set_true(valid_config_data: dict):
     assert config.is_deletable is True
 
 
-def test_agentconfig_thinking_enabled_defaults_to_false(valid_config_data: dict):
-    """thinking_enabled should default to False when not provided."""
+def test_agentconfig_thinking_mode_defaults_to_false(valid_config_data: dict):
+    """thinking_mode should default to False when not provided."""
     config = AgentConfig(**valid_config_data)
-    assert config.thinking_enabled is False
+    assert config.thinking_mode is False
 
 
-def test_agentconfig_thinking_enabled_can_be_set_true(valid_config_data: dict):
-    """thinking_enabled can be explicitly set to True."""
+def test_agentconfig_thinking_mode_can_be_set_true(valid_config_data: dict):
+    """thinking_mode can be explicitly set to True (provider default effort)."""
+    valid_config_data["thinking_mode"] = True
+    config = AgentConfig(**valid_config_data)
+    assert config.thinking_mode is True
+
+
+@pytest.mark.parametrize("effort", THINKING_EFFORT_LEVELS)
+def test_agentconfig_thinking_mode_accepts_effort_levels(valid_config_data: dict, effort: str):
+    """thinking_mode accepts every pydantic-ai ThinkingLevel effort string."""
+    valid_config_data["thinking_mode"] = effort
+    config = AgentConfig(**valid_config_data)
+    assert config.thinking_mode == effort
+
+
+def test_thinking_effort_levels_derived_non_empty():
+    """Guard: derivation from ThinkingLevel must yield values, else the parametrize
+    above silently collects zero tests."""
+    assert THINKING_EFFORT_LEVELS
+
+
+def test_agentconfig_thinking_mode_rejects_invalid_effort(valid_config_data: dict):
+    """thinking_mode rejects values outside the ThinkingLevel union."""
+    valid_config_data["thinking_mode"] = "ultra"
+    with pytest.raises(ValidationError):
+        AgentConfig(**valid_config_data)
+
+
+# --- thinking_mode legacy alias (lazy migration) ---
+
+@pytest.fixture
+def legacy_config_data(valid_config_data: dict) -> dict:
+    """Config dict in the legacy pre-rename shape: 'thinking_enabled' only, never both."""
+    valid_config_data.pop("thinking_mode", None)
     valid_config_data["thinking_enabled"] = True
-    config = AgentConfig(**valid_config_data)
-    assert config.thinking_enabled is True
+    return valid_config_data
+
+
+def test_agentconfig_accepts_legacy_thinking_enabled_alias(legacy_config_data: dict):
+    """Stored configs with the old 'thinking_enabled' field name still validate (lazy migration)."""
+    config = AgentConfig(**legacy_config_data)
+    assert config.thinking_mode is True
+
+
+def test_agentconfig_dump_emits_thinking_mode(legacy_config_data: dict):
+    """model_dump serializes the new field name — writes converge old records lazily."""
+    legacy_config_data["thinking_enabled"] = "high"
+    config = AgentConfig(**legacy_config_data)
+    dumped = config.model_dump()
+    assert "thinking_mode" in dumped and dumped["thinking_mode"] == "high"
+    assert "thinking_enabled" not in dumped
 
 
 # --- AgentConfig JSON round-trip ---

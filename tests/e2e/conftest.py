@@ -173,6 +173,9 @@ async def get_or_create_agent(client: httpx.AsyncClient, server_url: str, model_
                 "model_name": model_name,
                 "tool_names": [],
                 "soft_compaction_limit": 100000,
+                # Thinking on at low effort — representative of production configs,
+                # and mandatory for GLM on z-ai endpoints (400 if disabled).
+                "thinking_mode": "low",
             },
         },
     )

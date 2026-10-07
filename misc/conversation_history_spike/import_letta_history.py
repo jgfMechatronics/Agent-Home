@@ -253,7 +253,7 @@ async def import_to_database(
                 model_name="claude-haiku-4-5",
                 tool_names=[],  # No tools for this test agent
                 soft_compaction_limit=100000,
-                thinking_enabled=True,
+                thinking_mode=True,
             ),
         )
         session.add(agent)

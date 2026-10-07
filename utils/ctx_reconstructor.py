@@ -26,7 +26,7 @@ class ReconstructedContext:
     Attributes:
         system_prompt: The compiled system prompt that was active
         tool_definitions: List of ToolDefinition objects that were available
-        agent_config: The agent configuration (model_name, thinking_enabled, etc.)
+        agent_config: The agent configuration (model_name, thinking_mode, etc.)
         messages: MessageRecords from context_window_start up to (exclusive) target
         target_message: The message you asked about (the focal point)
         agent_id: The agent this context belongs to
