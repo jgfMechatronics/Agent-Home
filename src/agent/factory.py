@@ -43,7 +43,7 @@ _MCP_FILESYSTEM_URL = "http://host.docker.internal:8080/mcp"
 # often finish their work via tool calls and have nothing left to say — in
 # upstream's words, "forcing a retry just makes them produce unnecessary
 # follow-up text."
-AGENT_OUTPUT_TYPES: list = [str, DeferredToolRequests, None]
+AGENT_OUTPUT_TYPES: list[type | None] = [str, DeferredToolRequests, None]
 
 logger = logging.getLogger(__name__)
 
