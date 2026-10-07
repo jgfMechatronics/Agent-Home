@@ -14,9 +14,9 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import AsyncIterator
+from typing import AsyncIterator, get_args
 
-from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai import Agent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models import infer_model
@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
 from agent.crud import get_agent_record
-from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError
+from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError, AgentOutput
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
 
@@ -37,13 +37,11 @@ LOCK_TIMEOUT_SECONDS: int = 60
 LOCK_TIMEOUT_FAST: int = 2
 _MCP_FILESYSTEM_URL = "http://host.docker.internal:8080/mcp"
 
-# None in the output union opts into pydantic-ai's allows_none path: empty and
-# thinking-only model responses complete the run with a None result instead of
-# triggering an output retry ("Please return text or call a tool."). Models
-# often finish their work via tool calls and have nothing left to say — in
-# upstream's words, "forcing a retry just makes them produce unnecessary
-# follow-up text."
-AGENT_OUTPUT_TYPES: list[type | None] = [str, DeferredToolRequests, None]
+# Runtime output_type list, derived from the AgentOutput alias in agent.types
+# (single source of truth — annotations and Agent construction can't drift).
+# get_args yields NoneType in place of None, which pydantic-ai treats
+# identically for its allows_none handling.
+AGENT_OUTPUT_TYPES: list[type] = list(get_args(AgentOutput))
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +210,7 @@ class AgentFactory:
 
 
     @asynccontextmanager
-    async def build_agent_and_deps(self) -> AsyncIterator[tuple[Agent[AgentDeps, DeferredToolRequests | str | None], AgentDeps]]:
+    async def build_agent_and_deps(self) -> AsyncIterator[tuple[Agent[AgentDeps, AgentOutput], AgentDeps]]:
         """Async context manager that yields a configured (Agent, AgentDeps) tuple.
         
         Wraps build_deps and constructs the Pydantic AI Agent with correct model and tools.

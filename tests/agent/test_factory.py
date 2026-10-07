@@ -378,7 +378,8 @@ class TestBuildAgentAndDeps:
         """
         async with self.factory.build_agent_and_deps() as (agent, deps):
             assert set(agent.output_type) == set(AGENT_OUTPUT_TYPES)
-            assert None in agent.output_type
+            # get_args yields NoneType (the class) rather than None (the value)
+            assert type(None) in agent.output_type
 
     async def test_has_cache_settings(self):
         """Constructed agent should have Anthropic prompt caching enabled in model_settings.
