@@ -10,6 +10,7 @@ from agent.broadcast_streaming import (
     BroadcastHub,
     RunStartedEvent,
     RunCompletedEvent,
+    RunErrorEvent,
     run_agent_with_broadcast,
 )
 from db.models import AgentRecord
@@ -156,6 +157,7 @@ class TestRunAgentWithBroadcast:
         assert hub.broadcast.call_args_list == [
             (("test-agent", RunStartedEvent(prompt="test prompt")),),
             (("test-agent", mock_event),),
+            (("test-agent", RunErrorEvent(message="\n\nUnexpected internal server error: 'ValueError: test error'")),),
             (("test-agent", RunCompletedEvent(status="error")),),
         ]
 

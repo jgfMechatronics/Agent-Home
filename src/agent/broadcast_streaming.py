@@ -36,6 +36,17 @@ class RunCompletedEvent:
 
 
 @dataclass(frozen=True)
+class RunErrorEvent:
+    """Emitted when an agent run fails with an unhandled exception.
+
+    Broadcast before RunCompletedEvent(status='error') so subscribers see the
+    error details before the terminal signal. Mirrors the Error SSE emitted by
+    the handle_message route for direct (non-background) runs.
+    """
+    message: str
+
+
+@dataclass(frozen=True)
 class ShutdownEvent:
     """Internal sentinel signaling subscribers to exit. Should never be yielded to consumers."""
     pass
@@ -140,8 +151,11 @@ async def run_agent_with_broadcast(
         async for event in run_stateful_agent(agent, deps, agent_app_state, user_prompt):
             hub.broadcast(agent_id, event)
             yield event
-    except Exception:
+    except Exception as e:
         status = "error"
+        hub.broadcast(agent_id, RunErrorEvent(
+            message=f"\n\nUnexpected internal server error: '{type(e).__name__}: {str(e)}'"
+        ))
         raise
     finally:
         if agent_app_state.cancel_requested.is_set():

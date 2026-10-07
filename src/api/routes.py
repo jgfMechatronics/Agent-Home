@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
-from agent.broadcast_streaming import BroadcastHub, run_agent_with_broadcast
+from agent.broadcast_streaming import BroadcastHub, RunErrorEvent, run_agent_with_broadcast
 from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_broadcast_hub
 from prototype.api.slash_commands import get_available_commands, is_slash_cmd, handle_slash_cmd
 from api.schemas import (
@@ -66,11 +66,19 @@ def map_to_sse(event: Any) -> ServerSentEvent:
     with addEventListener(). The event object is passed directly to 'data' and
     serialized by FastAPI's jsonable_encoder.
 
+    Special cases:
+    - AgentRunResultEvent: stream-end signal only, data stripped.
+    - RunErrorEvent: mapped to event="Error" with {"message": ...} to match the
+      Error SSE format emitted by handle_message for direct (non-background) runs.
+
     TODO: Document the SSE event types in the API readme.
     """
     if isinstance(event, AgentRunResultEvent):
         # Stream-end signal only — don't expose the result object
         return ServerSentEvent(data={}, event="AgentRunResultEvent")
+    if isinstance(event, RunErrorEvent):
+        # Match the Error SSE format from handle_message so bridge/TUI handles identically
+        return ServerSentEvent(data={"message": event.message}, event="Error")
     return ServerSentEvent(data=event, event=type(event).__name__)
 
 
