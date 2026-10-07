@@ -14,7 +14,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import AsyncIterator, get_args
+from typing import AsyncIterator
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AgentCapability
@@ -36,12 +36,6 @@ from agent.tools import get_tools_for_agent
 LOCK_TIMEOUT_SECONDS: int = 60
 LOCK_TIMEOUT_FAST: int = 2
 _MCP_FILESYSTEM_URL = "http://host.docker.internal:8080/mcp"
-
-# Runtime output_type list, derived from the AgentOutput alias in agent.types
-# (single source of truth — annotations and Agent construction can't drift).
-# get_args yields NoneType in place of None, which pydantic-ai treats
-# identically for its allows_none handling.
-AGENT_OUTPUT_TYPES: list[type] = list(get_args(AgentOutput))
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +224,7 @@ class AgentFactory:
                           tools=get_tools_for_agent(deps.config.tool_names),
                           toolsets=toolsets,
                           retries=deps.config.retries,
-                          output_type=AGENT_OUTPUT_TYPES,
+                          output_type=AgentOutput,
                           model_settings=model_settings,
                           capabilities=_build_capabilities())
             

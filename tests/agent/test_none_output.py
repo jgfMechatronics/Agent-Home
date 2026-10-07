@@ -13,10 +13,10 @@ commentary text as the final output). Since then, empty responses retry. The
 None union member is upstream's designed replacement for exactly this case.
 
 Follows the tool_output_limits test pattern: a bare Agent on the production
-output types (AGENT_OUTPUT_TYPES from the factory) driven by a scripted
-FunctionModel. Capabilities are not included — output completion behavior is
-purely output_type-driven. Factory wiring is pinned separately in
-test_factory.py (TestBuildAgentAndDeps.test_output_type_matches_agent_output_types).
+output union (AgentOutput from agent.types, also used by the factory) driven
+by a scripted FunctionModel. Capabilities are not included — output completion
+behavior is purely output_type-driven. Factory wiring is pinned separately in
+test_factory.py (TestBuildAgentAndDeps.test_output_type_is_agent_output).
 """
 import pytest
 from pydantic_ai import Agent, RunContext
@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from agent.factory import AGENT_OUTPUT_TYPES
+from agent.types import AgentOutput
 
 
 # --- Fixtures and helpers ---
@@ -41,7 +41,7 @@ COMPLETION_TEXT = "Turn complete."
 
 
 def _make_agent(steps: list[ModelResponse]) -> tuple[Agent, list[int]]:
-    """Build a bare agent on AGENT_OUTPUT_TYPES whose scripted model consumes
+    """Build a bare agent on the AgentOutput union whose scripted model consumes
     steps in order, one per model call. Returns (agent, call_log) where
     call_log grows by one element per model invocation."""
     call_log: list[int] = []
@@ -50,7 +50,7 @@ def _make_agent(steps: list[ModelResponse]) -> tuple[Agent, list[int]]:
         call_log.append(1)
         return steps[len(call_log) - 1]
 
-    agent = Agent(FunctionModel(scripted_model), output_type=AGENT_OUTPUT_TYPES)
+    agent = Agent(FunctionModel(scripted_model), output_type=AgentOutput)
 
     @agent.tool
     async def dummy_tool(ctx: RunContext) -> str:
