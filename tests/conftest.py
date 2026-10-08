@@ -389,7 +389,7 @@ async def local_dummy_tool(ctx: RunContext, text: str) -> str:
     return text
 
 
-class _ScriptedFunction:
+class ScriptedFunction:
     """FunctionModel non-streamed function consuming one step per model invocation.
 
     Each step is either a ModelResponse to return, or a callable receiving the
@@ -398,7 +398,7 @@ class _ScriptedFunction:
     Running out of steps raises IndexError: fail loudly. `invocation` counts
     model calls, assertable as a no-retry check.
 
-    TODO: We should consider if this _ScriptedFunction and the corresponding FunctionModel build from it could replace the FunctionModelTestAgent
+    TODO: We should consider if this ScriptedFunction and the corresponding FunctionModel build from it could replace the FunctionModelTestAgent
     or at least inspire it.
     """
 

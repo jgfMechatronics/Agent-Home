@@ -37,7 +37,7 @@ from agent.factory import (
 )
 from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError, AgentOutput
 from memory.system_prompt_compilation import get_system_prompt
-from conftest import SAMPLE_AGENT_CONFIG, _ScriptedFunction, local_dummy_tool
+from conftest import SAMPLE_AGENT_CONFIG, ScriptedFunction, local_dummy_tool
 from db.models import AgentRecord
 
 
@@ -460,11 +460,11 @@ async def test_empty_final_response_completes_run(final_parts):
 
     Bare agent on AgentOutput (same output type the factory wires, pinned by
     test_output_type_is_agent_output above) driven by conftest's
-    _ScriptedFunction. Asserts: None result, exactly two model calls (a third
+    ScriptedFunction. Asserts: None result, exactly two model calls (a third
     would mean a retry fired), no RetryPromptPart in history, and exact
     history shape — nothing extra injected.
     """
-    scripted = _ScriptedFunction([
+    scripted = ScriptedFunction([
         ModelResponse(parts=[ToolCallPart(
             tool_name="local_dummy_tool", args='{"text": "ok"}', tool_call_id="tc-1",
         )]),
