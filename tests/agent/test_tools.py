@@ -143,11 +143,13 @@ class TestToolRegistry:
     """Tests for TOOL_REGISTRY and get_tools_for_agent."""
 
     def test_registry_contains_memory_tools(self):
-        """TOOL_REGISTRY contains memory_replace and memory_insert keyed by name."""
+        """TOOL_REGISTRY contains all memory tools keyed by name."""
         assert "memory_replace" in TOOL_REGISTRY
         assert "memory_insert" in TOOL_REGISTRY
+        assert "memory_read" in TOOL_REGISTRY
         assert TOOL_REGISTRY["memory_replace"] is memory_replace
         assert TOOL_REGISTRY["memory_insert"] is memory_insert
+        assert TOOL_REGISTRY["memory_read"] is memory_read
 
 
     def test_get_tools_returns_callables_for_valid_names(self):
