@@ -35,6 +35,7 @@ from messages.messages import _extract_tool_definitions, deserialize_messages, l
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
 from conftest import (
+    in_process_mcp_toolset_factory,
     local_dummy_tool,
     SAMPLE_AGENT_CONFIG,
     make_alternating_messages,
@@ -788,43 +789,44 @@ _EXPECTED_LOCAL_SCHEMA = ToolDefinition(
 )
 
 
-# FunctionToolset built from local_dummy_tool — reuses _EXPECTED_LOCAL_SCHEMA for expected outputs.
-# Built at module load (Agent construction is synchronous); accessed read-only in all test cases.
+# Module-level toolset instances for parametrize — both are in-process (no HTTP, no server lifecycle).
+# in_process_mcp_toolset_factory() wraps a FastMCP instance directly, so it's safe to call at import time.
 _LOCAL_FS: FunctionToolset = next(
     ts for ts in Agent("test", tools=[local_dummy_tool]).toolsets if isinstance(ts, FunctionToolset)
 )
+_MCP_TS = in_process_mcp_toolset_factory()
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("make_toolsets,expected_schemas", [
+@pytest.mark.parametrize("toolsets,expected_schemas", [
     # Base cases: plain FunctionToolset and MCPToolset
-    pytest.param(lambda mcp: [_LOCAL_FS], [_EXPECTED_LOCAL_SCHEMA], id="function_toolset"),
-    pytest.param(lambda mcp: [mcp], [_EXPECTED_MCP_SCHEMA], id="mcp_toolset"),
+    pytest.param([_LOCAL_FS], [_EXPECTED_LOCAL_SCHEMA], id="function_toolset"),
+    pytest.param([_MCP_TS], [_EXPECTED_MCP_SCHEMA], id="mcp_toolset"),
     # Combination: multiple toolsets at the top level
-    pytest.param(lambda mcp: [_LOCAL_FS, mcp], [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA], id="function_and_mcp"),
+    pytest.param([_LOCAL_FS, _MCP_TS], [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA], id="function_and_mcp"),
     # Wrapper: pydantic-ai capabilities wrap each toolset in CapabilityOwnedToolset (a WrapperToolset subclass)
-    pytest.param(lambda mcp: [WrapperToolset(wrapped=_LOCAL_FS)], [_EXPECTED_LOCAL_SCHEMA], id="wrapper_function"),
-    pytest.param(lambda mcp: [WrapperToolset(wrapped=mcp)], [_EXPECTED_MCP_SCHEMA], id="wrapper_mcp"),
+    pytest.param([WrapperToolset(wrapped=_LOCAL_FS)], [_EXPECTED_LOCAL_SCHEMA], id="wrapper_function"),
+    pytest.param([WrapperToolset(wrapped=_MCP_TS)], [_EXPECTED_MCP_SCHEMA], id="wrapper_mcp"),
     # Combined + both types: post-capability toolset shape with mixed content
     pytest.param(
-        lambda mcp: [CombinedToolset(toolsets=[_LOCAL_FS, mcp])],
+        [CombinedToolset(toolsets=[_LOCAL_FS, _MCP_TS])],
         [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA],
         id="combined_function_and_mcp",
     ),
     # Deep nesting: wrapper around a combined set (exercises full recursion path)
     pytest.param(
-        lambda mcp: [WrapperToolset(wrapped=CombinedToolset(toolsets=[_LOCAL_FS, mcp]))],
+        [WrapperToolset(wrapped=CombinedToolset(toolsets=[_LOCAL_FS, _MCP_TS]))],
         [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA],
         id="wrapper_then_combined_function_and_mcp",
     ),
 ])
-async def test_extract_tool_definitions(in_process_mcp_toolset, make_toolsets, expected_schemas):
+async def test_extract_tool_definitions(toolsets, expected_schemas):
     """_extract_tool_definitions extracts correct ToolDefinitions across all toolset shapes.
 
     Covers plain FunctionToolset/MCPToolset, combinations of both, and wrapper/combined
     nesting as produced by pydantic-ai's capability system (CapabilityOwnedToolset extends
     WrapperToolset). Asserts exact schema content — name, description, parameter schema.
     """
-    schemas = await _extract_tool_definitions(make_toolsets(in_process_mcp_toolset), "test-agent")
+    schemas = await _extract_tool_definitions(toolsets, "test-agent")
 
     assert sorted(schemas, key=lambda s: s.name) == sorted(expected_schemas, key=lambda s: s.name)
 
