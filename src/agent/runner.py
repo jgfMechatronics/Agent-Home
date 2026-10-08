@@ -1,5 +1,12 @@
-import logging
+# ASSUMPTION: we always start fresh runs via run_stream_events(user_prompt=...) — we never use
+# pydantic-ai's native run resumption (suspended runs / durable execution). That mechanism reads
+# the system prompt from ModelRequest.instructions in stored history rather than the agent callback
+# (_agent_graph.py: _get_history_instructions). Since persist_messages strips instructions before
+# storing, a resumed run would receive instructions=None and lose its system prompt.
+# If we ever adopt pydantic-ai's resume mechanism, stripping must be revisited first.
+
 import httpx
+import logging
 from collections.abc import Sequence
 from typing import AsyncGenerator, TYPE_CHECKING
 

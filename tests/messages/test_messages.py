@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -735,6 +736,35 @@ class TestRoundTrip(DBTestBase):
 
         assert restored[0] == response_with_call
         assert restored[1] == request_with_return
+
+    async def test_instructions_stripped_before_persist(self):
+        """Instructions are stripped from ModelRequest before DB storage.
+
+        The full system prompt is stored once in SystemPromptSnapshot; persisting it
+        into every request row is redundant. Verifies both that the stored JSON has
+        instructions=null and that the deserialized message round-trips correctly
+        (pydantic-ai rebuilds instructions from the agent callback on each run, so
+        instructions=None in history is safe).
+        """
+        msg_with_instructions = ModelRequest(
+            parts=[UserPromptPart(content="hello")],
+            instructions="This is the full system prompt — should not be stored.",
+        )
+        await self._persist([msg_with_instructions])
+
+        records = await load_messages(self.session, self.agent.id)
+        assert len(records) == 1
+
+        # Instructions must be absent from the stored JSON
+        stored = json.loads(records[0].content)
+        assert stored.get("instructions") is None
+
+        # Deserialized message has instructions=None and is otherwise identical
+        restored = deserialize_messages(records)
+        assert len(restored) == 1
+        assert isinstance(restored[0], ModelRequest)
+        assert restored[0].instructions is None
+        assert restored[0].parts == msg_with_instructions.parts
 
 
 # ---------------------------------------------------------------------------

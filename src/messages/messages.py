@@ -342,6 +342,12 @@ async def persist_messages(
 
     for i, msg in enumerate(messages):
         try:
+            # Strip instructions from ModelRequest before persisting — the full system prompt is
+            # stored once in SystemPromptSnapshot; re-serializing it into every request row is
+            # redundant and costly at scale. pydantic-ai rebuilds instructions fresh from the
+            # agent callback on each run, so stripping from stored history is safe.
+            if isinstance(msg, ModelRequest):
+                msg = dataclasses.replace(msg, instructions=None)
             # NOTE: The per msg serialization allows us to eliminate specific messages which have serialization failures,
             # but likely costs us some performance. This is an optimization opportunity: could have happy path try serializing the whole
             # list then on failure go message by message

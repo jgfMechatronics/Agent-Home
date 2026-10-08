@@ -216,7 +216,13 @@ INTEGRATION_AGENT_CONFIG = AgentConfig(
 
 @pytest.mark.asyncio
 class TestReconstructContextIntegration:
-    """Integration tests: run_stateful_agent → DB persistence → reconstruct_context."""
+    """Integration tests: run_stateful_agent → DB persistence → reconstruct_context.
+
+    Also serves as the regression gate for message history round-trip validity: the
+    multi-run tests (test_context_grows_across_runs, test_mutated_config_snapshot_dedup)
+    pass persisted-then-loaded history back into run_stateful_agent, verifying that the
+    full persist → load → deserialize → agent.run pipeline stays intact.
+    """
 
     @pytest.fixture(autouse=True)
     def _fake_provider_keys(self, fake_provider_keys):
