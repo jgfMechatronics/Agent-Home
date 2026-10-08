@@ -818,6 +818,12 @@ _MCP_TS = in_process_mcp_toolset_factory()
         [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA],
         id="wrapper_then_combined_function_and_mcp",
     ),
+    # Mixed: wrapped toolset followed by a bare toolset in the same list
+    pytest.param(
+        [WrapperToolset(wrapped=_LOCAL_FS), _MCP_TS],
+        [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA],
+        id="wrapped_then_bare",
+    ),
 ])
 async def test_extract_tool_definitions(toolsets, expected_schemas):
     """_extract_tool_definitions extracts correct ToolDefinitions across all toolset shapes.
