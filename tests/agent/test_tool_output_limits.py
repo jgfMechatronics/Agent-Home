@@ -30,6 +30,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.tool_output_limits import READ_TOOL_NAME
 
+from conftest import ScriptedFunction
 from agent.factory import TOOL_OUTPUT_SPILL_THRESHOLD_CHARS, _build_capabilities
 from agent.types import AgentDeps
 
@@ -70,30 +71,6 @@ TOOL_CALL_STEP = ModelResponse(parts=[ToolCallPart(
     tool_name=BIG_TOOL_NAME, args='{"n": 1}', tool_call_id=BIG_TOOL_CALL_ID,
 )])
 COMPLETION_STEP = ModelResponse(parts=[TextPart(content=COMPLETION)])
-
-
-class _ScriptedFunction:
-    """FunctionModel non-streamed function consuming one step per model invocation.
-
-    Each step is either a ModelResponse to return, or a callable receiving the
-    live message history (list of ModelMessage) and returning a ModelResponse —
-    used to script read_tool_result calls that depend on a handle spilled
-    earlier in the same run. Running out of steps raises IndexError: fail loudly.
-    
-    TODO: We should consider if this _ScriptedFunction and the corresponding FunctionModel build from it could replace the FunctionModelTestAgent
-    or at least inspire it.
-    """
-
-    def __init__(self, steps: list):
-        self._steps = steps
-        self.invocation = 0
-
-    def __call__(self, messages, info) -> ModelResponse:
-        step = self._steps[self.invocation]
-        self.invocation += 1
-        if callable(step):
-            step = step(list(messages))
-        return step
 
 
 # --- Toolset builders (parametrized tool sources) ---
@@ -138,7 +115,7 @@ def _build_agent(steps: list, deps: AgentDeps, toolsets: list) -> Agent:
     Takes real AgentDeps (fixture-built): the production pipeline always runs
     with deps — CompactionWarner reads them on every response.
     """
-    function = _ScriptedFunction(steps)
+    function = ScriptedFunction(steps)
     return Agent(
         FunctionModel(function=function),
         deps_type=AgentDeps,

@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from agent.compaction import compact, is_compaction_needed
-from agent.types import AgentAppState, AgentDeps, MCPConnError
+from agent.types import AgentAppState, AgentDeps, AgentOutput, MCPConnError
 from messages.messages import deserialize_messages, format_system_alert, load_messages, persist_messages
 
 if TYPE_CHECKING:
@@ -84,7 +84,7 @@ async def _check_and_handle_cancel(
 async def run_stateful_agent(agent: Agent,
                              deps: AgentDeps,
                              agent_app_state: AgentAppState,
-                             user_prompt: str) -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[str], None]:
+                             user_prompt: str) -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[AgentOutput], None]:
     """
     The core loop that drives the Pydantic AI agent, persists messages, handles cancellation, handles compaction.
     

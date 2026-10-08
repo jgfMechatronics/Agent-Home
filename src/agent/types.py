@@ -10,10 +10,18 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal, get_args, get_origin
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic_ai import DeferredToolRequests
 from pydantic_ai.models import parse_model_id
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.settings import ThinkingLevel
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+# Union of valid agent run outputs. Single source of truth: the factory derives its
+# runtime output_type list from this alias (get_args), so annotations and Agent
+# construction can't drift apart. None opts into pydantic-ai's allows_none path —
+# empty/thinking-only responses complete runs with None instead of retrying.
+AgentOutput = str | DeferredToolRequests | None
 
 
 if TYPE_CHECKING:

@@ -22,6 +22,16 @@ import pytest_asyncio
 from pytest_mock import MockerFixture
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,9 +43,14 @@ from agent.factory import (
     _build_capabilities,
     _build_model_settings,
 )
-from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError
+from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError, AgentOutput
 from memory.system_prompt_compilation import get_system_prompt
-from conftest import SAMPLE_AGENT_CONFIG
+from conftest import (
+    SAMPLE_AGENT_CONFIG,
+    ScriptedFunction,
+    assert_ModelMessage_list_eq,
+    local_dummy_tool,
+)
 from db.models import AgentRecord
 
 
@@ -368,6 +383,16 @@ class TestBuildAgentAndDeps:
             # If pydantic-ai changes how it reports model names, this assertion may need updating.
             assert agent.model.model_name == self.agent_record.agent_config.model_name.split(":", 1)[1]
 
+    async def test_output_type_is_agent_output(self):
+        """Constructed agent must use the AgentOutput union, including None.
+
+        None opts into pydantic-ai's allows_none path so empty/thinking-only responses
+        complete runs instead of triggering output retries. Behavioral tripwire below.
+        """
+        async with self.factory.build_agent_and_deps() as (agent, deps):
+            assert agent.output_type == AgentOutput
+
+
     async def test_has_cache_settings(self):
         """Constructed agent should have Anthropic prompt caching enabled in model_settings.
 
@@ -421,6 +446,70 @@ class TestBuildAgentAndDeps:
         with patch("agent.factory._build_capabilities", wraps=_build_capabilities) as mock_helper:
             async with self.factory.build_agent_and_deps() as (agent, deps):
                 mock_helper.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# AgentOutput behavioral tripwire (pydantic-ai upgrade guard)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "final_parts",
+    [
+        pytest.param([], id="empty"),
+        pytest.param([ThinkingPart(content="all done")], id="thinking-only"),
+    ],
+)
+async def test_empty_final_response_completes_run(final_parts):
+    """Tripwire on pydantic-ai behavior Agent Home depends on: with None in the
+    output union (AgentOutput), an empty or thinking-only response after tool
+    work completes the run with a None result — no output retry.
+
+    We don't test the framework for its own sake — but our 1.97→2.54 upgrade
+    silently changed empty-response behavior (upstream #6403 removed v1.97's
+    text recovery), and our only detection was post-hoc forensics. This pins
+    the behavior so the next pydantic-ai bump surfaces a regression in CI
+    instead of in conversation history.
+
+    Bare agent on AgentOutput (same output type the factory wires, pinned by
+    test_output_type_is_agent_output above) driven by conftest's
+    ScriptedFunction. Asserts: None result, exactly two model calls (a third
+    would mean a retry fired), no RetryPromptPart in history, and exact
+    history content via assert_ModelMessage_list_eq (semantic equality
+    ignoring runtime fields).
+    """
+    DUMMY_TOOL_CALL = ToolCallPart(
+    tool_name="local_dummy_tool", args='{"text": "ok"}', tool_call_id="tc-1",
+    )
+    DUMMY_TOOL_RETURN = ToolReturnPart(
+        tool_name="local_dummy_tool", content="ok", tool_call_id="tc-1",
+    )
+
+    scripted = ScriptedFunction([
+        ModelResponse(parts=[DUMMY_TOOL_CALL]),
+        ModelResponse(parts=final_parts),
+    ])
+    agent = Agent(FunctionModel(scripted), tools=[local_dummy_tool], output_type=AgentOutput)
+
+    result = await agent.run("go")
+
+    assert result.output is None
+    assert scripted.invocation == 2, f"Model called {scripted.invocation}x — retry fired?"
+
+    messages = result.all_messages()
+    retry_parts = [
+        part for message in messages
+        for part in getattr(message, "parts", [])
+        if isinstance(part, RetryPromptPart)
+    ]
+    assert not retry_parts, f"Unexpected retry prompts in history: {retry_parts}"
+
+    assert_ModelMessage_list_eq(messages, [
+        ModelRequest(parts=[UserPromptPart(content="go")]),
+        ModelResponse(parts=[DUMMY_TOOL_CALL]),
+        ModelRequest(parts=[DUMMY_TOOL_RETURN]),
+        ModelResponse(parts=final_parts),
+    ])
 
 
 # =============================================================================

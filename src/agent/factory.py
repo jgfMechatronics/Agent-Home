@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import AsyncIterator
 
-from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai import Agent
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models import infer_model
@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
 from agent.crud import get_agent_record
-from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError
+from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError, AgentOutput
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
 
@@ -204,7 +204,7 @@ class AgentFactory:
 
 
     @asynccontextmanager
-    async def build_agent_and_deps(self) -> AsyncIterator[tuple[Agent[AgentDeps, DeferredToolRequests | str], AgentDeps]]:
+    async def build_agent_and_deps(self) -> AsyncIterator[tuple[Agent[AgentDeps, AgentOutput], AgentDeps]]:
         """Async context manager that yields a configured (Agent, AgentDeps) tuple.
         
         Wraps build_deps and constructs the Pydantic AI Agent with correct model and tools.
@@ -224,7 +224,7 @@ class AgentFactory:
                           tools=get_tools_for_agent(deps.config.tool_names),
                           toolsets=toolsets,
                           retries=deps.config.retries,
-                          output_type=[str, DeferredToolRequests],
+                          output_type=AgentOutput,
                           model_settings=model_settings,
                           capabilities=_build_capabilities())
             

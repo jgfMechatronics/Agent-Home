@@ -42,6 +42,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -387,6 +388,62 @@ def override_db_session(app: FastAPI, session: AsyncSession):
 async def local_dummy_tool(ctx: RunContext, text: str) -> str:
     """A local function tool used in MCP integration tests."""
     return text
+
+
+class ScriptedFunction:
+    """FunctionModel non-streamed function consuming one step per model invocation.
+
+    Each step is either a ModelResponse to return, or a callable receiving the
+    live message history (list[ModelMessage]) and returning a ModelResponse —
+    used to script tool calls that depend on state from earlier in the same run.
+    Running out of steps raises IndexError: fail loudly. `invocation` counts
+    model calls, assertable as a no-retry check.
+
+    TODO: We should consider if this ScriptedFunction and the corresponding FunctionModel build from it could replace the FunctionModelTestAgent
+    or at least inspire it.
+    """
+
+    def __init__(self, steps: list):
+        self._steps = steps
+        self.invocation = 0
+
+    def __call__(self, messages, info) -> ModelResponse:
+        step = self._steps[self.invocation]
+        self.invocation += 1
+        if callable(step):
+            step = step(list(messages))
+        return step
+
+
+def assert_ModelMessage_list_eq(
+    actual: list[ModelMessage],
+    expected: list[ModelMessage],
+) -> None:
+    """Assert two ModelMessage lists are semantically equal, ignoring runtime fields (timestamps etc.)."""
+    assert len(actual) == len(expected), f"Message list length mismatch: {len(actual)} != {len(expected)}"
+    for i, (actual_msg, expected_msg) in enumerate(zip(actual, expected)):
+        assert type(actual_msg) is type(expected_msg), f"Message {i}: type mismatch {type(actual_msg)} != {type(expected_msg)}"
+        assert len(actual_msg.parts) == len(expected_msg.parts), f"Message {i}: part count mismatch"
+        for j, (actual_part, expected_part) in enumerate(zip(actual_msg.parts, expected_msg.parts)):
+            assert type(actual_part) is type(expected_part), f"Message {i} part {j}: type mismatch"
+            match expected_part:
+                case UserPromptPart():
+                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
+                case ToolCallPart():
+                    assert actual_part.tool_name == expected_part.tool_name, f"Message {i} part {j}: tool_name mismatch"
+                    assert actual_part.args == expected_part.args, f"Message {i} part {j}: args mismatch"
+                    assert actual_part.tool_call_id == expected_part.tool_call_id, f"Message {i} part {j}: tool_call_id mismatch"
+                case ToolReturnPart():
+                    assert actual_part.tool_name == expected_part.tool_name, f"Message {i} part {j}: tool_name mismatch"
+                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
+                    assert actual_part.tool_call_id == expected_part.tool_call_id, f"Message {i} part {j}: tool_call_id mismatch"
+                case TextPart():
+                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
+                case ThinkingPart():
+                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
+                case _:
+                    assert actual_part == expected_part, (f"Message {i} part {j}: equality mismatch.\n"
+                                                          "Comparison helper may not be accountinng for this type.")
 
 
 @pytest.fixture
