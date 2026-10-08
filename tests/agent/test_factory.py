@@ -452,6 +452,14 @@ class TestBuildAgentAndDeps:
 # AgentOutput behavioral tripwire (pydantic-ai upgrade guard)
 # ---------------------------------------------------------------------------
 
+DUMMY_TOOL_CALL = ToolCallPart(
+    tool_name="local_dummy_tool", args='{"text": "ok"}', tool_call_id="tc-1",
+)
+DUMMY_TOOL_RETURN = ToolReturnPart(
+    tool_name="local_dummy_tool", content="ok", tool_call_id="tc-1",
+)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "final_parts",
@@ -479,9 +487,7 @@ async def test_empty_final_response_completes_run(final_parts):
     ignoring runtime fields).
     """
     scripted = ScriptedFunction([
-        ModelResponse(parts=[ToolCallPart(
-            tool_name="local_dummy_tool", args='{"text": "ok"}', tool_call_id="tc-1",
-        )]),
+        ModelResponse(parts=[DUMMY_TOOL_CALL]),
         ModelResponse(parts=final_parts),
     ])
     agent = Agent(FunctionModel(scripted), tools=[local_dummy_tool], output_type=AgentOutput)
@@ -501,12 +507,8 @@ async def test_empty_final_response_completes_run(final_parts):
 
     assert_ModelMessage_list_eq(messages, [
         ModelRequest(parts=[UserPromptPart(content="go")]),
-        ModelResponse(parts=[ToolCallPart(
-            tool_name="local_dummy_tool", args='{"text": "ok"}', tool_call_id="tc-1",
-        )]),
-        ModelRequest(parts=[ToolReturnPart(
-            tool_name="local_dummy_tool", content="ok", tool_call_id="tc-1",
-        )]),
+        ModelResponse(parts=[DUMMY_TOOL_CALL]),
+        ModelRequest(parts=[DUMMY_TOOL_RETURN]),
         ModelResponse(parts=final_parts),
     ])
 
