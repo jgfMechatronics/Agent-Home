@@ -595,6 +595,13 @@ class TestMemoryInsertLineBoundary(UsesEditableBlock):
             # Anchor including its trailing newline still snaps to the next line start
             pytest.param(None, "INSERTED", "foo two.\n",
                          "foo one.\nfoo two.\nINSERTED\nfoo three.", id="anchor-ends-with-newline"),
+            # Truncated anchor (doesn't complete the line's text, mid-block): insert follows the
+            # anchor's LINE, not the anchor fragment
+            pytest.param(None, "INSERTED", "foo tw",
+                         "foo one.\nfoo two.\nINSERTED\nfoo three.", id="truncated-anchor-mid-block"),
+            # Truncated anchor on the final line: snap runs off the end, junction newline added
+            pytest.param(None, "INSERTED", "foo thre",
+                         "foo one.\nfoo two.\nfoo three.\nINSERTED\n", id="truncated-anchor-final-line"),
             # Anchor on the final line of an unterminated block: junction newline keeps lines separate
             pytest.param(None, "INSERTED", "foo three.",
                          "foo one.\nfoo two.\nfoo three.\nINSERTED\n", id="final-line-unterminated"),
