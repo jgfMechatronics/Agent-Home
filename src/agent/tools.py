@@ -195,7 +195,7 @@ async def memory_insert(
     newlines in content (e.g. content="\\nNew entry\\n" inserts a cleanly
     blank-separated entry).
 
-    Use memory_replace instead if the above behavior is undesireable
+    Use memory_replace instead if the above behavior is undesirable
     (IE if you need to insert into the middle of a single line passage. Just rewrite the section being spliced.)
 
     Args:
@@ -212,7 +212,7 @@ async def memory_insert(
         Snippet of updated content on success.
 
     Raises:
-        ModelRetry: On validation failure (block not found, anchor not found, etc.), or on multiple occurances of 'after'
+        ModelRetry: On validation failure (block not found, anchor not found, etc.), or on multiple occurrences of 'after'
                     without specifying 'occurrence'
     """
     deps = ctx.deps

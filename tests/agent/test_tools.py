@@ -539,7 +539,7 @@ class TestMemoryInsert:
 
 
     async def test_after_anchor_inserts_after_line(self):
-        """after='anchor' inserts content after the line containing the anchor (P1a semantics)."""
+        """after='anchor' inserts content after the line containing the anchor"""
         await memory_insert(self.ctx, label=self.block.label, content="[INSERTED]", after="foo two.")
 
         await self.ctx.deps.session.refresh(self.block)
@@ -571,15 +571,14 @@ class TestMemoryInsert:
         assert "NEW" in self.block.content
 
 
-# --- TestMemoryInsertLineBoundary (P1a: line-boundary insert semantics) ---
+# --- TestMemoryInsertLineBoundary (line-boundary insert semantics) ---
 
 class TestMemoryInsertLineBoundary:
-    """P1a spec: insertion always lands at a line boundary.
+    """Line-boundary insert semantics: insertion always lands at a line boundary.
 
     Rule: snap to the start of the line following the anchor's line; insert
     content verbatim; append exactly one newline. The tool guarantees line
     separation; the agent controls blank lines via newlines at content edges.
-    See MemoryTool-Improvements.md for the finalized spec.
     """
 
     @pytest_asyncio.fixture(autouse=True)
@@ -660,13 +659,13 @@ class TestMemoryInsertLineBoundary:
         assert result == "- item 1\n- item 2\n- item 3\n- item 3.5\n- item 4\n- item 5"
 
 
-# --- TestMemoryRead (spec: paginated read with computed line numbers) ---
+# --- TestMemoryRead (paginated read with computed line numbers) ---
 
 class TestMemoryRead:
     """memory_read: exact current block content for retrying failed edits.
 
-    Pagination with computed line numbers + total count; no anchor mode.
-    See MemoryTool-Improvements.md for the finalized spec.
+    Pagination with computed line numbers + total count; no anchor mode
+    (anchors inherit the staleness that prompted the read — circular).
     """
 
     # 10 lines, one char per line — easy to verify windows
