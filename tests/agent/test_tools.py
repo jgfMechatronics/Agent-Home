@@ -81,6 +81,20 @@ async def agent_with_editable_block(session: AsyncSession):
     )
 
 
+class UsesEditableBlock:
+    """Common setup for test classes operating on agent_with_editable_block.
+
+    Provides self.ctx, self.block, and self.agent via an autouse fixture.
+    (Name deliberately does not start with 'Test' — pytest should not collect it.)
+    """
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, agent_with_editable_block):
+        self.agent = agent_with_editable_block["agent"]
+        self.ctx = agent_with_editable_block["ctx"]
+        self.block = agent_with_editable_block["block"]
+
+
 # --- TestComputeSnippet ---
 
 
@@ -175,20 +189,12 @@ MEMORY_REPLACE_ARGS = {"old_string": "foo one.", "new_string": "NEW one."}
 MEMORY_INSERT_ARGS = {"content": "Inserted.", "after": "<end>"}
 
 
-class TestMemoryToolsShared:
+class TestMemoryToolsShared(UsesEditableBlock):
     """
     Shared behaviors for memory_replace and memory_insert, parametrized.
     The use of mock_run_context in the particular position it is used in the fcn call enforces
     a function signature required for pydantic AI compatibility
     """
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, agent_with_editable_block):
-        """Pull ctx/block/agent into self for all tests in this class."""
-        self.ctx = agent_with_editable_block["ctx"]
-        self.block = agent_with_editable_block["block"]
-        self.agent = agent_with_editable_block["agent"]
-
 
     @pytest.mark.parametrize("tool_fn,valid_args", [
         pytest.param(memory_replace, MEMORY_REPLACE_ARGS, id="memory_replace"),
@@ -439,14 +445,8 @@ class TestMemoryToolsShared:
 
 # --- TestMemoryReplace (tool-specific) ---
 
-class TestMemoryReplace:
+class TestMemoryReplace(UsesEditableBlock):
     """Tests specific to memory_replace behavior."""
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, agent_with_editable_block):
-        """Pull ctx/block into self for all tests in this class."""
-        self.ctx = agent_with_editable_block["ctx"]
-        self.block = agent_with_editable_block["block"]
 
 
     async def test_replaces_target_and_returns_snippet_with_edit(self):
@@ -493,14 +493,8 @@ class TestMemoryReplace:
 
 # --- TestMemoryInsert (tool-specific) ---
 
-class TestMemoryInsert:
+class TestMemoryInsert(UsesEditableBlock):
     """Tests specific to memory_insert behavior."""
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, agent_with_editable_block):
-        """Most tests use agent_with_editable_block; pull ctx/block into self."""
-        self.ctx = agent_with_editable_block["ctx"]
-        self.block = agent_with_editable_block["block"]
 
 
     async def test_after_start_inserts_at_beginning(self):
@@ -573,18 +567,13 @@ class TestMemoryInsert:
 
 # --- TestMemoryInsertLineBoundary (line-boundary insert semantics) ---
 
-class TestMemoryInsertLineBoundary:
+class TestMemoryInsertLineBoundary(UsesEditableBlock):
     """Line-boundary insert semantics: insertion always lands at a line boundary.
 
     Rule: snap to the start of the line following the anchor's line; insert
     content verbatim; append exactly one newline. The tool guarantees line
     separation; the agent controls blank lines via newlines at content edges.
     """
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, agent_with_editable_block):
-        self.ctx = agent_with_editable_block["ctx"]
-        self.block = agent_with_editable_block["block"]
 
     async def _insert(self, content: str, after: str, occurrence: int | None = None):
         await memory_insert(
