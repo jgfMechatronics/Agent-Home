@@ -290,7 +290,7 @@ class TestMemoryToolsShared:
             memory_insert,
             {"content": "[INS]", "after": "E"},
             "A\nB\nC\nD\nE\n[INS]\nF\nG\nH\nI\nJ",
-            10,     # content starts at start of line after E's line (P1a snap)
+            10,     # content starts at start of line after E's line
             "[INS]",
             id="memory_insert",
         ),
