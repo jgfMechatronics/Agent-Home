@@ -50,7 +50,7 @@ DEFAULT_SERVER_URL = "http://localhost:8000"
 _TOOL_ARG_DISPLAY_MAX_CHARS = 60
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_SOFT_COMPACTION_LIMIT = 80000
-DEFAULT_MEMORY_TOOLS = ["memory_replace", "memory_insert"]
+DEFAULT_MEMORY_TOOLS = ["memory_replace", "memory_insert", "memory_read"]
 
 _AGENTS_JSON = Path(__file__).parent.parent.parent / "LettaTelegramLocal" / "agents.json"
 

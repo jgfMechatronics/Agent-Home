@@ -29,6 +29,7 @@ TOOL_NAME_MAP = {
     "fetch_webpage": "web_fetch",
     "memory_insert": "memory_insert",
     "memory_replace": "memory_replace",
+    "memory_read": "memory_read",
     "web_search": "duckduckgo_search",
 }
 

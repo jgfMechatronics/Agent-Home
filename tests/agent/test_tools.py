@@ -12,6 +12,7 @@ from agent.tools import (
     _compute_snippet,
     get_tools_for_agent,
     memory_insert,
+    memory_read,
     memory_replace,
 )
 from agent.types import AgentDeps
@@ -206,8 +207,8 @@ class TestMemoryToolsShared:
         ),
         pytest.param(
             memory_insert,
-            {"content": " INSERTED", "after": "foo three."},
-            "foo one.\nfoo two.\nfoo three. INSERTED",
+            {"content": "INSERTED", "after": "foo three."},
+            "foo one.\nfoo two.\nfoo three.\nINSERTED\n",
             id="memory_insert",
         ),
     ])
@@ -286,8 +287,8 @@ class TestMemoryToolsShared:
         pytest.param(
             memory_insert,
             {"content": "[INS]", "after": "E"},
-            "A\nB\nC\nD\nE[INS]\nF\nG\nH\nI\nJ",
-            9,      # insert_pos = idx("E") + len("E") = 8 + 1 = 9
+            "A\nB\nC\nD\nE\n[INS]\nF\nG\nH\nI\nJ",
+            10,     # content starts at start of line after E's line (P1a snap)
             "[INS]",
             id="memory_insert",
         ),
@@ -501,8 +502,8 @@ class TestMemoryInsert:
 
 
     async def test_after_start_inserts_at_beginning(self):
-        """after='<start>' inserts content at the start of the block."""
-        result = await memory_insert(self.ctx, label=self.block.label, content="PREPENDED\n", after="<start>")
+        """after='<start>' inserts content at the start of the block (line-boundary: content + newline)."""
+        result = await memory_insert(self.ctx, label=self.block.label, content="PREPENDED", after="<start>")
 
         await self.ctx.deps.session.refresh(self.block)
         assert self.block.content == "PREPENDED\nfoo one.\nfoo two.\nfoo three."
@@ -511,12 +512,12 @@ class TestMemoryInsert:
 
 
     async def test_after_end_inserts_at_end(self):
-        """after='<end>' inserts content at the end of the block."""
+        """after='<end>' inserts content at the end of the block (ensures newline termination)."""
         await memory_insert(self.ctx, label=self.block.label, content="\nAPPENDED", after="<end>")
 
         await self.ctx.deps.session.refresh(self.block)
-        assert self.block.content.endswith("\nAPPENDED")
-        assert self.block.content == "foo one.\nfoo two.\nfoo three.\nAPPENDED"
+        assert self.block.content.endswith("\nAPPENDED\n")
+        assert self.block.content == "foo one.\nfoo two.\nfoo three.\n\nAPPENDED\n"
 
 
     async def test_occurrence_with_start_raises(self):
@@ -535,16 +536,16 @@ class TestMemoryInsert:
             )
 
 
-    async def test_after_anchor_inserts_after_match(self):
-        """after='anchor' inserts content immediately after the anchor string."""
-        await memory_insert(self.ctx, label=self.block.label, content=" [INSERTED]", after="foo two.")
+    async def test_after_anchor_inserts_after_line(self):
+        """after='anchor' inserts content after the line containing the anchor (P1a semantics)."""
+        await memory_insert(self.ctx, label=self.block.label, content="[INSERTED]", after="foo two.")
 
         await self.ctx.deps.session.refresh(self.block)
-        assert self.block.content == "foo one.\nfoo two. [INSERTED]\nfoo three."
+        assert self.block.content == "foo one.\nfoo two.\n[INSERTED]\nfoo three."
 
 
     async def test_occurrence_targets_nth_anchor(self):
-        """occurrence=N inserts after the Nth occurrence of anchor (1-indexed)."""
+        """occurrence=N inserts after the line containing the Nth anchor occurrence (1-indexed)."""
         # Content: "foo one.\nfoo two.\nfoo three."
 
         await memory_insert(
@@ -552,7 +553,7 @@ class TestMemoryInsert:
         )
 
         await self.ctx.deps.session.refresh(self.block)
-        assert self.block.content == "foo one.\nfoo[2] two.\nfoo three."
+        assert self.block.content == "foo one.\nfoo two.\n[2]\nfoo three."
 
 
     async def test_insert_does_not_overwrite(self):
@@ -566,3 +567,168 @@ class TestMemoryInsert:
         assert "foo three." in self.block.content
         # And new content added
         assert "NEW" in self.block.content
+
+
+# --- TestMemoryInsertLineBoundary (P1a: line-boundary insert semantics) ---
+
+class TestMemoryInsertLineBoundary:
+    """P1a spec: insertion always lands at a line boundary.
+
+    Rule: snap to the start of the line following the anchor's line; insert
+    content verbatim; append exactly one newline. The tool guarantees line
+    separation; the agent controls blank lines via newlines at content edges.
+    See MemoryTool-Improvements.md for the finalized spec.
+    """
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, agent_with_editable_block):
+        self.ctx = agent_with_editable_block["ctx"]
+        self.block = agent_with_editable_block["block"]
+
+    async def _insert(self, content: str, after: str, occurrence: int | None = None):
+        await memory_insert(
+            self.ctx, label=self.block.label, content=content, after=after, occurrence=occurrence
+        )
+        await self.ctx.deps.session.refresh(self.block)
+        return self.block.content
+
+    async def test_mid_line_anchor_inserts_after_line(self):
+        """Anchor mid-sentence → insert lands on the line AFTER the anchor's line."""
+        result = await self._insert(content="INSERTED", after="foo two.")
+
+        assert result == "foo one.\nfoo two.\nINSERTED\nfoo three."
+
+    async def test_content_blank_line_control(self):
+        """Agent's leading/trailing newlines produce blank lines around the insert."""
+        result = await self._insert(content="\nINSERTED\n", after="foo two.")
+
+        assert result == "foo one.\nfoo two.\n\nINSERTED\n\nfoo three."
+
+    async def test_content_verbatim_internal_newlines(self):
+        """Content's internal newlines are preserved exactly."""
+        result = await self._insert(content="line a\nline b", after="foo one.")
+
+        assert result == "foo one.\nline a\nline b\nfoo two.\nfoo three."
+
+    async def test_anchor_ending_with_newline(self):
+        """Anchor that includes its trailing newline still snaps to the next line start."""
+        result = await self._insert(content="INSERTED", after="foo two.\n")
+
+        assert result == "foo one.\nfoo two.\nINSERTED\nfoo three."
+
+    async def test_anchor_on_final_line_without_trailing_newline(self):
+        """Anchor on the last line (unterminated block) → junction newline keeps lines separate."""
+        result = await self._insert(content="INSERTED", after="foo three.")
+
+        assert result == "foo one.\nfoo two.\nfoo three.\nINSERTED\n"
+
+    async def test_end_insert_ensures_termination(self):
+        """<end> on an unterminated block adds the missing newline before appending."""
+        result = await self._insert(content="APPENDED", after="<end>")
+
+        assert result == "foo one.\nfoo two.\nfoo three.\nAPPENDED\n"
+
+    async def test_end_insert_on_terminated_block(self):
+        """<end> on a newline-terminated block appends without extra junction."""
+        self.block.content = "foo one.\nfoo two.\nfoo three.\n"
+        await self.ctx.deps.session.flush()
+
+        result = await self._insert(content="APPENDED", after="<end>")
+
+        assert result == "foo one.\nfoo two.\nfoo three.\nAPPENDED\n"
+
+    async def test_start_insert_content_controls_blank(self):
+        """<start> with trailing newline in content → blank line before old content."""
+        result = await self._insert(content="PREPENDED\n", after="<start>")
+
+        assert result == "PREPENDED\n\nfoo one.\nfoo two.\nfoo three."
+
+    async def test_empty_content_raises(self):
+        """Empty content is rejected — it would silently insert a lone newline."""
+        with pytest.raises(ModelRetry, match="content cannot be empty"):
+            await memory_insert(self.ctx, label=self.block.label, content="", after="<end>")
+
+    async def test_list_item_insertion_no_surprise_blanks(self):
+        """List-item insertion: anchor on item N lands the new item between N and N+1."""
+        self.block.content = "- item 1\n- item 2\n- item 3\n- item 4\n- item 5"
+        await self.ctx.deps.session.flush()
+
+        result = await self._insert(content="- item 3.5", after="- item 3")
+
+        assert result == "- item 1\n- item 2\n- item 3\n- item 3.5\n- item 4\n- item 5"
+
+
+# --- TestMemoryRead (spec: paginated read with computed line numbers) ---
+
+class TestMemoryRead:
+    """memory_read: exact current block content for retrying failed edits.
+
+    Pagination with computed line numbers + total count; no anchor mode.
+    See MemoryTool-Improvements.md for the finalized spec.
+    """
+
+    # 10 lines, one char per line — easy to verify windows
+    CONTENT = "\n".join("ABCDEFGHIJ")
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, session: AsyncSession):
+        made = await _make_agent_with_block(session, content=self.CONTENT, char_limit=1000)
+        self.ctx = made["ctx"]
+        self.block = made["block"]
+
+    async def _read(self, **kwargs) -> str:
+        return await memory_read(self.ctx, label=self.block.label, **kwargs)
+
+    async def test_default_window_reads_from_start(self):
+        """Default offset=0, limit=100: returns whole (small) block with header."""
+        result = await self._read()
+
+        assert result == "[memory_read: block 'notes', lines 1-10 of 10]\n" + self.CONTENT
+
+    async def test_offset_pages_forward(self):
+        result = await self._read(offset=8)
+
+        assert result == "[memory_read: block 'notes', lines 9-10 of 10]\nI\nJ"
+
+    async def test_limit_clamps_to_end(self):
+        result = await self._read(offset=5, limit=100)
+
+        assert result == "[memory_read: block 'notes', lines 6-10 of 10]\nF\nG\nH\nI\nJ"
+
+    async def test_offset_beyond_end_returns_guidance(self):
+        """Out-of-range offset: no error — guidance message with total for paging back."""
+        result = await self._read(offset=50)
+
+        assert "has 10 lines" in result
+        assert "out of range" in result
+        assert "Adjust offset" in result
+
+    async def test_empty_block_returns_empty_message(self):
+        self.block.content = ""
+        await self.ctx.deps.session.flush()
+
+        result = await self._read()
+
+        assert result == "[memory_read: block 'notes' is empty]"
+
+    async def test_block_not_found_raises(self):
+        with pytest.raises(ModelRetry, match="not found"):
+            await memory_read(self.ctx, label="nonexistent")
+
+    async def test_negative_offset_raises(self):
+        with pytest.raises(ModelRetry, match="offset must be"):
+            await self._read(offset=-1)
+
+    async def test_non_positive_limit_raises(self):
+        with pytest.raises(ModelRetry, match="limit must be"):
+            await self._read(limit=0)
+
+    async def test_trailing_newline_not_extra_line(self):
+        """Convention: trailing newline does not create an extra line (matches lines_current metadata)."""
+        self.block.content = "one\ntwo\n"
+        await self.ctx.deps.session.flush()
+
+        result = await self._read()
+
+        assert "lines 1-2 of 2" in result
+        assert result.endswith("one\ntwo")

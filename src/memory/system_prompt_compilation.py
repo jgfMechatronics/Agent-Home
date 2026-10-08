@@ -21,6 +21,7 @@ def _format_block(block: MemoryBlockRecord) -> str:
         f"<metadata>\n"
         f"chars_current: {len(block.content)}\n"
         f"chars_limit: {block.char_limit}\n"
+        f"lines_current: {len(block.content.splitlines())}\n"
         f"</metadata>\n"
         f"<content>\n{block.content}\n</content>\n"
         f"</{block.label}>"

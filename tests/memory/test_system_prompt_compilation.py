@@ -133,7 +133,7 @@ class TestCompileSystemPrompt:
             )
 
     async def test_metadata_section_accuracy(self):
-        """Metadata section should contain accurate chars_current and chars_limit values."""
+        """Metadata section should contain accurate chars_current, chars_limit, and lines_current values."""
         for block in self.blocks:
             block_section = _extract_tag(self.compiled, block.label)
             meta_section = _extract_tag(block_section, "metadata")
@@ -144,6 +144,10 @@ class TestCompileSystemPrompt:
             )
             assert f"chars_limit: {block.char_limit}" in meta_section, (
                 f"chars_limit mismatch for {block.label}: expected {block.char_limit}"
+            )
+            expected_lines = len(block.content.splitlines())
+            assert f"lines_current: {expected_lines}" in meta_section, (
+                f"lines_current mismatch for {block.label}: expected {expected_lines}"
             )
 
     async def test_is_deterministic(self):
@@ -201,12 +205,12 @@ async def test_exact_compiled_format(session: AsyncSession, agent_deps: AgentDep
         f"</system_instructions>\n"
         f"<{_BLOCK_A_LABEL}>\n"
         f"<description>\n{_BLOCK_A_DESC}\n</description>\n"
-        f"<metadata>\nchars_current: {len(_BLOCK_A_CONTENT)}\nchars_limit: {_BLOCK_A_LIMIT}\n</metadata>\n"
+        f"<metadata>\nchars_current: {len(_BLOCK_A_CONTENT)}\nchars_limit: {_BLOCK_A_LIMIT}\nlines_current: {len(_BLOCK_A_CONTENT.splitlines())}\n</metadata>\n"
         f"<content>\n{_BLOCK_A_CONTENT}\n</content>\n"
         f"</{_BLOCK_A_LABEL}>\n"
         f"<{_BLOCK_B_LABEL}>\n"
         f"<description>\n{_BLOCK_B_DESC}\n</description>\n"
-        f"<metadata>\nchars_current: {len(_BLOCK_B_CONTENT)}\nchars_limit: {_BLOCK_B_LIMIT}\n</metadata>\n"
+        f"<metadata>\nchars_current: {len(_BLOCK_B_CONTENT)}\nchars_limit: {_BLOCK_B_LIMIT}\nlines_current: {len(_BLOCK_B_CONTENT.splitlines())}\n</metadata>\n"
         f"<content>\n{_BLOCK_B_CONTENT}\n</content>\n"
         f"</{_BLOCK_B_LABEL}>"
     )
