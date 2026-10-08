@@ -248,37 +248,28 @@ async def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent
     """
     tool_schemas: list[ToolDefinition] = []
     for ts in toolsets:
-        await _collect_tool_definitions(ts, agent_id, tool_schemas)
+        if isinstance(ts, CombinedToolset):
+            tool_schemas.extend(await _extract_tool_definitions(ts.toolsets, agent_id))
+        elif isinstance(ts, WrapperToolset):
+            tool_schemas.extend(await _extract_tool_definitions([ts.wrapped], agent_id))
+        elif isinstance(ts, FunctionToolset):
+            tool_schemas.extend(tool.tool_def for tool in ts.tools.values())
+        elif isinstance(ts, MCPToolset):
+            tool_schemas.extend(
+                ToolDefinition(
+                    name=mcp_tool.name,
+                    description=mcp_tool.description,
+                    parameters_json_schema=mcp_tool.inputSchema,
+                )
+                for mcp_tool in await ts.list_tools()
+            )
+        else:
+            log.error(
+                "Agent %s has an unsupported toolset type (%s); "
+                "tool definitions for context reconstruction will be incomplete.",
+                agent_id, ts.label,
+            )
     return tool_schemas
-
-
-async def _collect_tool_definitions(
-    ts: "AbstractToolset",
-    agent_id: str,
-    out: list[ToolDefinition],
-) -> None:
-    """Recursively collect ToolDefinitions from a single toolset into out."""
-    if isinstance(ts, CombinedToolset):
-        for child in ts.toolsets:
-            await _collect_tool_definitions(child, agent_id, out)
-    elif isinstance(ts, WrapperToolset):
-        await _collect_tool_definitions(ts.wrapped, agent_id, out)
-    elif isinstance(ts, FunctionToolset):
-        for tool in ts.tools.values():
-            out.append(tool.tool_def)
-    elif isinstance(ts, MCPToolset):
-        for mcp_tool in await ts.list_tools():
-            out.append(ToolDefinition(
-                name=mcp_tool.name,
-                description=mcp_tool.description,
-                parameters_json_schema=mcp_tool.inputSchema,
-            ))
-    else:
-        log.error(
-            "Agent %s has an unsupported toolset type (%s); "
-            "tool definitions for context reconstruction will be incomplete.",
-            agent_id, ts.label,
-        )
 
 
 async def _persist_error_warnings(
