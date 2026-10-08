@@ -267,10 +267,11 @@ class TestReconstructContextIntegration:
         """Common assertions for integration tests."""
         assert EXPECTED_COMPILED_SYS_PROMPT == result.system_prompt
         assert result.agent_id == self.agent_record.id
-        # Verify tool definitions include at least all configured tools.
-        # Capability-injected tools (e.g. read_tool_result from ToolOutputLimits) are also
-        # captured now and appear alongside configured tools — hence superset, not equality.
-        assert set(ALL_TOOL_NAMES) <= {td.name for td in expected_tool_definitions}, "Sanity: snapshot must contain all configured tools"
+        # Verify tool definitions match ground truth from the live agent.
+        # read_tool_result is auto-injected by ToolOutputLimits capability on every agent,
+        # so the snapshot always contains configured tools + read_tool_result.
+        assert {td.name for td in expected_tool_definitions} == set(ALL_TOOL_NAMES) | {"read_tool_result"}, \
+            "Sanity: snapshot must contain exactly configured tools + capability-injected read_tool_result"
         assert result.tool_definitions == expected_tool_definitions
         # Verify agent config matches
         assert result.agent_config == INTEGRATION_AGENT_CONFIG
@@ -331,12 +332,8 @@ class TestReconstructContextIntegration:
         assert new_instructions in second.system_prompt
         assert INTEGRATION_SYSTEM_INSTRUCTIONS not in second.system_prompt
         assert second.tool_definitions == second_expected_tools
-        # memory_replace is the only configured tool; read_tool_result is also present
-        # (auto-injected by ToolOutputLimits capability regardless of tool_names config)
-        tool_names_in_snapshot = {td.name for td in second.tool_definitions}
-        assert "memory_replace" in tool_names_in_snapshot
-        assert tool_names_in_snapshot - {"memory_replace", "read_tool_result"} == set(), \
-            f"Unexpected tools in snapshot: {tool_names_in_snapshot - {'memory_replace', 'read_tool_result'}}"
+        # memory_replace is the only configured tool; read_tool_result is auto-injected by capability
+        assert {td.name for td in second.tool_definitions} == {"memory_replace", "read_tool_result"}
         # Verify agent config changed for second run
         assert second.agent_config == mutated_config
         assert second.agent_config != first.agent_config
