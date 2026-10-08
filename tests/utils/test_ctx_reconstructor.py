@@ -267,8 +267,11 @@ class TestReconstructContextIntegration:
         """Common assertions for integration tests."""
         assert EXPECTED_COMPILED_SYS_PROMPT == result.system_prompt
         assert result.agent_id == self.agent_record.id
-        # Verify tool definitions match ground truth from the live agent
-        assert {td.name for td in expected_tool_definitions} == set(ALL_TOOL_NAMES), "Sanity: expected definitions cover all tools"
+        # Verify tool definitions match ground truth from the live agent.
+        # read_tool_result is auto-injected by ToolOutputLimits capability on every agent,
+        # so the snapshot always contains configured tools + read_tool_result.
+        assert {td.name for td in expected_tool_definitions} == set(ALL_TOOL_NAMES) | {"read_tool_result"}, \
+            "Sanity: snapshot must contain exactly configured tools + capability-injected read_tool_result"
         assert result.tool_definitions == expected_tool_definitions
         # Verify agent config matches
         assert result.agent_config == INTEGRATION_AGENT_CONFIG
@@ -329,7 +332,8 @@ class TestReconstructContextIntegration:
         assert new_instructions in second.system_prompt
         assert INTEGRATION_SYSTEM_INSTRUCTIONS not in second.system_prompt
         assert second.tool_definitions == second_expected_tools
-        assert [td.name for td in second.tool_definitions] == ["memory_replace"]
+        # memory_replace is the only configured tool; read_tool_result is auto-injected by capability
+        assert {td.name for td in second.tool_definitions} == {"memory_replace", "read_tool_result"}
         # Verify agent config changed for second run
         assert second.agent_config == mutated_config
         assert second.agent_config != first.agent_config

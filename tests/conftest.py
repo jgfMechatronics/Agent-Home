@@ -446,8 +446,7 @@ def assert_ModelMessage_list_eq(
                                                           "Comparison helper may not be accountinng for this type.")
 
 
-@pytest.fixture
-def in_process_mcp_toolset():
+def in_process_mcp_toolset_factory():
     """Real in-process FastMCP server exposing a known tool — no HTTP, no mocking."""
     from fastmcp import FastMCP
     from pydantic_ai.mcp import MCPToolset
@@ -460,3 +459,8 @@ def in_process_mcp_toolset():
         return f"contents of {path}"
 
     return MCPToolset(mcp)
+
+
+@pytest.fixture
+def in_process_mcp_toolset():
+    return in_process_mcp_toolset_factory()

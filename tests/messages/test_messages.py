@@ -2,6 +2,7 @@
 Tests for messages/messages.py — persist_messages, load_messages, deserialize_messages.
 """
 import json
+import logging
 import time
 from collections.abc import Sequence
 
@@ -10,7 +11,8 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, patch
 
 from pydantic_ai import Agent
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, WrapperToolset
+from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -33,6 +35,7 @@ from messages.messages import _extract_tool_definitions, deserialize_messages, l
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
 from conftest import (
+    in_process_mcp_toolset_factory,
     local_dummy_tool,
     SAMPLE_AGENT_CONFIG,
     make_alternating_messages,
@@ -786,18 +789,70 @@ _EXPECTED_LOCAL_SCHEMA = ToolDefinition(
 )
 
 
+# Module-level toolset instances for parametrize — both are in-process (no HTTP, no server lifecycle).
+# in_process_mcp_toolset_factory() wraps a FastMCP instance directly, so it's safe to call at import time.
+_LOCAL_FS: FunctionToolset = next(
+    ts for ts in Agent("test", tools=[local_dummy_tool]).toolsets if isinstance(ts, FunctionToolset)
+)
+_MCP_TS = in_process_mcp_toolset_factory()
+
 @pytest.mark.asyncio
-async def test_extract_tool_definitions_returns_correct_schemas(in_process_mcp_toolset):
-    """_extract_tool_definitions extracts correct ToolDefinitions from both FunctionToolset and MCPToolset.
+@pytest.mark.parametrize("toolsets,expected_schemas", [
+    # Base cases: plain FunctionToolset and MCPToolset
+    pytest.param([_LOCAL_FS], [_EXPECTED_LOCAL_SCHEMA], id="function_toolset"),
+    pytest.param([_MCP_TS], [_EXPECTED_MCP_SCHEMA], id="mcp_toolset"),
+    # Combination: multiple toolsets at the top level
+    pytest.param([_LOCAL_FS, _MCP_TS], [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA], id="function_and_mcp"),
+    # Wrapper: pydantic-ai capabilities wrap each toolset in CapabilityOwnedToolset (a WrapperToolset subclass)
+    pytest.param([WrapperToolset(wrapped=_LOCAL_FS)], [_EXPECTED_LOCAL_SCHEMA], id="wrapper_function"),
+    pytest.param([WrapperToolset(wrapped=_MCP_TS)], [_EXPECTED_MCP_SCHEMA], id="wrapper_mcp"),
+    # Combined + both types: post-capability toolset shape with mixed content
+    pytest.param(
+        [CombinedToolset(toolsets=[_LOCAL_FS, _MCP_TS])],
+        [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA],
+        id="combined_function_and_mcp",
+    ),
+    # Deep nesting: wrapper around a combined set (exercises full recursion path)
+    pytest.param(
+        [WrapperToolset(wrapped=CombinedToolset(toolsets=[_LOCAL_FS, _MCP_TS]))],
+        [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA],
+        id="wrapper_then_combined_function_and_mcp",
+    ),
+    # Mixed: wrapped toolset followed by a bare toolset in the same list
+    pytest.param(
+        [WrapperToolset(wrapped=_LOCAL_FS), _MCP_TS],
+        [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA],
+        id="wrapped_then_bare",
+    ),
+])
+async def test_extract_tool_definitions(toolsets, expected_schemas):
+    """_extract_tool_definitions extracts correct ToolDefinitions across all toolset shapes.
 
-    Uses a real in-process FastMCP server and a real Agent-wrapped function tool so the
-    full extraction chain runs without mocking. Asserts exact schema content, not just types.
+    Covers plain FunctionToolset/MCPToolset, combinations of both, and wrapper/combined
+    nesting as produced by pydantic-ai's capability system (CapabilityOwnedToolset extends
+    WrapperToolset). Asserts exact schema content — name, description, parameter schema.
     """
-    agent = Agent(TestModel(), tools=[local_dummy_tool], toolsets=[in_process_mcp_toolset])
+    schemas = await _extract_tool_definitions(toolsets, "test-agent")
 
-    schemas = await _extract_tool_definitions(agent.toolsets, "test-agent")
+    assert sorted(schemas, key=lambda s: s.name) == sorted(expected_schemas, key=lambda s: s.name)
 
-    assert all(isinstance(s, ToolDefinition) for s in schemas)
-    assert sorted(schemas, key=lambda s: s.name) == sorted(
-        [_EXPECTED_MCP_SCHEMA, _EXPECTED_LOCAL_SCHEMA], key=lambda s: s.name
-    )
+
+@pytest.mark.asyncio
+async def test_extract_tool_definitions_logs_error_for_unknown_toolset(caplog):
+    """Unknown toolset type falls through to the error branch — extraction completes
+    but logs an error and skips that toolset's tools."""
+    class _UnknownToolset(AbstractToolset):
+        @property
+        def id(self): return None
+        @property
+        def label(self): return "unknown"
+        async def get_tools(self, ctx): return {}  # pragma: no cover
+        async def call_tool(self, *a, **kw): pass  # pragma: no cover
+        def apply(self, visitor): pass  # pragma: no cover
+        def visit_and_replace(self, visitor): return self  # pragma: no cover
+
+    with caplog.at_level(logging.ERROR, logger="messages.messages"):
+        schemas = await _extract_tool_definitions([_UnknownToolset()], "test-agent")
+
+    assert schemas == []
+    assert "unsupported toolset type" in caplog.text

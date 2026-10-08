@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.toolsets import CombinedToolset, WrapperToolset
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -234,24 +235,38 @@ async def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent
     this will automatically capture the current state at each persist point.
     For intra-step mutation (mutations during a single model response), a
     FunctionToolResultEvent hook in runner.py would be needed instead.
+
+    Recurses through CombinedToolset and WrapperToolset (including
+    CapabilityOwnedToolset) to reach the underlying FunctionToolset /
+    MCPToolset instances. This is necessary because pydantic-ai's capability
+    system wraps toolsets in CapabilityOwnedToolset — those wrappers only
+    expose tools via get_tools(ctx: RunContext), which we don't have here.
+
+    TODO: Once runner.py converts to agent.iter, a RunContext is available at
+    persist time. Switch to calling get_tools(ctx) uniformly on all toolsets
+    and drop this recursive unwrapping entirely.
     """
     tool_schemas: list[ToolDefinition] = []
     for ts in toolsets:
-        if isinstance(ts, FunctionToolset):
-            for tool in ts.tools.values():
-                tool_schemas.append(tool.tool_def)
+        if isinstance(ts, CombinedToolset):
+            tool_schemas.extend(await _extract_tool_definitions(ts.toolsets, agent_id))
+        elif isinstance(ts, WrapperToolset):
+            tool_schemas.extend(await _extract_tool_definitions([ts.wrapped], agent_id))
+        elif isinstance(ts, FunctionToolset):
+            tool_schemas.extend(tool.tool_def for tool in ts.tools.values())
         elif isinstance(ts, MCPToolset):
-            for mcp_tool in await ts.list_tools():
-                tool_schemas.append(ToolDefinition(
+            tool_schemas.extend(
+                ToolDefinition(
                     name=mcp_tool.name,
                     description=mcp_tool.description,
                     parameters_json_schema=mcp_tool.inputSchema,
-                ))
+                )
+                for mcp_tool in await ts.list_tools()
+            )
         else:
             log.error(
                 "Agent %s has an unsupported toolset type (%s); "
-                "tool definitions for context reconstruction will be incomplete. "
-                "Supported toolset types are FunctionToolset and MCPToolset.",
+                "tool definitions for context reconstruction will be incomplete.",
                 agent_id, ts.label,
             )
     return tool_schemas
