@@ -2,6 +2,7 @@
 Tests for messages/messages.py — persist_messages, load_messages, deserialize_messages.
 """
 import json
+import logging
 import time
 from collections.abc import Sequence
 
@@ -861,7 +862,6 @@ async def test_extract_tool_definitions_logs_error_for_unknown_toolset(caplog):
         def apply(self, visitor): pass  # pragma: no cover
         def visit_and_replace(self, visitor): return self  # pragma: no cover
 
-    import logging
     with caplog.at_level(logging.ERROR, logger="messages.messages"):
         schemas = await _extract_tool_definitions([_UnknownToolset()], "test-agent")
 
