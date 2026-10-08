@@ -45,7 +45,7 @@ from messages.messages import format_system_alert
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
 from agent.types import AgentAppState, MCPConnError, AgentDeps
 from api.fastapi_deps import get_agent_and_deps
-from conftest import make_mock_agent, _make_mock_session, local_dummy_tool
+from conftest import make_mock_agent, _make_mock_session, local_dummy_tool, assert_ModelMessage_list_eq
 from db.models import AgentRecord
 
 # --- Module-level test data ---
@@ -594,37 +594,6 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
         orphans = tool_call_ids - response_ids
         assert not orphans, f"Orphaned ToolCallPart IDs with no matching return: {orphans}"
 
-    @staticmethod
-    def _assert_ModelMessage_list_eq(
-        actual: list[ModelMessage],
-        expected: list[ModelMessage],
-    ) -> None:
-        """Assert two ModelMessage lists are semantically equal, ignoring runtime fields (timestamps etc.)."""
-        assert len(actual) == len(expected), f"Message list length mismatch: {len(actual)} != {len(expected)}"
-        for i, (actual_msg, expected_msg) in enumerate(zip(actual, expected)):
-            assert type(actual_msg) is type(expected_msg), f"Message {i}: type mismatch {type(actual_msg)} != {type(expected_msg)}"
-            assert len(actual_msg.parts) == len(expected_msg.parts), f"Message {i}: part count mismatch"
-            for j, (actual_part, expected_part) in enumerate(zip(actual_msg.parts, expected_msg.parts)):
-                assert type(actual_part) is type(expected_part), f"Message {i} part {j}: type mismatch"
-                match expected_part:
-                    case UserPromptPart():
-                        assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
-                    case ToolCallPart():
-                        assert actual_part.tool_name == expected_part.tool_name, f"Message {i} part {j}: tool_name mismatch"
-                        assert actual_part.args == expected_part.args, f"Message {i} part {j}: args mismatch"
-                        assert actual_part.tool_call_id == expected_part.tool_call_id, f"Message {i} part {j}: tool_call_id mismatch"
-                    case ToolReturnPart():
-                        assert actual_part.tool_name == expected_part.tool_name, f"Message {i} part {j}: tool_name mismatch"
-                        assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
-                        assert actual_part.tool_call_id == expected_part.tool_call_id, f"Message {i} part {j}: tool_call_id mismatch"
-                    case TextPart():
-                        assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
-                    case ThinkingPart():
-                        assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
-                    case _:
-                        assert actual_part == expected_part, (f"Message {i} part {j}: equality mismatch.\n" 
-                                                              "Comparison helper may not be accountinng for this type.")
-
 
 class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
     """Persistence contract tests using a real pydantic-ai Agent + FunctionModel."""
@@ -645,7 +614,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         assert "Error" not in event_types, f"Unexpected Error event: {events}"
         # Sanity check: ensure history made it in 
         # history + new user prompt combined into one ModelRequest by pydantic-ai
-        self._assert_ModelMessage_list_eq(
+        assert_ModelMessage_list_eq(
             self.function_agent.calls[0],
             [ModelRequest(parts=[UserPromptPart(content="prior turn"), UserPromptPart(content=DEFAULT_USER_MESSAGE)])],
         )
@@ -660,7 +629,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         expected_msg_list = [
             ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
         ] + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS
-        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
+        assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
         # These are now sanity checks due to strength of above hard coded comparison
         self._assert_no_duplicates(persisted_msgs_list)
@@ -696,7 +665,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
             "User message should be persisted before (or as) the first tool call completes"
         )
         assert self.mock_session.commit.call_count == 1, "Route must commit after persisting user message"
-        self._assert_ModelMessage_list_eq(
+        assert_ModelMessage_list_eq(
             self._get_messages_from_last_persist_call(),
             [ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)])],
         )
@@ -712,12 +681,12 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
                 f"Tool call/return pair {i} should be persisted as soon as the return is available"
             )
             assert self.mock_session.commit.call_count == i, "Route must commit after each persist"
-            self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
+            assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
             self.function_agent.tool_entered.clear()  # consume signal before resuming to avoid stale wait
             self.function_agent.resume_tool_exec.set()
 
         # The end of the final loop iter freed up the last tool call/return pair
-        self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
+        assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
 
         # --- Run complete ---
         events = await asyncio.wait_for(stream_task, timeout=5.0)
@@ -727,14 +696,14 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
             "Final model response must be persisted"
         )
         assert self.mock_session.commit.call_count == 5, "Each persist must have been committed"
-        self._assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), [FunctionModelTestAgent.THREE_TOOL_CALL_EXPECTED_MSGS[-1]])
+        assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), [FunctionModelTestAgent.THREE_TOOL_CALL_EXPECTED_MSGS[-1]])
 
         # Aggregate: full flattened message list must be complete and well-formed (sanity check)
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
         expected_msg_list = [
             ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
         ] + FunctionModelTestAgent.THREE_TOOL_CALL_EXPECTED_MSGS
-        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
+        assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
         self._assert_no_orphans(persisted_msgs_list)
         assert not self.mock_session.rollback.called, "Session must NOT be rolled back on happy path"
 
@@ -759,7 +728,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         expected_msg_list = [
             ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
         ] + FunctionModelTestAgent.CRASH_EXPECTED_PARTIAL_MODELMSGS
-        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
+        assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
         self._assert_no_orphans(persisted_msgs_list)  # sanity check
 
@@ -810,7 +779,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
             ModelRequest(parts=[UserPromptPart(content=FunctionModelTestAgent.ENQUEUED_WARNING_TEXT)]),
             ModelResponse(parts=[TextPart(content=FunctionModelTestAgent.COMPLETION_TEXT)]),
         ]
-        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
+        assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
     @pytest.mark.parametrize("fake_history", [
         pytest.param(
@@ -883,7 +852,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         expected_msg_list = [
             ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
         ] + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS
-        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
+        assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
 
 # ---------------------------------------------------------------------------
@@ -952,7 +921,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
             + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS[:-1]
             + [self.CANCEL_NOTICE]
         )
-        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
+        assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
         self._assert_no_orphans(persisted_msgs_list)
 
         assert self.mock_session.commit.call_count == self.mock_persist_messages.call_count, (
@@ -1032,7 +1001,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
             ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
             self.CANCEL_NOTICE,
         ]
-        self._assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
+        assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
         assert self.mock_session.commit.call_count == self.mock_persist_messages.call_count, (
             "Every persist call must be followed by a commit — including cancel code path"
         )
@@ -1267,7 +1236,7 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         ]
         B = _PersistenceAndCancellationTestBase
         actual = B._list_persisted_messages(self.mock_persist_messages)
-        B._assert_ModelMessage_list_eq(actual, expected)
+        assert_ModelMessage_list_eq(actual, expected)
 
 
 @pytest.mark.xfail(

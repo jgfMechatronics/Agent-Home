@@ -22,7 +22,15 @@ import pytest_asyncio
 from pytest_mock import MockerFixture
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.messages import ModelResponse, RetryPromptPart, ThinkingPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,7 +45,12 @@ from agent.factory import (
 )
 from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError, AgentOutput
 from memory.system_prompt_compilation import get_system_prompt
-from conftest import SAMPLE_AGENT_CONFIG, ScriptedFunction, local_dummy_tool
+from conftest import (
+    SAMPLE_AGENT_CONFIG,
+    ScriptedFunction,
+    assert_ModelMessage_list_eq,
+    local_dummy_tool,
+)
 from db.models import AgentRecord
 
 
@@ -462,7 +475,8 @@ async def test_empty_final_response_completes_run(final_parts):
     test_output_type_is_agent_output above) driven by conftest's
     ScriptedFunction. Asserts: None result, exactly two model calls (a third
     would mean a retry fired), no RetryPromptPart in history, and exact
-    history shape — nothing extra injected.
+    history content via assert_ModelMessage_list_eq (semantic equality
+    ignoring runtime fields).
     """
     scripted = ScriptedFunction([
         ModelResponse(parts=[ToolCallPart(
@@ -485,17 +499,16 @@ async def test_empty_final_response_completes_run(final_parts):
     ]
     assert not retry_parts, f"Unexpected retry prompts in history: {retry_parts}"
 
-    # Structural fingerprint (message type, part kinds) — avoids equality
-    # pitfalls with run-generated timestamps/usage while asserting exact shape.
-    shape = [
-        (type(m).__name__, tuple(type(p).__name__ for p in m.parts)) for m in messages
-    ]
-    assert shape == [
-        ("ModelRequest", ("UserPromptPart",)),
-        ("ModelResponse", ("ToolCallPart",)),
-        ("ModelRequest", ("ToolReturnPart",)),
-        ("ModelResponse", tuple(type(p).__name__ for p in final_parts)),
-    ]
+    assert_ModelMessage_list_eq(messages, [
+        ModelRequest(parts=[UserPromptPart(content="go")]),
+        ModelResponse(parts=[ToolCallPart(
+            tool_name="local_dummy_tool", args='{"text": "ok"}', tool_call_id="tc-1",
+        )]),
+        ModelRequest(parts=[ToolReturnPart(
+            tool_name="local_dummy_tool", content="ok", tool_call_id="tc-1",
+        )]),
+        ModelResponse(parts=final_parts),
+    ])
 
 
 # =============================================================================

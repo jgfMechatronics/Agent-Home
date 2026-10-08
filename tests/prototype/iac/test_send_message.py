@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.runner import COMPACTION_RESUME_NOTICE, run_stateful_agent, is_compaction_needed as _real_is_compaction_needed
 from agent.types import AgentAppState, AgentDeps
-from conftest import SAMPLE_AGENT_CONFIG, _make_mock_session, make_alternating_messages, mock_run_context
+from conftest import SAMPLE_AGENT_CONFIG, _make_mock_session, make_alternating_messages, mock_run_context, assert_ModelMessage_list_eq
 from db.models import AgentRecord
 from prototype.iac.send_message import (
     _format_inter_agent_message,
@@ -412,7 +412,7 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
             # iter2: step 4 completion
             ModelResponse(parts=[TextPart(content=FunctionModelTestAgent.COMPLETION_TEXT)]),
         ]
-        self._assert_ModelMessage_list_eq(b_persisted, expected)
+        assert_ModelMessage_list_eq(b_persisted, expected)
 
         # A's history must not contain any of B's messages — bleed-through would
         # add extra messages and/or corrupt A's expected content.
@@ -436,7 +436,7 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
             )]),
             ModelResponse(parts=[TextPart(content=FunctionModelTestAgent.COMPLETION_TEXT)]),
         ]
-        self._assert_ModelMessage_list_eq(a_persisted, a_expected)
+        assert_ModelMessage_list_eq(a_persisted, a_expected)
 
 
 class TestFormatInterAgentMessage:
