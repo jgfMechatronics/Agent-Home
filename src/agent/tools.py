@@ -260,7 +260,7 @@ async def memory_read(
     This tool is NOT for normal recall: block content is already visible in your
     system prompt, and changes from your own edits are in your context. Only use
     it when you suspect significant drift AND that's causing a problem (a failed
-    edit, many accumulated edits, edits from a concurrent session).
+    edit, many accumulated edits, etc.).
 
     Workflow: eyeball the approximate line number of your target from your
     system-prompt view (the block's lines_current metadata gives the total line
@@ -278,11 +278,12 @@ async def memory_read(
 
     Returns:
         A header line ([memory_read: block '<label>', lines X-Y of Z]) followed
-        by the requested lines verbatim, or a guidance message if the window is
-        out of range.
+        by the requested lines verbatim.
 
     Raises:
-        ModelRetry: If the block is not found or offset/limit are invalid.
+        ModelRetry: If the block is not found, offset/limit are invalid, or the
+        requested window is out of range (message includes the total line count
+        and requested range for paging).
     """
     deps = ctx.deps
 
@@ -301,7 +302,7 @@ async def memory_read(
 
     window = lines[offset : offset + limit]
     if not window:
-        return (
+        raise ModelRetry(
             f"[memory_read: block '{label}' has {len(lines)} lines — "
             f"lines {offset + 1}-{offset + limit} are out of range. Adjust offset.]"
         )

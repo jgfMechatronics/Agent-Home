@@ -697,13 +697,10 @@ class TestMemoryRead:
 
         assert result == "[memory_read: block 'notes', lines 6-10 of 10]\nF\nG\nH\nI\nJ"
 
-    async def test_offset_beyond_end_returns_guidance(self):
-        """Out-of-range offset: no error — guidance message with total for paging back."""
-        result = await self._read(offset=50)
-
-        assert "has 10 lines" in result
-        assert "out of range" in result
-        assert "Adjust offset" in result
+    async def test_offset_beyond_end_raises_with_guidance(self):
+        """Out-of-range offset raises with paging guidance (same failure channel as other bad input)."""
+        with pytest.raises(ModelRetry, match="out of range"):
+            await self._read(offset=50)
 
     async def test_empty_block_returns_empty_message(self):
         self.block.content = ""
