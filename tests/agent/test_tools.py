@@ -575,77 +575,57 @@ class TestMemoryInsertLineBoundary(UsesEditableBlock):
     separation; the agent controls blank lines via newlines at content edges.
     """
 
-    async def _insert(self, content: str, after: str, occurrence: int | None = None):
-        await memory_insert(
-            self.ctx, label=self.block.label, content=content, after=after, occurrence=occurrence
-        )
+    async def _insert(self, content: str, after: str):
+        await memory_insert(self.ctx, label=self.block.label, content=content, after=after)
         await self.ctx.deps.session.refresh(self.block)
         return self.block.content
 
-    async def test_mid_line_anchor_inserts_after_line(self):
-        """Anchor mid-sentence → insert lands on the line AFTER the anchor's line."""
-        result = await self._insert(content="INSERTED", after="foo two.")
+    @pytest.mark.parametrize(
+        "block_content, content, after, expected",
+        [
+            # Anchor mid-sentence: insert lands on the line AFTER the anchor's line
+            pytest.param(None, "INSERTED", "foo two.",
+                         "foo one.\nfoo two.\nINSERTED\nfoo three.", id="mid-line-anchor"),
+            # Agent's leading/trailing newlines produce blank lines around the insert
+            pytest.param(None, "\nINSERTED\n", "foo two.",
+                         "foo one.\nfoo two.\n\nINSERTED\n\nfoo three.", id="blank-line-control"),
+            # Content's internal newlines are preserved exactly
+            pytest.param(None, "line a\nline b", "foo one.",
+                         "foo one.\nline a\nline b\nfoo two.\nfoo three.", id="verbatim-internal-newlines"),
+            # Anchor including its trailing newline still snaps to the next line start
+            pytest.param(None, "INSERTED", "foo two.\n",
+                         "foo one.\nfoo two.\nINSERTED\nfoo three.", id="anchor-ends-with-newline"),
+            # Anchor on the final line of an unterminated block: junction newline keeps lines separate
+            pytest.param(None, "INSERTED", "foo three.",
+                         "foo one.\nfoo two.\nfoo three.\nINSERTED\n", id="final-line-unterminated"),
+            # <end> on an unterminated block adds the missing newline before appending
+            pytest.param(None, "APPENDED", "<end>",
+                         "foo one.\nfoo two.\nfoo three.\nAPPENDED\n", id="end-unterminated"),
+            # <end> on a terminated block appends without extra junction
+            pytest.param("foo one.\nfoo two.\nfoo three.\n", "APPENDED", "<end>",
+                         "foo one.\nfoo two.\nfoo three.\nAPPENDED\n", id="end-terminated"),
+            # <start> with trailing newline in content: blank line before old content
+            pytest.param(None, "PREPENDED\n", "<start>",
+                         "PREPENDED\n\nfoo one.\nfoo two.\nfoo three.", id="start-content-controls-blank"),
+            # List-item insertion: new item lands between N and N+1, no surprise blanks
+            pytest.param("- item 1\n- item 2\n- item 3\n- item 4\n- item 5", "- item 3.5", "- item 3",
+                         "- item 1\n- item 2\n- item 3\n- item 3.5\n- item 4\n- item 5", id="list-item"),
+        ],
+    )
+    async def test_line_boundary_insertion(self, block_content, content, after, expected):
+        """Insertion lands at a line boundary per each scenario (block_content=None uses the fixture default)."""
+        if block_content is not None:
+            self.block.content = block_content
+            await self.ctx.deps.session.flush()
 
-        assert result == "foo one.\nfoo two.\nINSERTED\nfoo three."
+        result = await self._insert(content=content, after=after)
 
-    async def test_content_blank_line_control(self):
-        """Agent's leading/trailing newlines produce blank lines around the insert."""
-        result = await self._insert(content="\nINSERTED\n", after="foo two.")
-
-        assert result == "foo one.\nfoo two.\n\nINSERTED\n\nfoo three."
-
-    async def test_content_verbatim_internal_newlines(self):
-        """Content's internal newlines are preserved exactly."""
-        result = await self._insert(content="line a\nline b", after="foo one.")
-
-        assert result == "foo one.\nline a\nline b\nfoo two.\nfoo three."
-
-    async def test_anchor_ending_with_newline(self):
-        """Anchor that includes its trailing newline still snaps to the next line start."""
-        result = await self._insert(content="INSERTED", after="foo two.\n")
-
-        assert result == "foo one.\nfoo two.\nINSERTED\nfoo three."
-
-    async def test_anchor_on_final_line_without_trailing_newline(self):
-        """Anchor on the last line (unterminated block) → junction newline keeps lines separate."""
-        result = await self._insert(content="INSERTED", after="foo three.")
-
-        assert result == "foo one.\nfoo two.\nfoo three.\nINSERTED\n"
-
-    async def test_end_insert_ensures_termination(self):
-        """<end> on an unterminated block adds the missing newline before appending."""
-        result = await self._insert(content="APPENDED", after="<end>")
-
-        assert result == "foo one.\nfoo two.\nfoo three.\nAPPENDED\n"
-
-    async def test_end_insert_on_terminated_block(self):
-        """<end> on a newline-terminated block appends without extra junction."""
-        self.block.content = "foo one.\nfoo two.\nfoo three.\n"
-        await self.ctx.deps.session.flush()
-
-        result = await self._insert(content="APPENDED", after="<end>")
-
-        assert result == "foo one.\nfoo two.\nfoo three.\nAPPENDED\n"
-
-    async def test_start_insert_content_controls_blank(self):
-        """<start> with trailing newline in content → blank line before old content."""
-        result = await self._insert(content="PREPENDED\n", after="<start>")
-
-        assert result == "PREPENDED\n\nfoo one.\nfoo two.\nfoo three."
+        assert result == expected
 
     async def test_empty_content_raises(self):
         """Empty content is rejected — it would silently insert a lone newline."""
         with pytest.raises(ModelRetry, match="content cannot be empty"):
             await memory_insert(self.ctx, label=self.block.label, content="", after="<end>")
-
-    async def test_list_item_insertion_no_surprise_blanks(self):
-        """List-item insertion: anchor on item N lands the new item between N and N+1."""
-        self.block.content = "- item 1\n- item 2\n- item 3\n- item 4\n- item 5"
-        await self.ctx.deps.session.flush()
-
-        result = await self._insert(content="- item 3.5", after="- item 3")
-
-        assert result == "- item 1\n- item 2\n- item 3\n- item 3.5\n- item 4\n- item 5"
 
 
 # --- TestMemoryRead (paginated read with computed line numbers) ---
