@@ -203,13 +203,14 @@ async def memory_insert(
                or any string to insert after the line containing that anchor
                (the anchor's line stays intact — nothing is ever split mid-line).
         occurrence: Which occurrence of anchor to insert after (1-indexed).
-                   Required if anchor appears multiple times.
+                    Required if anchor appears multiple times.
 
     Returns:
         Snippet of updated content on success.
 
     Raises:
-        ModelRetry: On validation failure (block not found, anchor not found, etc.)
+        ModelRetry: On validation failure (block not found, anchor not found, etc.), or on multiple occurances of 'after'
+                    without specifying 'occurrence'
     """
     deps = ctx.deps
 
