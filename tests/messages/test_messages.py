@@ -10,7 +10,8 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, patch
 
 from pydantic_ai import Agent
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, WrapperToolset
+from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -801,3 +802,68 @@ async def test_extract_tool_definitions_returns_correct_schemas(in_process_mcp_t
     assert sorted(schemas, key=lambda s: s.name) == sorted(
         [_EXPECTED_MCP_SCHEMA, _EXPECTED_LOCAL_SCHEMA], key=lambda s: s.name
     )
+
+
+def _bare_function_toolset() -> FunctionToolset:
+    """Extract the FunctionToolset from a single-tool Agent — used to build wrapper test cases.
+
+    Called at module load for parametrize. Agent construction is synchronous.
+    """
+    _agent = Agent("test")
+
+    @_agent.tool
+    async def dummy_tool(ctx, x: str) -> str:  # pragma: no cover
+        return x
+
+    return next(ts for ts in _agent.toolsets if isinstance(ts, FunctionToolset))
+
+
+_BARE_FS = _bare_function_toolset()
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("toolsets", [
+    pytest.param([WrapperToolset(wrapped=_BARE_FS)], id="wrapper_toolset"),
+    pytest.param([CombinedToolset(toolsets=[_BARE_FS])], id="combined_toolset"),
+    pytest.param(
+        [WrapperToolset(wrapped=CombinedToolset(toolsets=[_BARE_FS]))],
+        id="nested_wrapper_then_combined",
+    ),
+    pytest.param(
+        [CombinedToolset(toolsets=[WrapperToolset(wrapped=_BARE_FS)])],
+        id="nested_combined_then_wrapper",
+    ),
+])
+async def test_extract_tool_definitions_recurses_through_wrapper_types(toolsets):
+    """_extract_tool_definitions recurses through WrapperToolset and CombinedToolset
+    to reach the underlying FunctionToolset.
+
+    This covers the pydantic-ai capability system wrapping toolsets in
+    CapabilityOwnedToolset (a WrapperToolset subclass) — the pattern that was
+    hitting the else/error branch before this fix.
+    """
+    schemas = await _extract_tool_definitions(toolsets, "test-agent")
+
+    assert len(schemas) == 1
+    assert schemas[0].name == "dummy_tool"
+
+
+@pytest.mark.asyncio
+async def test_extract_tool_definitions_logs_error_for_unknown_toolset(caplog):
+    """Unknown toolset type falls through to the error branch — extraction completes
+    but logs an error and skips that toolset's tools."""
+    class _UnknownToolset(AbstractToolset):
+        @property
+        def id(self): return None
+        @property
+        def label(self): return "unknown"
+        async def get_tools(self, ctx): return {}  # pragma: no cover
+        async def call_tool(self, *a, **kw): pass  # pragma: no cover
+        def apply(self, visitor): pass  # pragma: no cover
+        def visit_and_replace(self, visitor): return self  # pragma: no cover
+
+    import logging
+    with caplog.at_level(logging.ERROR, logger="messages.messages"):
+        schemas = await _extract_tool_definitions([_UnknownToolset()], "test-agent")
+
+    assert schemas == []
+    assert "unsupported toolset type" in caplog.text
