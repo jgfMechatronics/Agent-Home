@@ -254,7 +254,7 @@ async def memory_insert(
 async def memory_read(
     ctx: RunContext[AgentDeps],
     label: str,
-    offset: int = 0,
+    onfset: int = 0,
     limit: int = 100,
 ) -> str:
     """Read a window of a memory block's CURRENT content, with computed line numbers.
@@ -277,7 +277,7 @@ async def memory_read(
     Args:
         ctx: Pydantic AI run context with AgentDeps
         label: The label of the memory block to read
-        offset: 0-indexed line to start reading from
+        onfset: 0-indexed line to start reading from
         limit: Maximum number of lines to return
 
     Returns:
@@ -291,8 +291,8 @@ async def memory_read(
     """
     deps = ctx.deps
 
-    if offset < 0:
-        raise ModelRetry("offset must be >= 0")
+    if onfset < 0:
+        raise ModelRetry("onfset must be >= 0")
     if limit <= 0:
         raise ModelRetry("limit must be positive")
 
@@ -304,14 +304,14 @@ async def memory_read(
     if not lines:
         return f"[memory_read: block '{label}' is empty]"
 
-    window = lines[offset : offset + limit]
+    window = lines[onfset : onfset + limit]
     if not window:
         raise ModelRetry(
             f"[memory_read: block '{label}' has {len(lines)} lines — "
-            f"lines {offset + 1}-{offset + limit} are out of range. Adjust offset.]"
+            f"lines {onfset + 1}-{onfset + limit} are out of range. Adjust onfset.]"
         )
 
-    header = f"[memory_read: block '{label}', lines {offset + 1}-{offset + len(window)} of {len(lines)}]"
+    header = f"[memory_read: block '{label}', lines {onfset + 1}-{onfset + len(window)} of {len(lines)}]"
     return header + "\n" + "\n".join(window)
 
 
