@@ -12,6 +12,7 @@ from agent.tools import (
     _compute_snippet,
     get_tools_for_agent,
     memory_insert,
+    memory_read,
     memory_replace,
 )
 from agent.types import AgentDeps
@@ -80,6 +81,20 @@ async def agent_with_editable_block(session: AsyncSession):
     )
 
 
+class UsesEditableBlock:
+    """Common setup for test classes operating on agent_with_editable_block.
+
+    Provides self.ctx, self.block, and self.agent via an autouse fixture.
+    (Name deliberately does not start with 'Test' — pytest should not collect it.)
+    """
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, agent_with_editable_block):
+        self.agent = agent_with_editable_block["agent"]
+        self.ctx = agent_with_editable_block["ctx"]
+        self.block = agent_with_editable_block["block"]
+
+
 # --- TestComputeSnippet ---
 
 
@@ -142,11 +157,13 @@ class TestToolRegistry:
     """Tests for TOOL_REGISTRY and get_tools_for_agent."""
 
     def test_registry_contains_memory_tools(self):
-        """TOOL_REGISTRY contains memory_replace and memory_insert keyed by name."""
+        """TOOL_REGISTRY contains all memory tools keyed by name."""
         assert "memory_replace" in TOOL_REGISTRY
         assert "memory_insert" in TOOL_REGISTRY
+        assert "memory_read" in TOOL_REGISTRY
         assert TOOL_REGISTRY["memory_replace"] is memory_replace
         assert TOOL_REGISTRY["memory_insert"] is memory_insert
+        assert TOOL_REGISTRY["memory_read"] is memory_read
 
 
     def test_get_tools_returns_callables_for_valid_names(self):
@@ -172,20 +189,12 @@ MEMORY_REPLACE_ARGS = {"old_string": "foo one.", "new_string": "NEW one."}
 MEMORY_INSERT_ARGS = {"content": "Inserted.", "after": "<end>"}
 
 
-class TestMemoryToolsShared:
+class TestMemoryToolsShared(UsesEditableBlock):
     """
     Shared behaviors for memory_replace and memory_insert, parametrized.
     The use of mock_run_context in the particular position it is used in the fcn call enforces
     a function signature required for pydantic AI compatibility
     """
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, agent_with_editable_block):
-        """Pull ctx/block/agent into self for all tests in this class."""
-        self.ctx = agent_with_editable_block["ctx"]
-        self.block = agent_with_editable_block["block"]
-        self.agent = agent_with_editable_block["agent"]
-
 
     @pytest.mark.parametrize("tool_fn,valid_args", [
         pytest.param(memory_replace, MEMORY_REPLACE_ARGS, id="memory_replace"),
@@ -206,8 +215,8 @@ class TestMemoryToolsShared:
         ),
         pytest.param(
             memory_insert,
-            {"content": " INSERTED", "after": "foo three."},
-            "foo one.\nfoo two.\nfoo three. INSERTED",
+            {"content": "INSERTED", "after": "foo three."},
+            "foo one.\nfoo two.\nfoo three.\nINSERTED\n",
             id="memory_insert",
         ),
     ])
@@ -286,8 +295,8 @@ class TestMemoryToolsShared:
         pytest.param(
             memory_insert,
             {"content": "[INS]", "after": "E"},
-            "A\nB\nC\nD\nE[INS]\nF\nG\nH\nI\nJ",
-            9,      # insert_pos = idx("E") + len("E") = 8 + 1 = 9
+            "A\nB\nC\nD\nE\n[INS]\nF\nG\nH\nI\nJ",
+            10,     # content starts at start of line after E's line
             "[INS]",
             id="memory_insert",
         ),
@@ -436,14 +445,8 @@ class TestMemoryToolsShared:
 
 # --- TestMemoryReplace (tool-specific) ---
 
-class TestMemoryReplace:
+class TestMemoryReplace(UsesEditableBlock):
     """Tests specific to memory_replace behavior."""
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, agent_with_editable_block):
-        """Pull ctx/block into self for all tests in this class."""
-        self.ctx = agent_with_editable_block["ctx"]
-        self.block = agent_with_editable_block["block"]
 
 
     async def test_replaces_target_and_returns_snippet_with_edit(self):
@@ -490,19 +493,13 @@ class TestMemoryReplace:
 
 # --- TestMemoryInsert (tool-specific) ---
 
-class TestMemoryInsert:
+class TestMemoryInsert(UsesEditableBlock):
     """Tests specific to memory_insert behavior."""
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, agent_with_editable_block):
-        """Most tests use agent_with_editable_block; pull ctx/block into self."""
-        self.ctx = agent_with_editable_block["ctx"]
-        self.block = agent_with_editable_block["block"]
 
 
     async def test_after_start_inserts_at_beginning(self):
-        """after='<start>' inserts content at the start of the block."""
-        result = await memory_insert(self.ctx, label=self.block.label, content="PREPENDED\n", after="<start>")
+        """after='<start>' inserts content at the start of the block (line-boundary: content + newline)."""
+        result = await memory_insert(self.ctx, label=self.block.label, content="PREPENDED", after="<start>")
 
         await self.ctx.deps.session.refresh(self.block)
         assert self.block.content == "PREPENDED\nfoo one.\nfoo two.\nfoo three."
@@ -511,12 +508,12 @@ class TestMemoryInsert:
 
 
     async def test_after_end_inserts_at_end(self):
-        """after='<end>' inserts content at the end of the block."""
+        """after='<end>' inserts content at the end of the block (ensures newline termination)."""
         await memory_insert(self.ctx, label=self.block.label, content="\nAPPENDED", after="<end>")
 
         await self.ctx.deps.session.refresh(self.block)
-        assert self.block.content.endswith("\nAPPENDED")
-        assert self.block.content == "foo one.\nfoo two.\nfoo three.\nAPPENDED"
+        assert self.block.content.endswith("\nAPPENDED\n")
+        assert self.block.content == "foo one.\nfoo two.\nfoo three.\n\nAPPENDED\n"
 
 
     async def test_occurrence_with_start_raises(self):
@@ -535,16 +532,16 @@ class TestMemoryInsert:
             )
 
 
-    async def test_after_anchor_inserts_after_match(self):
-        """after='anchor' inserts content immediately after the anchor string."""
-        await memory_insert(self.ctx, label=self.block.label, content=" [INSERTED]", after="foo two.")
+    async def test_after_anchor_inserts_after_line(self):
+        """after='anchor' inserts content after the line containing the anchor"""
+        await memory_insert(self.ctx, label=self.block.label, content="[INSERTED]", after="foo two.")
 
         await self.ctx.deps.session.refresh(self.block)
-        assert self.block.content == "foo one.\nfoo two. [INSERTED]\nfoo three."
+        assert self.block.content == "foo one.\nfoo two.\n[INSERTED]\nfoo three."
 
 
     async def test_occurrence_targets_nth_anchor(self):
-        """occurrence=N inserts after the Nth occurrence of anchor (1-indexed)."""
+        """occurrence=N inserts after the line containing the Nth anchor occurrence (1-indexed)."""
         # Content: "foo one.\nfoo two.\nfoo three."
 
         await memory_insert(
@@ -552,7 +549,7 @@ class TestMemoryInsert:
         )
 
         await self.ctx.deps.session.refresh(self.block)
-        assert self.block.content == "foo one.\nfoo[2] two.\nfoo three."
+        assert self.block.content == "foo one.\nfoo two.\n[2]\nfoo three."
 
 
     async def test_insert_does_not_overwrite(self):
@@ -566,3 +563,142 @@ class TestMemoryInsert:
         assert "foo three." in self.block.content
         # And new content added
         assert "NEW" in self.block.content
+
+
+# --- TestMemoryInsertLineBoundary (line-boundary insert semantics) ---
+
+class TestMemoryInsertLineBoundary(UsesEditableBlock):
+    """Line-boundary insert semantics: insertion always lands at a line boundary.
+
+    Rule: snap to the start of the line following the anchor's line; insert
+    content verbatim; append exactly one newline. The tool guarantees line
+    separation; the agent controls blank lines via newlines at content edges.
+    """
+
+    async def _insert(self, content: str, after: str):
+        await memory_insert(self.ctx, label=self.block.label, content=content, after=after)
+        await self.ctx.deps.session.refresh(self.block)
+        return self.block.content
+
+    @pytest.mark.parametrize(
+        "block_content, content, after, expected",
+        [
+            # Anchor mid-sentence: insert lands on the line AFTER the anchor's line
+            pytest.param(None, "INSERTED", "foo two.",
+                         "foo one.\nfoo two.\nINSERTED\nfoo three.", id="mid-line-anchor"),
+            # Agent's leading/trailing newlines produce blank lines around the insert
+            pytest.param(None, "\nINSERTED\n", "foo two.",
+                         "foo one.\nfoo two.\n\nINSERTED\n\nfoo three.", id="blank-line-control"),
+            # Content's internal newlines are preserved exactly
+            pytest.param(None, "line a\nline b", "foo one.",
+                         "foo one.\nline a\nline b\nfoo two.\nfoo three.", id="verbatim-internal-newlines"),
+            # Anchor including its trailing newline still snaps to the next line start
+            pytest.param(None, "INSERTED", "foo two.\n",
+                         "foo one.\nfoo two.\nINSERTED\nfoo three.", id="anchor-ends-with-newline"),
+            # Truncated anchor (doesn't complete the line's text, mid-block): insert follows the
+            # anchor's LINE, not the anchor fragment
+            pytest.param(None, "INSERTED", "foo tw",
+                         "foo one.\nfoo two.\nINSERTED\nfoo three.", id="truncated-anchor-mid-block"),
+            # Truncated anchor on the final line: snap runs off the end, junction newline added
+            pytest.param(None, "INSERTED", "foo thre",
+                         "foo one.\nfoo two.\nfoo three.\nINSERTED\n", id="truncated-anchor-final-line"),
+            # Anchor on the final line of an unterminated block: junction newline keeps lines separate
+            pytest.param(None, "INSERTED", "foo three.",
+                         "foo one.\nfoo two.\nfoo three.\nINSERTED\n", id="final-line-unterminated"),
+            # <end> on an unterminated block adds the missing newline before appending
+            pytest.param(None, "APPENDED", "<end>",
+                         "foo one.\nfoo two.\nfoo three.\nAPPENDED\n", id="end-unterminated"),
+            # <end> on a terminated block appends without extra junction
+            pytest.param("foo one.\nfoo two.\nfoo three.\n", "APPENDED", "<end>",
+                         "foo one.\nfoo two.\nfoo three.\nAPPENDED\n", id="end-terminated"),
+            # <start> with trailing newline in content: blank line before old content
+            pytest.param(None, "PREPENDED\n", "<start>",
+                         "PREPENDED\n\nfoo one.\nfoo two.\nfoo three.", id="start-content-controls-blank"),
+            # List-item insertion: new item lands between N and N+1, no surprise blanks
+            pytest.param("- item 1\n- item 2\n- item 3\n- item 4\n- item 5", "- item 3.5", "- item 3",
+                         "- item 1\n- item 2\n- item 3\n- item 3.5\n- item 4\n- item 5", id="list-item"),
+        ],
+    )
+    async def test_line_boundary_insertion(self, block_content, content, after, expected):
+        """Insertion lands at a line boundary per each scenario (block_content=None uses the fixture default)."""
+        if block_content is not None:
+            self.block.content = block_content
+            await self.ctx.deps.session.flush()
+
+        result = await self._insert(content=content, after=after)
+
+        assert result == expected
+
+    async def test_empty_content_raises(self):
+        """Empty content is rejected — it would silently insert a lone newline."""
+        with pytest.raises(ModelRetry, match="content cannot be empty"):
+            await memory_insert(self.ctx, label=self.block.label, content="", after="<end>")
+
+
+# --- TestMemoryRead (paginated read with computed line numbers) ---
+
+class TestMemoryRead:
+    """memory_read: exact current block content for retrying failed edits.
+
+    Pagination with computed line numbers + total count; no anchor mode
+    (anchors inherit the staleness that prompted the read — circular).
+    """
+
+    # 10 lines, one char per line — easy to verify windows
+    CONTENT = "\n".join("ABCDEFGHIJ")
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, session: AsyncSession):
+        made = await _make_agent_with_block(session, content=self.CONTENT, char_limit=1000)
+        self.ctx = made["ctx"]
+        self.block = made["block"]
+
+    async def _read(self, **kwargs) -> str:
+        return await memory_read(self.ctx, label=self.block.label, **kwargs)
+
+    @pytest.mark.parametrize("kwargs, line_range, expected_lines", [
+        # Default window: whole block from the start (empty kwargs exercise parameter defaults)
+        pytest.param(dict(), "1-10", CONTENT, id="default-window"),
+        # Offset pages forward
+        pytest.param(dict(offset=8), "9-10", "I\nJ", id="offset-pages-forward"),
+        # Limit cuts the window before the end of the block
+        pytest.param(dict(offset=2, limit=3), "3-5", "C\nD\nE", id="limit-cuts-window"),
+        # Limit larger than remaining lines clamps to end
+        pytest.param(dict(offset=5, limit=100), "6-10", "F\nG\nH\nI\nJ", id="limit-clamps-to-end"),
+    ])
+    async def test_read_window(self, kwargs, line_range, expected_lines):
+        expected = f"[memory_read: block 'notes', lines {line_range} of 10]\n{expected_lines}"
+        assert await self._read(**kwargs) == expected
+
+    async def test_empty_block_returns_empty_message(self):
+        self.block.content = ""
+        await self.ctx.deps.session.flush()
+
+        result = await self._read()
+
+        assert result == "[memory_read: block 'notes' is empty]"
+
+    async def test_block_not_found_raises(self):
+        with pytest.raises(ModelRetry, match="not found"):
+            await memory_read(self.ctx, label="nonexistent")
+
+    @pytest.mark.parametrize("kwargs, match", [
+        # offset and limit are validated before any DB access
+        pytest.param(dict(offset=-1), "offset must be", id="negative-offset"),
+        pytest.param(dict(limit=0), "limit must be", id="zero-limit"),
+        # Out-of-range offset raises with paging guidance (same failure channel as other bad input)
+        pytest.param(dict(offset=50), "out of range", id="offset-beyond-end"),
+    ])
+    async def test_invalid_input_raises(self, kwargs, match):
+        with pytest.raises(ModelRetry, match=match):
+            await self._read(**kwargs)
+
+    async def test_trailing_newline_not_extra_line(self):
+        """Convention: trailing newline does not create an extra line (matches lines_current metadata)."""
+        self.block.content = "one\ntwo\n"
+        await self.ctx.deps.session.flush()
+
+        result = await self._read()
+
+        assert "lines 1-2 of 2" in result
+        assert result.endswith("one\ntwo")

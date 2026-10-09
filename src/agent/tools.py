@@ -108,6 +108,30 @@ def _resolve_occurrence(
     return indices[target_idx]
 
 
+def _snap_to_next_line_start(content: str, anchor_end: int) -> int:
+    """Return the insertion point: start of the line following the line containing the anchor's last character.
+
+    The anchor may end mid-line or exactly at a line boundary; either way the
+    insertion follows the line the anchor ends on.
+    """
+    nl = content.find("\n", max(anchor_end - 1, 0))
+    return len(content) if nl == -1 else nl + 1
+
+
+def _insert_at_line_boundary(content: str, insert_pos: int, new_text: str) -> tuple[str, int]:
+    """Insert new_text at a line boundary and return (new_content, content_start_idx).
+
+    Guarantees line separation on both sides: if the position doesn't follow a
+    newline (end of an unterminated block), a junction newline is added first.
+    new_text is inserted verbatim, then exactly one trailing newline is appended.
+    """
+    prefix = content[:insert_pos]
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    new_content = prefix + new_text + "\n" + content[insert_pos:]
+    return new_content, len(prefix)
+
+
 async def memory_replace(
     ctx: RunContext[AgentDeps],
     label: str,
@@ -163,33 +187,47 @@ async def memory_insert(
     after: str | None = None,
     occurrence: int | None = None,
 ) -> str:
-    """Insert text into a memory block.
-    
+    """Insert text into a memory block at a line boundary.
+
+    Insertion always lands on a fresh line — mid-line splicing is impossible by
+    construction. The tool guarantees line separation on both sides of the insert;
+    the agent controls blank-line separation by including leading/trailing
+    newlines in content (e.g. content="\\nNew entry\\n" inserts a cleanly
+    blank-separated entry).
+
+    Use memory_replace instead if the above behavior is undesirable
+    (IE if you need to insert into the middle of a single line passage. Just rewrite the section being spliced.)
+
     Args:
         ctx: Pydantic AI run context with AgentDeps
         label: The label of the memory block to edit
-        content: The text to insert
+        content: The text to insert, verbatim (its newlines are preserved exactly)
         after: Where to insert. Use '<start>' for beginning, '<end>' for end,
-               or any string to insert after that anchor.
+               or any string to insert after the line containing that anchor
+               (the anchor's line stays intact — nothing is ever split mid-line).
         occurrence: Which occurrence of anchor to insert after (1-indexed).
-                   Required if anchor appears multiple times.
-    
+                    Required if anchor appears multiple times.
+
     Returns:
         Snippet of updated content on success.
-    
+
     Raises:
-        ModelRetry: On validation failure (block not found, anchor not found, etc.)
+        ModelRetry: On validation failure (block not found, anchor not found, etc.), or on multiple occurrences of 'after'
+                    without specifying 'occurrence'
     """
     deps = ctx.deps
-    
+
+    if not content:
+        raise ModelRetry("content cannot be empty")
+
     if not after:
         raise ModelRetry("'after' cannot be empty. Use '<start>' or '<end>' for boundary insertions.")
-    
+
     # Get block
     block = await get_block(deps.session, deps.agent_id, label)
     if block is None:
         raise ModelRetry(f"block '{label}' not found")
-    
+
     # Handle special markers
     if after in ("<start>", "<end>"):
         if occurrence is not None:
@@ -198,19 +236,83 @@ async def memory_insert(
     else:
         # Resolve anchor occurrence to character position (raises ModelRetry on failure)
         anchor_pos = _resolve_occurrence(block.content, after, occurrence, label)
-        # Insert AFTER the anchor
-        insert_pos = anchor_pos + len(after)
-    
-    # Perform insertion
-    new_content = block.content[:insert_pos] + content + block.content[insert_pos:]
-    
+        # Snap to the start of the line following the anchor's line
+        insert_pos = _snap_to_next_line_start(block.content, anchor_pos + len(after))
+
+    # Line-boundary insertion: verbatim content + exactly one trailing newline
+    new_content, content_start = _insert_at_line_boundary(block.content, insert_pos, content)
+
     # handles char limit check and persistence
     try:
         await update_block(deps, label, new_content, block=block)
     except ContentExceedsLimitError as e:
         raise ModelRetry(str(e))
 
-    return _compute_snippet(new_content, insert_pos, content)
+    return _compute_snippet(new_content, content_start, content)
+
+
+async def memory_read(
+    ctx: RunContext[AgentDeps],
+    label: str,
+    offset: int = 0,
+    limit: int = 100,
+) -> str:
+    """Read a window of a memory block's CURRENT content, with computed line numbers.
+
+    Use this to get exact current strings — for example, to retry a memory edit
+    that failed because your view of the block (from the system prompt) is stale.
+    This tool is NOT for normal recall: block content is already visible in your
+    system prompt, and changes from your own edits are in your context. Only use
+    it when you suspect significant drift AND that's causing a problem (a failed
+    edit, many accumulated edits, etc.).
+
+    Workflow: eyeball the approximate line number of your target from your
+    system-prompt view (the block's lines_current metadata gives the total line
+    count), read a window, page around by adjusting offset until you have the
+    target region, then re-attempt your edit using the exact current strings.
+
+    Returns lines verbatim (directly copyable) under a header giving the window
+    range and total line count.
+
+    Args:
+        ctx: Pydantic AI run context with AgentDeps
+        label: The label of the memory block to read
+        offset: 0-indexed line to start reading from
+        limit: Maximum number of lines to return
+
+    Returns:
+        A header line ([memory_read: block '<label>', lines X-Y of Z]) followed
+        by the requested lines verbatim.
+
+    Raises:
+        ModelRetry: If the block is not found, offset/limit are invalid, or the
+        requested window is out of range (message includes the total line count
+        and requested range for paging).
+    """
+    deps = ctx.deps
+
+    if offset < 0:
+        raise ModelRetry("offset must be >= 0")
+    if limit <= 0:
+        raise ModelRetry("limit must be positive")
+
+    block = await get_block(deps.session, deps.agent_id, label)
+    if block is None:
+        raise ModelRetry(f"block '{label}' not found")
+
+    lines = block.content.splitlines()
+    if not lines:
+        return f"[memory_read: block '{label}' is empty]"
+
+    window = lines[offset : offset + limit]
+    if not window:
+        raise ModelRetry(
+            f"[memory_read: block '{label}' has {len(lines)} lines — "
+            f"lines {offset + 1}-{offset + limit} are out of range. Adjust offset.]"
+        )
+
+    header = f"[memory_read: block '{label}', lines {offset + 1}-{offset + len(window)} of {len(lines)}]"
+    return header + "\n" + "\n".join(window)
 
 
 # =============================================================================
@@ -220,6 +322,7 @@ async def memory_insert(
 TOOL_REGISTRY: dict[str, Callable | Tool[AgentDeps]] = {
     "memory_replace": memory_replace,
     "memory_insert": memory_insert,
+    "memory_read": memory_read,
     "duckduckgo_search": duckduckgo_search_tool(max_results=5),
     "web_fetch": web_fetch_tool(),
     "send_message": send_message,
