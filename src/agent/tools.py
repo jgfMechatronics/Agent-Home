@@ -254,8 +254,8 @@ async def memory_insert(
 async def memory_read(
     ctx: RunContext[AgentDeps],
     label: str,
-    onfset: int,
     limit: int = 100,
+    onfset: int = 0,
 ) -> str:
     """Read a window of a memory block's CURRENT content, with computed line numbers.
 
