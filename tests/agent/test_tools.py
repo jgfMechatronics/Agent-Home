@@ -658,7 +658,7 @@ class TestMemoryRead:
 
     @pytest.mark.parametrize("kwargs, line_range, expected_lines", [
         # Default window: whole block from the start (empty kwargs exercise parameter defaults)
-        pytest.param(dict(), "1-10", "A\nB\nC\nD\nE\nF\nG\nH\nI\nJ", id="default-window"),
+        pytest.param(dict(), "1-10", CONTENT, id="default-window"),
         # Offset pages forward
         pytest.param(dict(offset=8), "9-10", "I\nJ", id="offset-pages-forward"),
         # Limit cuts the window before the end of the block
