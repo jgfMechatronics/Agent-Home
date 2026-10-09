@@ -672,11 +672,6 @@ class TestMemoryRead:
 
         assert result == "[memory_read: block 'notes', lines 6-10 of 10]\nF\nG\nH\nI\nJ"
 
-    async def test_offset_beyond_end_raises_with_guidance(self):
-        """Out-of-range offset raises with paging guidance (same failure channel as other bad input)."""
-        with pytest.raises(ModelRetry, match="out of range"):
-            await self._read(offset=50)
-
     async def test_empty_block_returns_empty_message(self):
         self.block.content = ""
         await self.ctx.deps.session.flush()
@@ -689,13 +684,16 @@ class TestMemoryRead:
         with pytest.raises(ModelRetry, match="not found"):
             await memory_read(self.ctx, label="nonexistent")
 
-    async def test_negative_offset_raises(self):
-        with pytest.raises(ModelRetry, match="offset must be"):
-            await self._read(offset=-1)
-
-    async def test_non_positive_limit_raises(self):
-        with pytest.raises(ModelRetry, match="limit must be"):
-            await self._read(limit=0)
+    @pytest.mark.parametrize("kwargs, match", [
+        # offset and limit are validated before any DB access
+        pytest.param(dict(offset=-1), "offset must be", id="negative-offset"),
+        pytest.param(dict(limit=0), "limit must be", id="zero-limit"),
+        # Out-of-range offset raises with paging guidance (same failure channel as other bad input)
+        pytest.param(dict(offset=50), "out of range", id="offset-beyond-end"),
+    ])
+    async def test_invalid_input_raises(self, kwargs, match):
+        with pytest.raises(ModelRetry, match=match):
+            await self._read(**kwargs)
 
     async def test_trailing_newline_not_extra_line(self):
         """Convention: trailing newline does not create an extra line (matches lines_current metadata)."""
