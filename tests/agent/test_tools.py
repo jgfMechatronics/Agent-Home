@@ -656,21 +656,19 @@ class TestMemoryRead:
     async def _read(self, **kwargs) -> str:
         return await memory_read(self.ctx, label=self.block.label, **kwargs)
 
-    async def test_default_window_reads_from_start(self):
-        """Default offset=0, limit=100: returns whole (small) block with header."""
-        result = await self._read()
-
-        assert result == "[memory_read: block 'notes', lines 1-10 of 10]\n" + self.CONTENT
-
-    async def test_offset_pages_forward(self):
-        result = await self._read(offset=8)
-
-        assert result == "[memory_read: block 'notes', lines 9-10 of 10]\nI\nJ"
-
-    async def test_limit_clamps_to_end(self):
-        result = await self._read(offset=5, limit=100)
-
-        assert result == "[memory_read: block 'notes', lines 6-10 of 10]\nF\nG\nH\nI\nJ"
+    @pytest.mark.parametrize("kwargs, line_range, expected_lines", [
+        # Default window: whole block from the start (empty kwargs exercise parameter defaults)
+        pytest.param(dict(), "1-10", "A\nB\nC\nD\nE\nF\nG\nH\nI\nJ", id="default-window"),
+        # Offset pages forward
+        pytest.param(dict(offset=8), "9-10", "I\nJ", id="offset-pages-forward"),
+        # Limit cuts the window before the end of the block
+        pytest.param(dict(offset=2, limit=3), "3-5", "C\nD\nE", id="limit-cuts-window"),
+        # Limit larger than remaining lines clamps to end
+        pytest.param(dict(offset=5, limit=100), "6-10", "F\nG\nH\nI\nJ", id="limit-clamps-to-end"),
+    ])
+    async def test_read_window(self, kwargs, line_range, expected_lines):
+        expected = f"[memory_read: block 'notes', lines {line_range} of 10]\n{expected_lines}"
+        assert await self._read(**kwargs) == expected
 
     async def test_empty_block_returns_empty_message(self):
         self.block.content = ""
