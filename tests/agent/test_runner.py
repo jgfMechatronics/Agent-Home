@@ -43,6 +43,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThink
 # Local
 from messages.messages import format_system_alert
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
+from agent.timestamping import stamp_user_message
 from agent.types import AgentAppState, MCPConnError, AgentDeps
 from api.fastapi_deps import get_agent_and_deps
 from conftest import make_mock_agent, _make_mock_session, local_dummy_tool, assert_ModelMessage_list_eq
@@ -616,7 +617,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         # history + new user prompt combined into one ModelRequest by pydantic-ai
         assert_ModelMessage_list_eq(
             self.function_agent.calls[0],
-            [ModelRequest(parts=[UserPromptPart(content="prior turn"), UserPromptPart(content=DEFAULT_USER_MESSAGE)])],
+            [ModelRequest(parts=[UserPromptPart(content="prior turn"), UserPromptPart(content=stamp_user_message(DEFAULT_USER_MESSAGE))])],
         )
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
@@ -627,7 +628,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         # - no orphaned tool calls
         # - old history not persisted
         expected_msg_list = [
-            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+            ModelRequest(parts=[UserPromptPart(content=stamp_user_message(DEFAULT_USER_MESSAGE))]),
         ] + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS
         assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
@@ -667,7 +668,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         assert self.mock_session.commit.call_count == 1, "Route must commit after persisting user message"
         assert_ModelMessage_list_eq(
             self._get_messages_from_last_persist_call(),
-            [ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)])],
+            [ModelRequest(parts=[UserPromptPart(content=stamp_user_message(DEFAULT_USER_MESSAGE))])],
         )
         self.function_agent.tool_entered.clear()  # consume signal before resuming to avoid stale wait
         self.function_agent.resume_tool_exec.set()
@@ -701,7 +702,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         # Aggregate: full flattened message list must be complete and well-formed (sanity check)
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
         expected_msg_list = [
-            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+            ModelRequest(parts=[UserPromptPart(content=stamp_user_message(DEFAULT_USER_MESSAGE))]),
         ] + FunctionModelTestAgent.THREE_TOOL_CALL_EXPECTED_MSGS
         assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
         self._assert_no_orphans(persisted_msgs_list)
@@ -726,7 +727,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
         expected_msg_list = [
-            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+            ModelRequest(parts=[UserPromptPart(content=stamp_user_message(DEFAULT_USER_MESSAGE))]),
         ] + FunctionModelTestAgent.CRASH_EXPECTED_PARTIAL_MODELMSGS
         assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
@@ -771,7 +772,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
         expected_msg_list = [
-            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+            ModelRequest(parts=[UserPromptPart(content=stamp_user_message(DEFAULT_USER_MESSAGE))]),
             ModelResponse(parts=[ThinkingPart(content=FunctionModelTestAgent.THINKING_TEXT),
                                   TextPart(content=FunctionModelTestAgent.PRE_TOOL_TEXT),
                                   FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
@@ -850,7 +851,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
         expected_msg_list = [
-            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+            ModelRequest(parts=[UserPromptPart(content=stamp_user_message(DEFAULT_USER_MESSAGE))]),
         ] + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS
         assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
@@ -917,7 +918,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         # We expect the default sequence except the cancel prevents us from reaching the COMPLETED chunk,
         # and instead we get the cancel notice
         expected_msg_list = (
-            [ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)])]
+            [ModelRequest(parts=[UserPromptPart(content=stamp_user_message(DEFAULT_USER_MESSAGE))])]
             + FunctionModelTestAgent.DEFAULT_EXPECTED_TOTAL_MODELMSGS[:-1]
             + [self.CANCEL_NOTICE]
         )
@@ -998,7 +999,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         # pydantic-ai assembles all parts of a step into one ModelResponse only at step-end.
         # Cancel fired mid-step means nothing from that in-progress step is in captured messages.
         expected_msg_list = [
-            ModelRequest(parts=[UserPromptPart(content=DEFAULT_USER_MESSAGE)]),
+            ModelRequest(parts=[UserPromptPart(content=stamp_user_message(DEFAULT_USER_MESSAGE))]),
             self.CANCEL_NOTICE,
         ]
         assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
@@ -1223,7 +1224,7 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         # Iter 2: resume notice + remaining tool pairs + completion
         expected = [
             # Iter 1 content
-            ModelRequest(parts=[UserPromptPart(content="test")]),
+            ModelRequest(parts=[UserPromptPart(content=stamp_user_message("test"))]),
             ModelResponse(parts=[F.DUMMY_TOOL_CALL_PART]),
             ModelRequest(parts=[F.DUMMY_TOOL_RETURN_PART]),
             # Iter 2 content

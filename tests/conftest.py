@@ -57,6 +57,25 @@ def mock_run_context(deps: AgentDeps):
     return ctx
 
 
+@pytest.fixture(autouse=True)
+def _frozen_stamp_clock(monkeypatch):
+    """Freeze timestamp injection (agent/timestamping.py) for determinism.
+
+    All tests see stamps as of a fixed UTC moment. Tests asserting persisted
+    user-message content build expected values with stamp_user_message(...)
+    itself, so the stamp format is never duplicated in expectations.
+    """
+    from zoneinfo import ZoneInfo
+
+    import agent.timestamping
+
+    monkeypatch.setattr(
+        agent.timestamping,
+        "_now",
+        lambda: datetime(2026, 10, 10, 12, 0, 0, tzinfo=ZoneInfo("UTC")),
+    )
+
+
 SAMPLE_AGENT_CONFIG_DATA = { "model_name": "anthropic:claude-sonnet-4-20250514",
     "tool_names": ["memory_replace", "memory_insert"],
     "soft_compaction_limit": 10000,
