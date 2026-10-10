@@ -54,7 +54,12 @@ def _now() -> datetime:
 
 
 def stamp_user_message(message: str) -> str:
-    """Prefix a user message with the current wall-clock timestamp."""
+    """Prefix a user message with a wall-clock timestamp header line.
+
+    Header-then-newline matches the house convention (inter-agent messages,
+    system alerts): for multi-line messages the stamp marks the whole message
+    as a masthead rather than decorating its first sentence.
+    """
     if not message:
         return message
-    return f"{_now():{_STAMP_FORMAT}} {message}"
+    return f"{_now():{_STAMP_FORMAT}}\n{message}"

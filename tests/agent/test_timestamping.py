@@ -9,8 +9,8 @@ import pytest
 import agent.timestamping
 from agent.timestamping import TZ_ENV_VAR, _resolve_tz, stamp_user_message
 
-# Shape of the stamp prefix: [YYYY-MM-DD HH:MM:SS ZONE]
-STAMP_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [A-Z]{2,5}\] ")
+# Shape of the stamp header line: [YYYY-MM-DD HH:MM:SS ZONE] followed by newline
+STAMP_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [A-Z]{2,5}\]\n")
 
 
 @pytest.fixture(autouse=True)
@@ -21,14 +21,14 @@ def _fresh_tz_cache(monkeypatch):
 
 class TestStampUserMessage:
     def test_stamp_shape(self):
-        """Stamped message starts with a bracketed timestamp prefix."""
+        """Stamped message starts with a bracketed timestamp header line."""
         stamped = stamp_user_message("hello")
         assert STAMP_RE.match(stamped), f"Bad stamp shape: {stamped!r}"
         assert stamped.endswith("hello")
 
     def test_stamp_value_frozen_clock(self):
         """With the suite-wide frozen clock (conftest), the stamp is fully deterministic."""
-        assert stamp_user_message("hello") == "[2026-10-10 12:00:00 UTC] hello"
+        assert stamp_user_message("hello") == "[2026-10-10 12:00:00 UTC]\nhello"
 
     def test_empty_message_passthrough(self):
         """Empty prompts (e.g. tool-continuation triggers) are not stamped."""
