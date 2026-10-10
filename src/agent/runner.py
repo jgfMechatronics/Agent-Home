@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from agent.compaction import compact, is_compaction_needed
+from agent.timestamping import stamp_user_message
 from agent.types import AgentAppState, AgentDeps, AgentOutput, MCPConnError
 from messages.messages import deserialize_messages, format_system_alert, load_messages, persist_messages
 
@@ -109,7 +110,12 @@ async def run_stateful_agent(agent: Agent,
     Also would allows us to consider switching to RunContext.tool_manager for capturing tool scheams which may be cleaner.
     agent.iter exposes a RunContext at this level I believe.
     """
-    
+
+    # Agents have no clock — anchor every inbound user message with a wall-clock
+    # timestamp (agents otherwise fabricate times in memory entries). Compaction
+    # resume notices below are system alerts and intentionally unstamped.
+    user_prompt = stamp_user_message(user_prompt)
+
     interrupted_by_compaction = True
     while interrupted_by_compaction:
         interrupted_by_compaction = False
