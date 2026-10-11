@@ -152,6 +152,11 @@ def _build_capabilities() -> list[AgentCapability[AgentDeps]]:
       with a handle + preview the model can page back through via the read_tool_result tool.
       Spill is lossless; Truncate is the fallback when the store cannot accept the write.
     """
+    # Capability hook firing order (pydantic-ai, verified in source): before-hooks fire in
+    # LIST order (first capability first), but after-hooks fire in REVERSED list order —
+    # the LAST capability in this list sees the result first. Capabilities that must
+    # transform a result before others see it go LAST; capabilities that must react to
+    # the final transformed result go EARLY.
     return [
         CompactionWarner(),
         # ToolReturnTimestamper must run AFTER ToolOutputLimits' reduction (after_tool_execute
