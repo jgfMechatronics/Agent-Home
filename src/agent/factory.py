@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
 from agent.crud import get_agent_record
+from agent.timestamping import ToolReturnTimestamper
 from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError, AgentOutput
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
@@ -146,12 +147,17 @@ def _build_capabilities() -> list[AgentCapability[AgentDeps]]:
     """Auto-injected capabilities applied to every constructed agent.
 
     - CompactionWarner: warns when the context window approaches the compaction threshold.
+    - ToolReturnTimestamper: stamps string tool returns with the wall-clock timestamp header.
     - ToolOutputLimits: spills oversized tool returns to a store, replacing them in history
       with a handle + preview the model can page back through via the read_tool_result tool.
       Spill is lossless; Truncate is the fallback when the store cannot accept the write.
     """
     return [
         CompactionWarner(),
+        # ToolReturnTimestamper must run AFTER ToolOutputLimits' reduction (after_tool_execute
+        # fires in REVERSED list order — later in list sees the result first), so the stamp
+        # lands on the spill stand-in rather than the raw payload.
+        ToolReturnTimestamper(),
         ToolOutputLimits(
             bands=[Band(over=TOOL_OUTPUT_SPILL_THRESHOLD_CHARS, action=Spill(then=Truncate()))],
             store=LocalFileStore(cleanup_after=TOOL_OUTPUT_SPILL_CLEANUP_AFTER),

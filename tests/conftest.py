@@ -62,7 +62,7 @@ def _frozen_stamp_clock(monkeypatch):
     """Freeze timestamp injection (agent/timestamping.py) for determinism.
 
     All tests see stamps as of a fixed UTC moment. Tests asserting persisted
-    user-message content build expected values with stamp_user_message(...)
+    user-message content build expected values with add_timestamp_prefix(...)
     itself, so the stamp format is never duplicated in expectations.
     """
     from zoneinfo import ZoneInfo

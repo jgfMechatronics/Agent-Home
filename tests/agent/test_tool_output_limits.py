@@ -5,7 +5,7 @@ Constructs a bare Agent on the production capability pipeline (_build_capabiliti
 and drives it with a scripted FunctionModel. An oversized tool return must NOT land
 in message history: the model sees a handle + preview instead, the payload lands in
 the LocalFileStore, and read_tool_result pages the original content back. Small
-returns pass through untouched.
+returns pass through with only the timestamp stamp added.
 
 The tool source is parametrized (function toolset vs in-process MCP toolset) —
 the hook must treat both identically since our agents' tools are MCP tools.
@@ -32,6 +32,7 @@ from pydantic_ai_harness.tool_output_limits import READ_TOOL_NAME
 
 from conftest import ScriptedFunction
 from agent.factory import TOOL_OUTPUT_SPILL_THRESHOLD_CHARS, _build_capabilities
+from agent.timestamping import add_timestamp_prefix
 from agent.types import AgentDeps
 
 
@@ -184,7 +185,7 @@ class TestSpill:
 
     @pytest.mark.parametrize("toolset_builder", TOOLSET_BUILDERS)
     async def test_small_return_passes_through_untouched(self, agent_deps: AgentDeps, toolset_builder):
-        """A return under the threshold is exactly the tool's return value."""
+        """A return under the threshold is the tool's return value, timestamp-stamped."""
         agent = _build_agent(
             [TOOL_CALL_STEP, COMPLETION_STEP], agent_deps, [toolset_builder(SMALL_RETURN)],
         )
@@ -192,7 +193,35 @@ class TestSpill:
         result = await agent.run("go", deps=agent_deps)
 
         ret = _find_tool_return(result.all_messages(), BIG_TOOL_NAME)
-        assert ret.content == SMALL_RETURN
+        assert ret.content == add_timestamp_prefix(SMALL_RETURN)
+
+
+class TestStampOrdering:
+    """ToolReturnTimestamper must run OUTSIDE ToolOutputLimits (middleware: earlier in
+    the capabilities list = outer; outer after-hooks run last) so the stamp lands
+    on the spill preview head — never on the raw payload, which the store must hold
+    unstamped for lossless page-back."""
+
+    async def test_stamp_lands_on_spill_preview_head(self, agent_deps: AgentDeps):
+        """Oversized return: history content starts with the ⏰ header, the stored
+        payload does not — spill ran first, stamp wrapped its preview."""
+        agent = _build_agent(
+            [TOOL_CALL_STEP, COMPLETION_STEP], agent_deps, [_function_toolset(_payload())],
+        )
+
+        result = await agent.run("go", deps=agent_deps)
+
+        ret = _find_tool_return(result.all_messages(), BIG_TOOL_NAME)
+        content = str(ret.content)
+        assert content.startswith("⏰ ["), f"stamp missing from preview head: {content[:100]!r}"
+        assert "Tool output too large" in content, "preview body must follow the stamp"
+
+        handle = _extract_handle(content)
+        spill_file = _default_store_root() / handle
+        # The store holds the raw, unstamped payload — stamping the spill input would
+        # corrupt every page-back with a second timestamp.
+        assert spill_file.read_text().startswith("line 00000"), \
+            "stored payload must be the raw tool return, not the stamped form"
 
 
 class TestReadback:

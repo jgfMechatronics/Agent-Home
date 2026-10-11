@@ -5,12 +5,13 @@ import re
 from zoneinfo import ZoneInfo
 
 import pytest
+from pydantic_ai.messages import ToolReturn
 
 import agent.timestamping
-from agent.timestamping import TZ_ENV_VAR, _resolve_tz, stamp_user_message
+from agent.timestamping import TZ_ENV_VAR, ToolReturnTimestamper, _resolve_tz, add_timestamp_prefix
 
-# Shape of the stamp header line: [YYYY-MM-DD HH:MM:SS ZONE] followed by newline
-STAMP_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [A-Z]{2,5}\]\n")
+# Shape of the stamp header line: ⏰ [Mon DD, YYYY HH:MM:SS ZONE] followed by newline
+STAMP_RE = re.compile(r"^⏰ \[[A-Z][a-z]{2} \d{2}, \d{4} \d{2}:\d{2}:\d{2} [A-Z]{2,5}\]\n")
 
 
 @pytest.fixture(autouse=True)
@@ -19,20 +20,66 @@ def _fresh_tz_cache(monkeypatch):
     monkeypatch.setattr(agent.timestamping, "_tz_cache", None)
 
 
-class TestStampUserMessage:
+class TestAddTimestampPrefix:
     def test_stamp_shape(self):
-        """Stamped message starts with a bracketed timestamp header line."""
-        stamped = stamp_user_message("hello")
+        """Stamped message starts with the ⏰-marked timestamp header line."""
+        stamped = add_timestamp_prefix("hello")
         assert STAMP_RE.match(stamped), f"Bad stamp shape: {stamped!r}"
         assert stamped.endswith("hello")
 
     def test_stamp_value_frozen_clock(self):
         """With the suite-wide frozen clock (conftest), the stamp is fully deterministic."""
-        assert stamp_user_message("hello") == "[2026-10-10 12:00:00 UTC]\nhello"
+        assert add_timestamp_prefix("hello") == "⏰ [Oct 10, 2026 12:00:00 UTC]\nhello"
 
-    def test_empty_message_passthrough(self):
-        """Empty prompts (e.g. tool-continuation triggers) are not stamped."""
-        assert stamp_user_message("") == ""
+    def test_empty_string_passthrough(self):
+        """Empty strings (empty user prompts, empty tool returns) are not stamped."""
+        assert add_timestamp_prefix("") == ""
+
+
+class TestToolReturnTimestamper:
+    """Unit tests for the capability hook's gating. Real-hook-path behavior
+    (production capabilities list, spill ordering) lives in test_tool_output_limits.py."""
+
+    @pytest.mark.parametrize(
+        "result",
+        [None, 42, 3.14, {"key": "value"}, ["a", "b"], {"nested": [1, 2]}],
+        ids=["none", "int", "float", "dict", "list", "nested-dict"],
+    )
+    async def test_non_string_results_pass_through_untouched(self, result):
+        """Non-string results (structured data, multimodal parts) are never
+        stringified or copied — the provider serialization layer owns them."""
+        cap = ToolReturnTimestamper()
+        out = await cap.after_tool_execute(None, call=None, tool_def=None, args=None, result=result)
+        assert out is result
+
+    async def test_string_result_stamped(self):
+        """String results get the timestamp header (frozen clock → deterministic)."""
+        cap = ToolReturnTimestamper()
+        out = await cap.after_tool_execute(None, call=None, tool_def=None, args=None, result="tool output")
+        assert out == "⏰ [Oct 10, 2026 12:00:00 UTC]\ntool output"
+
+    async def test_empty_string_result_not_stamped(self):
+        """Empty tool returns stay empty rather than becoming a bare stamp."""
+        cap = ToolReturnTimestamper()
+        out = await cap.after_tool_execute(None, call=None, tool_def=None, args=None, result="")
+        assert out == ""
+
+    async def test_tool_return_envelope_string_stamped(self):
+        """Spilled results arrive wrapped in ToolReturn (handle metadata envelope);
+        the stamp goes on return_value, the envelope and metadata survive intact."""
+        cap = ToolReturnTimestamper()
+        wrapped = ToolReturn(return_value="stand-in text", metadata={"handle": "run/call.0"})
+        out = await cap.after_tool_execute(None, call=None, tool_def=None, args=None, result=wrapped)
+        assert isinstance(out, ToolReturn)
+        assert out.return_value == "⏰ [Oct 10, 2026 12:00:00 UTC]\nstand-in text"
+        assert out.metadata == {"handle": "run/call.0"}, "envelope metadata must survive unstamped"
+
+    async def test_tool_return_envelope_non_string_passthrough(self):
+        """A ToolReturn with a non-string return_value passes through untouched."""
+        cap = ToolReturnTimestamper()
+        wrapped = ToolReturn(return_value={"spilled": "dict"}, metadata=None)
+        out = await cap.after_tool_execute(None, call=None, tool_def=None, args=None, result=wrapped)
+        assert out is wrapped
 
 
 class TestResolveTz:

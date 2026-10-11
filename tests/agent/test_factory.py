@@ -37,6 +37,7 @@ from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
+from agent.timestamping import ToolReturnTimestamper
 from agent.factory import (
     AgentFactory,
     TOOL_OUTPUT_SPILL_CLEANUP_AFTER,
@@ -641,13 +642,13 @@ class TestBuildCapabilities:
     """
 
     def test_returns_compaction_warner_and_tool_output_limits(self):
-        """Every agent gets the compaction warner and the tool output spill capability."""
+        """Every agent gets the compaction warner, tool return stamper, and spill capability."""
         caps = _build_capabilities()
-        assert [type(c) for c in caps] == [CompactionWarner, ToolOutputLimits]
+        assert [type(c) for c in caps] == [CompactionWarner, ToolReturnTimestamper, ToolOutputLimits]
 
     def test_tool_output_limits_config(self):
         """ToolOutputLimits is configured for straight spill with truncate fallback and a TTL'd local store."""
-        tol = _build_capabilities()[1]
+        tol = _build_capabilities()[2]
 
         assert isinstance(tol.store, LocalFileStore)
         assert tol.store.cleanup_after == TOOL_OUTPUT_SPILL_CLEANUP_AFTER
