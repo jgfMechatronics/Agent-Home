@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,7 +44,15 @@ from agent.factory import (
     _build_capabilities,
     _build_model_settings,
 )
-from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError, AgentOutput
+from agent.types import (
+    THINKING_EFFORT_LEVELS,
+    AgentAppState,
+    AgentConfig,
+    AgentDeps,
+    AgentLockedError,
+    AgentNotFoundError,
+    AgentOutput,
+)
 from memory.system_prompt_compilation import get_system_prompt
 from conftest import (
     SAMPLE_AGENT_CONFIG,
@@ -519,8 +528,12 @@ async def test_empty_final_response_completes_run(final_parts):
 class TestBuildModelSettings:
     """Unit tests for _build_model_settings — called directly as a pure function."""
 
-    EXPECTED_MAX_TOKENS = 32000
-    """The provider-wide output cap set in the common ModelSettings base."""
+    EXPECTED_MAX_TOKENS = 36864
+    """The provider-wide output cap set in the common ModelSettings base.
+
+    36864 = xhigh thinking budget (32768) + 4096 answer room; must exceed
+    every thinking level's budget (Anthropic requires max_tokens > budget).
+    """
 
     def _config(self, model_name: str, thinking_mode: "bool | str" = False) -> AgentConfig:
         return SAMPLE_AGENT_CONFIG.model_copy(update={"model_name": model_name, "thinking_mode": thinking_mode})
@@ -565,19 +578,21 @@ class TestBuildModelSettings:
         assert settings.get("anthropic_cache_tool_definitions") is True
         assert settings.get("anthropic_cache_messages") is True
 
-    def test_anthropic_thinking_unified_no_override(self):
-        """thinking_mode set → unified 'thinking' passes through; no anthropic_thinking override.
+    @pytest.mark.parametrize("thinking_mode", [True, *THINKING_EFFORT_LEVELS])
+    def test_anthropic_thinking_unified_no_override(self, thinking_mode: "bool | str"):
+        """Every thinking level → unified 'thinking' passes through; no override; cap fits the budget.
 
-        pydantic-ai maps the unified field natively (True → 10k budget, effort levels →
-        graduated budgets), so a hand-rolled anthropic_thinking dict is unnecessary —
-        and would silently defeat the effort levels.
+        pydantic-ai maps the unified field natively (True/effort levels → budget_tokens
+        via ANTHROPIC_THINKING_BUDGET_MAP), so a hand-rolled anthropic_thinking dict
+        is unnecessary. Anthropic requires max_tokens > budget_tokens, so the base
+        cap must exceed the largest level's budget. Importing the budget map keeps
+        this in sync with the library (loud tripwire if budgets change).
         """
-        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_mode=True))
-        assert settings.get("thinking") is True
+        settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_mode=thinking_mode))
+        assert settings.get("thinking") == thinking_mode
         assert "anthropic_thinking" not in settings
-        # Base cap applies — exceeds any unified thinking budget through 'high'
-        # ('xhigh' = 32768 would 400 loudly; none of our configs use it).
         assert settings.get("max_tokens") == self.EXPECTED_MAX_TOKENS
+        assert self.EXPECTED_MAX_TOKENS > ANTHROPIC_THINKING_BUDGET_MAP[thinking_mode]
 
     def test_anthropic_thinking_disabled_no_budget(self):
         """thinking_mode=False → no anthropic_thinking set."""

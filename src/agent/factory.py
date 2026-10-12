@@ -52,8 +52,10 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     parallel_tool_calls=False is applied for all providers: our orphan remover
     is not compatible with parallel tool calls.
 
-    max_tokens=32000 bounds output for all providers, capping degenerate
-    generation (provider glitch with no stop token) instead of running away.
+    max_tokens (36864) bounds output for all providers, capping degenerate
+    generation (provider glitch with no stop token) instead of running away,
+    while exceeding every thinking level's budget (Anthropic requires
+    max_tokens > budget_tokens).
     """
     m = infer_model(config.model_name)
 
@@ -62,10 +64,12 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     # model class translates it to a thinking budget when no anthropic_thinking is set.
     # max_tokens bounds output generation for all providers — without it, a degenerate
     # generation (e.g. a provider glitch that stops emitting stop tokens) runs unbounded.
+    # 36864 = xhigh budget (32768) + 4096 answer room, mirroring pydantic-ai's own
+    # min-room-after-thinking-budget logic; Anthropic requires max_tokens > budget.
     settings = ModelSettings(
         parallel_tool_calls=False,
         thinking=config.thinking_mode,
-        max_tokens=32000,
+        max_tokens=36864,
     )
 
     if isinstance(m, AnthropicModel):
