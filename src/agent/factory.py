@@ -51,28 +51,35 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
 
     parallel_tool_calls=False is applied for all providers: our orphan remover
     is not compatible with parallel tool calls.
+
+    max_tokens=32000 bounds output for all providers, capping degenerate
+    generation (provider glitch with no stop token) instead of running away.
     """
     m = infer_model(config.model_name)
 
     # Common settings for all providers. 'thinking' is the unified field pydantic-ai
     # maps to each provider's native reasoning parameter. For Anthropic, anthropic_thinking
     # takes precedence over this field (set below), so both can coexist safely.
+    # max_tokens bounds output generation for all providers — without it, a degenerate
+    # generation (e.g. a provider glitch that stops emitting stop tokens) runs unbounded.
     settings = ModelSettings(
         parallel_tool_calls=False,
         thinking=config.thinking_mode,
+        max_tokens=32000,
     )
 
     if isinstance(m, AnthropicModel):
         # Unpack common settings, then add Anthropic-specific fields.
         # anthropic_thinking takes precedence over the unified 'thinking' field above.
+        # Base max_tokens (32000) satisfies Anthropic's max_tokens > budget_tokens
+        # requirement when thinking is enabled.
         settings = AnthropicModelSettings(
             **settings,
             anthropic_cache_instructions=True,
             anthropic_cache_tool_definitions=True,
             anthropic_cache_messages=True,
-            # Anthropic requires max_tokens > budget_tokens when thinking is enabled
-            **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
-                "max_tokens": 16000} if config.thinking_mode else {}),
+            **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000}}
+               if config.thinking_mode else {}),
         )
     elif isinstance(m, OpenRouterModel):
         # Routing preferences for OpenRouter-served models:

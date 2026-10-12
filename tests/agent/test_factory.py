@@ -531,10 +531,15 @@ class TestBuildModelSettings:
         "openrouter:z-ai/glm-5.3",
     ])
     def test_base_settings_defaults(self, model_name: str):
-        """All providers: parallel_tool_calls=False, thinking=False by default."""
+        """All providers: parallel_tool_calls=False, thinking=False, output capped at 32k.
+
+        The max_tokens cap bounds a degenerate generation (provider glitch → no stop
+        token) to 32k tokens instead of an unbounded runaway stream.
+        """
         settings = _build_model_settings(self._config(model_name))
         assert settings.get("parallel_tool_calls") is False
         assert settings.get("thinking") is False
+        assert settings.get("max_tokens") == 32000
 
     @pytest.mark.parametrize("model_name", [
         "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -558,10 +563,12 @@ class TestBuildModelSettings:
         assert settings.get("anthropic_cache_messages") is True
 
     def test_anthropic_thinking_sets_budget(self):
-        """thinking_mode=True → anthropic_thinking with budget and max_tokens."""
+        """thinking_mode=True → anthropic_thinking with budget; max_tokens inherited from base."""
         settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_mode=True))
         assert settings.get("anthropic_thinking") == {"type": "enabled", "budget_tokens": 10000}
-        assert settings.get("max_tokens") == 16000
+        # Base cap (32000) applies — exceeds the 10k thinking budget, satisfying
+        # Anthropic's max_tokens > budget_tokens requirement.
+        assert settings.get("max_tokens") == 32000
 
     def test_anthropic_thinking_disabled_no_budget(self):
         """thinking_mode=False → no anthropic_thinking set."""
