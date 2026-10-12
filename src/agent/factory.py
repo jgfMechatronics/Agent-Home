@@ -51,28 +51,35 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
 
     parallel_tool_calls=False is applied for all providers: our orphan remover
     is not compatible with parallel tool calls.
+
+    max_tokens (36864) bounds output for all providers, capping degenerate
+    generation (provider glitch with no stop token) instead of running away,
+    while exceeding every thinking level's budget (Anthropic requires
+    max_tokens > budget_tokens).
     """
     m = infer_model(config.model_name)
 
     # Common settings for all providers. 'thinking' is the unified field pydantic-ai
-    # maps to each provider's native reasoning parameter. For Anthropic, anthropic_thinking
-    # takes precedence over this field (set below), so both can coexist safely.
+    # maps to each provider's native reasoning parameter — including Anthropic, whose
+    # model class translates it to a thinking budget when no anthropic_thinking is set.
+    # max_tokens bounds output generation for all providers — without it, a degenerate
+    # generation (e.g. a provider glitch that stops emitting stop tokens) runs unbounded.
+    # 36864 = xhigh budget (32768) + 4096 answer room, mirroring pydantic-ai's own
+    # min-room-after-thinking-budget logic; Anthropic requires max_tokens > budget.
     settings = ModelSettings(
         parallel_tool_calls=False,
         thinking=config.thinking_mode,
+        max_tokens=36864,
     )
 
     if isinstance(m, AnthropicModel):
-        # Unpack common settings, then add Anthropic-specific fields.
-        # anthropic_thinking takes precedence over the unified 'thinking' field above.
+        # No thinking special-case needed: the common 'thinking' setting covers
+        # Anthropic natively (pydantic-ai maps it to the model's thinking config).
         settings = AnthropicModelSettings(
             **settings,
             anthropic_cache_instructions=True,
             anthropic_cache_tool_definitions=True,
             anthropic_cache_messages=True,
-            # Anthropic requires max_tokens > budget_tokens when thinking is enabled
-            **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000},
-                "max_tokens": 16000} if config.thinking_mode else {}),
         )
     elif isinstance(m, OpenRouterModel):
         # Routing preferences for OpenRouter-served models:
