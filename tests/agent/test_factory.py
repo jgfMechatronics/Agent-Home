@@ -562,12 +562,18 @@ class TestBuildModelSettings:
         assert settings.get("anthropic_cache_tool_definitions") is True
         assert settings.get("anthropic_cache_messages") is True
 
-    def test_anthropic_thinking_sets_budget(self):
-        """thinking_mode=True → anthropic_thinking with budget; max_tokens inherited from base."""
+    def test_anthropic_thinking_unified_no_override(self):
+        """thinking_mode set → unified 'thinking' passes through; no anthropic_thinking override.
+
+        pydantic-ai maps the unified field natively (True → 10k budget, effort levels →
+        graduated budgets), so a hand-rolled anthropic_thinking dict is unnecessary —
+        and would silently defeat the effort levels.
+        """
         settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_mode=True))
-        assert settings.get("anthropic_thinking") == {"type": "enabled", "budget_tokens": 10000}
-        # Base cap (32000) applies — exceeds the 10k thinking budget, satisfying
-        # Anthropic's max_tokens > budget_tokens requirement.
+        assert settings.get("thinking") is True
+        assert "anthropic_thinking" not in settings
+        # Base cap (32000) applies — exceeds any unified thinking budget (max 32768
+        # only on 'xhigh'; 32000 > budget for all levels through 'high').
         assert settings.get("max_tokens") == 32000
 
     def test_anthropic_thinking_disabled_no_budget(self):

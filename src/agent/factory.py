@@ -58,8 +58,8 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     m = infer_model(config.model_name)
 
     # Common settings for all providers. 'thinking' is the unified field pydantic-ai
-    # maps to each provider's native reasoning parameter. For Anthropic, anthropic_thinking
-    # takes precedence over this field (set below), so both can coexist safely.
+    # maps to each provider's native reasoning parameter — including Anthropic, whose
+    # model class translates it to a thinking budget when no anthropic_thinking is set.
     # max_tokens bounds output generation for all providers — without it, a degenerate
     # generation (e.g. a provider glitch that stops emitting stop tokens) runs unbounded.
     settings = ModelSettings(
@@ -70,16 +70,16 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
 
     if isinstance(m, AnthropicModel):
         # Unpack common settings, then add Anthropic-specific fields.
-        # anthropic_thinking takes precedence over the unified 'thinking' field above.
-        # Base max_tokens (32000) satisfies Anthropic's max_tokens > budget_tokens
-        # requirement when thinking is enabled.
+        # Thinking needs no Anthropic special-case: pydantic-ai's _translate_thinking
+        # maps the unified 'thinking' field natively (True → 10k budget_tokens,
+        # effort levels → graduated budgets) with the same result a hand-rolled
+        # anthropic_thinking dict produced — and honors effort levels, which the
+        # fixed-budget override silently ignored.
         settings = AnthropicModelSettings(
             **settings,
             anthropic_cache_instructions=True,
             anthropic_cache_tool_definitions=True,
             anthropic_cache_messages=True,
-            **({"anthropic_thinking": {"type": "enabled", "budget_tokens": 10000}}
-               if config.thinking_mode else {}),
         )
     elif isinstance(m, OpenRouterModel):
         # Routing preferences for OpenRouter-served models:
