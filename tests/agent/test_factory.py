@@ -519,6 +519,9 @@ async def test_empty_final_response_completes_run(final_parts):
 class TestBuildModelSettings:
     """Unit tests for _build_model_settings — called directly as a pure function."""
 
+    EXPECTED_MAX_TOKENS = 32000
+    """The provider-wide output cap set in the common ModelSettings base."""
+
     def _config(self, model_name: str, thinking_mode: "bool | str" = False) -> AgentConfig:
         return SAMPLE_AGENT_CONFIG.model_copy(update={"model_name": model_name, "thinking_mode": thinking_mode})
 
@@ -539,7 +542,7 @@ class TestBuildModelSettings:
         settings = _build_model_settings(self._config(model_name))
         assert settings.get("parallel_tool_calls") is False
         assert settings.get("thinking") is False
-        assert settings.get("max_tokens") == 32000
+        assert settings.get("max_tokens") == self.EXPECTED_MAX_TOKENS
 
     @pytest.mark.parametrize("model_name", [
         "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -572,9 +575,9 @@ class TestBuildModelSettings:
         settings = _build_model_settings(self._config("anthropic:claude-haiku-4-5", thinking_mode=True))
         assert settings.get("thinking") is True
         assert "anthropic_thinking" not in settings
-        # Base cap (32000) applies — exceeds any unified thinking budget (max 32768
-        # only on 'xhigh'; 32000 > budget for all levels through 'high').
-        assert settings.get("max_tokens") == 32000
+        # Base cap applies — exceeds any unified thinking budget through 'high'
+        # ('xhigh' = 32768 would 400 loudly; none of our configs use it).
+        assert settings.get("max_tokens") == self.EXPECTED_MAX_TOKENS
 
     def test_anthropic_thinking_disabled_no_budget(self):
         """thinking_mode=False → no anthropic_thinking set."""

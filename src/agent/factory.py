@@ -69,12 +69,8 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     )
 
     if isinstance(m, AnthropicModel):
-        # Unpack common settings, then add Anthropic-specific fields.
-        # Thinking needs no Anthropic special-case: pydantic-ai's _translate_thinking
-        # maps the unified 'thinking' field natively (True → 10k budget_tokens,
-        # effort levels → graduated budgets) with the same result a hand-rolled
-        # anthropic_thinking dict produced — and honors effort levels, which the
-        # fixed-budget override silently ignored.
+        # No thinking special-case needed: the common 'thinking' setting covers
+        # Anthropic natively (pydantic-ai maps it to the model's thinking config).
         settings = AnthropicModelSettings(
             **settings,
             anthropic_cache_instructions=True,
