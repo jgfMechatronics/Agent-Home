@@ -352,9 +352,11 @@ class TestClearContext:
         """Second /clear with no new messages since the first is a no-op."""
         await clear_context(agent_deps)  # first clear advances pointer
 
+        pre_no_op_ctx_start = agent_deps.context_window_start
         result = await clear_context(agent_deps)  # nothing new to clear
 
         assert result is False
+        assert pre_no_op_ctx_start == agent_deps.context_window_start
 
     async def test_resets_compaction_warning_fired(self, agent_deps: AgentDeps, persist_some_messages):
         """clear_context resets compaction_warning_fired so a fresh warning can fire."""
