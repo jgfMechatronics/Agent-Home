@@ -21,15 +21,15 @@ class TestParseSlashCmd:
     """_parse_slash_cmd parsing — pure function, no I/O."""
 
     @pytest.mark.parametrize("msg,expected", [
-        ("/recompile", ("recompile", "")),
-        ("/recompile some args", ("recompile", "some args")),
-        ("/RECOMPILE", ("recompile", "")),
-        ("/clear", ("clear", "")),
-        ("/compact", ("compact", "")),
-        ("recompile", None),       # no leading slash
-        ("/unknown_cmd", None),    # unrecognized command passes through to model
-        ("/", None),               # slash with no command
-        ("", None),                # empty string
+        ("/recompile",            "recompile"),
+        ("/recompile some args",  "recompile"),   # args present but ignored
+        ("/RECOMPILE",            "recompile"),   # case-insensitive
+        ("/clear",                "clear"),
+        ("/compact",              "compact"),
+        ("recompile",             None),          # no leading slash
+        ("/unknown_cmd",          None),          # unrecognized → passes to model
+        ("/",                     None),          # slash with no command
+        ("",                      None),          # empty string
     ])
     def test_parse_slash_cmd(self, msg, expected):
         assert _parse_slash_cmd(msg) == expected

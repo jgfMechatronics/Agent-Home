@@ -120,23 +120,18 @@ def get_available_commands() -> list[dict[str, Any]]:
 # Parse and dispatch
 # ---------------------------------------------------------------------------
 
-def _parse_slash_cmd(msg: str) -> tuple[str, str] | None:
+def _parse_slash_cmd(msg: str) -> str | None:
     """Parse a message as a slash command.
 
-    Returns (command_name, args) if msg starts with '/' and command is in registry.
+    Returns the command name if msg starts with '/' and command is in registry.
     Returns None otherwise (including unrecognized commands — those pass to model).
     """
     if not msg.startswith("/"):
         return None
-    # Split into command and args: "/recompile foo bar" -> ("recompile", "foo bar")
-    parts = msg[1:].split(maxsplit=1)
-    if not parts:
+    cmd = msg[1:].split()[0].lower() if msg[1:].split() else None
+    if not cmd or cmd not in SLASH_COMMANDS:
         return None
-    cmd = parts[0].lower()
-    args = parts[1] if len(parts) > 1 else ""
-    if cmd not in SLASH_COMMANDS:
-        return None
-    return (cmd, args)
+    return cmd
 
 
 def is_slash_cmd(msg: str) -> bool:
@@ -149,20 +144,19 @@ async def handle_slash_cmd(deps: "AgentDeps", msg: str) -> ServerSentEvent:
 
     Precondition: is_slash_cmd(msg) is True.
     """
-    parsed = _parse_slash_cmd(msg)
-    if parsed is None:
+    cmd = _parse_slash_cmd(msg)
+    if cmd is None:
         # Shouldn't happen if precondition met, but handle gracefully
         return ServerSentEvent(
-            data={"name": "user_unknown", "args": msg, "result": "Unknown command", "status": "error"},
+            data={"name": "user_unknown", "result": "Unknown command", "status": "error"},
             event="SlashCommandResult",
         )
-    cmd, args = parsed
     handler = SLASH_COMMANDS[cmd].handler
     try:
         return await handler(deps)
     except Exception as e:
         logger.exception("Slash command /%s failed", cmd)
         return ServerSentEvent(
-            data={"name": f"user_{cmd}", "args": args, "result": f"Command failed: {e}", "status": "error"},
+            data={"name": f"user_{cmd}", "result": f"Command failed: {e}", "status": "error"},
             event="SlashCommandResult",
         )
