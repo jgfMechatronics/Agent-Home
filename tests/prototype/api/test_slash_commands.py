@@ -131,7 +131,7 @@ class TestHandleCompact:
     async def test_reports_compaction_occurred_when_pointer_advanced(self):
         deps = Mock()
 
-        with patch("prototype.api.slash_commands.compact_on_demand", new_callable=AsyncMock, return_value=True):
+        with patch("prototype.api.slash_commands.compact", new_callable=AsyncMock, return_value=True):
             result = await _handle_compact(deps, "")
 
         assert result.event == "SlashCommandResult"
@@ -141,7 +141,7 @@ class TestHandleCompact:
     async def test_reports_nothing_to_compact_when_context_too_small(self):
         deps = Mock()
 
-        with patch("prototype.api.slash_commands.compact_on_demand", new_callable=AsyncMock, return_value=False):
+        with patch("prototype.api.slash_commands.compact", new_callable=AsyncMock, return_value=False):
             result = await _handle_compact(deps, "")
 
         assert result.event == "SlashCommandResult"

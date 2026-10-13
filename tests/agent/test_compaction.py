@@ -16,7 +16,7 @@ from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart, Ret
 
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
-from agent.compaction import clear_context, compact, compact_on_demand, is_compaction_needed
+from agent.compaction import clear_context, compact, is_compaction_needed
 from agent.types import AgentConfig, AgentDeps
 from conftest import (
     SAMPLE_AGENT_CONFIG,
@@ -179,6 +179,21 @@ class TestCompactCommon(CompactTestBase):
         await compact(self.deps, total_tokens=self.total_tokens)
         
         spy.assert_called_once_with(self.deps)
+
+
+class TestCompactReturnValue(CompactTestBase):
+    """compact() returns True when it advances the pointer, False when it's a no-op."""
+
+    async def test_returns_true_when_compaction_occurs(self, session: AsyncSession):
+        await self._setup(session, limit=500, target=0.5, msg_count=10, total_tokens=1100)
+        result = await compact(self.deps, total_tokens=self.total_tokens)
+        assert result is True
+
+    async def test_returns_false_when_context_too_small(self, session: AsyncSession):
+        """MIN_MESSAGES_AFTER_COMPACTION guard prevents compaction; compact returns False."""
+        await self._setup(session, limit=100, target=0.5, msg_count=2, total_tokens=5000)
+        result = await compact(self.deps, total_tokens=self.total_tokens)
+        assert result is False
 
 
 class TestCompactEdgeCases(CompactTestBase):
@@ -354,38 +369,4 @@ class TestClearContext:
         assert committed
 
 
-class TestCompactOnDemand:
-    """compact_on_demand runs compaction and reports whether it advanced the pointer."""
 
-    async def test_returns_true_when_pointer_advances(self, session: AsyncSession):
-        """With enough messages, compact_on_demand advances the pointer and returns True."""
-        config = _make_config(soft_compaction_limit=1000, compaction_target_fraction=0.25)
-        data = await _make_agent_with_messages(session, 10, config=config)
-        deps = data["deps"]
-        start_before = deps.context_window_start
-
-        result = await compact_on_demand(deps)
-
-        assert result is True
-        assert deps.context_window_start > start_before
-
-    async def test_returns_false_when_context_too_small(self, session: AsyncSession, agent_deps: AgentDeps):
-        """compact_on_demand returns False if context is at or below MIN_MESSAGES guard."""
-        msgs = make_alternating_messages(2)  # below MIN_MESSAGES_AFTER_COMPACTION=4
-        await _persist_messages_load_records(agent_deps, msgs)
-
-        result = await compact_on_demand(agent_deps)
-
-        assert result is False
-
-    async def test_resets_compaction_warning_when_compacts(self, session: AsyncSession):
-        """compact_on_demand resets compaction_warning_fired when compaction occurs."""
-        config = _make_config(soft_compaction_limit=1000, compaction_target_fraction=0.25)
-        data = await _make_agent_with_messages(session, 10, config=config)
-        deps = data["deps"]
-        deps.compaction_warning_fired = True
-
-        result = await compact_on_demand(deps)
-
-        assert result is True
-        assert deps.compaction_warning_fired is False

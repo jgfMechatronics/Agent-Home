@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, TYPE_CHECKING
 
 from fastapi.sse import ServerSentEvent
-from agent.compaction import clear_context, compact_on_demand
+from agent.compaction import clear_context, compact
 from memory.system_prompt_compilation import compile_system_prompt
 
 if TYPE_CHECKING:
@@ -62,7 +62,7 @@ async def _handle_clear(deps: "AgentDeps", args: str) -> ServerSentEvent:
 
 async def _handle_compact(deps: "AgentDeps", args: str) -> ServerSentEvent:
     """Handler for /compact command. Runs on-demand compaction."""
-    did_compact = await compact_on_demand(deps)
+    did_compact = await compact(deps, total_tokens=deps.config.soft_compaction_limit)
     result = "Compaction complete" if did_compact else "Nothing to compact — context too small"
     return ServerSentEvent(
         data={"name": "user_compact", "args": args, "result": result, "status": "success"},
