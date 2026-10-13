@@ -121,6 +121,34 @@ class TestReplaceFunctionCommonBehaviors:
         assert committed, "Function did not commit"
 
 
+class TestReplaceAgentConfig:
+    """Function-specific tests for replace_agent_config."""
+
+    async def test_resets_compaction_warning_when_limit_changes(
+        self, session: AsyncSession, agent_record, agent_deps: AgentDeps
+    ):
+        """compaction_warning_fired is reset to False when soft_compaction_limit changes."""
+        agent_deps.compaction_warning_fired = True
+        new_config = SAMPLE_AGENT_CONFIG.model_copy(
+            update={"soft_compaction_limit": SAMPLE_AGENT_CONFIG.soft_compaction_limit + 1}
+        )
+
+        await replace_agent_config(agent_deps, new_config)
+
+        assert agent_deps.compaction_warning_fired is False
+
+    async def test_does_not_reset_compaction_warning_when_limit_unchanged(
+        self, session: AsyncSession, agent_record, agent_deps: AgentDeps
+    ):
+        """compaction_warning_fired is preserved when soft_compaction_limit is unchanged."""
+        agent_deps.compaction_warning_fired = True
+        same_limit_config = SAMPLE_AGENT_CONFIG.model_copy(update={"thinking_mode": False})
+
+        await replace_agent_config(agent_deps, same_limit_config)
+
+        assert agent_deps.compaction_warning_fired is True
+
+
 class TestReplaceSystemInstructions:
     """Function-specific tests for replace_system_instructions."""
 

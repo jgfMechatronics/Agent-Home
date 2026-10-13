@@ -28,7 +28,14 @@ async def agent_exists(session: AsyncSession, agent_id: str) -> bool:
 
 
 async def replace_agent_config(deps: AgentDeps, config: AgentConfig) -> AgentConfig:
-    """Replace agent config in DB. Agent is already verified to exist via deps."""
+    """Replace agent config in DB. Agent is already verified to exist via deps.
+
+    Resets compaction_warning_fired when soft_compaction_limit changes — prevents
+    the flag from staying set while compaction never triggers if the limit is raised
+    above the current context size after a warning has already fired.
+    """
+    if config.soft_compaction_limit != deps.config.soft_compaction_limit:
+        deps.compaction_warning_fired = False
     deps.config = config
     await deps.commit_changes_refresh_agent_record()
     return deps.config
