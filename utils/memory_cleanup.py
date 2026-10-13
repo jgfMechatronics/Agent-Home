@@ -21,7 +21,6 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
-
 load_dotenv()
 
 # --- Configuration ---
@@ -208,7 +207,8 @@ def put_skill(client: httpx.Client, agent_id: str, content: str) -> None:
 
 def recompile(client: httpx.Client, agent_id: str) -> None:
     """Trigger system prompt recompilation."""
-    client.post(f"/agents/{agent_id}/recompile_system_prompt").raise_for_status()
+    response = client.post(f"/agents/{agent_id}/recompile_system_prompt")
+    response.raise_for_status()
 
 
 # --- Main Flows ---
