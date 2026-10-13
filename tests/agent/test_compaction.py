@@ -325,14 +325,21 @@ class TestClearContext:
         records = await _persist_messages_load_records(agent_deps, msgs)
         return records
 
-    async def test_advances_past_all_messages_and_returns_true(self, agent_deps: AgentDeps, persist_some_messages):
-        """After clear_context, context_window_start is beyond the last persisted message."""
-        last_seq_id = max(r.seq_id for r in persist_some_messages)
-
+    async def test_old_messages_excluded_new_messages_visible_after_clear(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
+        """After clear_context, windowed load shows no old messages; new messages after clear are visible."""
         result = await clear_context(agent_deps)
 
         assert result is True
-        assert agent_deps.context_window_start == last_seq_id + 1
+
+        # Old messages excluded from windowed view
+        visible = await load_messages(session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
+        assert not visible
+
+        # New message added after clear IS visible in windowed view
+        new_msg = make_request("test message after clear")
+        await persist_messages(agent_deps, [new_msg], [])
+        visible = await load_messages(session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
+        assert len(visible) == 1
 
     async def test_no_messages_is_noop_and_returns_false(self, agent_deps: AgentDeps):
         """clear_context on an agent with no messages is a no-op and returns False."""
