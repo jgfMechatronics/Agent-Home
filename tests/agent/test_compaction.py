@@ -378,6 +378,3 @@ class TestClearContext:
         await clear_context(agent_deps)
 
         assert committed
-
-
-
