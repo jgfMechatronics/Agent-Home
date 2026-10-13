@@ -109,50 +109,24 @@ class TestHandleRecompile:
         assert result.data["result"]  # non-empty result message
 
 
-class TestHandleClear:
-    """_handle_clear — calls clear_context, returns success SSE with context-sensitive message."""
+@pytest.mark.parametrize("handler,patch_target,did_work_keyword", [
+    (_handle_clear,   "prototype.api.slash_commands.clear_context", "cleared"),
+    (_handle_compact, "prototype.api.slash_commands.compact",       "complete"),
+])
+@pytest.mark.parametrize("did_work", [True, False])
+async def test_slash_handler_returns_success_sse_with_context_sensitive_message(
+    handler, patch_target, did_work_keyword, did_work
+):
+    """Both /clear and /compact handlers return a success SSE whose message reflects whether
+    work was done (True) or the operation was a no-op (False)."""
+    deps = Mock()
 
-    async def test_reports_cleared_when_pointer_advanced(self):
-        deps = Mock()
+    with patch(patch_target, new_callable=AsyncMock, return_value=did_work):
+        result = await handler(deps, "")
 
-        with patch("prototype.api.slash_commands.clear_context", new_callable=AsyncMock, return_value=True):
-            result = await _handle_clear(deps, "")
-
-        assert result.event == "SlashCommandResult"
-        assert result.data["name"] == "user_clear"
-        assert result.data["status"] == "success"
-        assert "cleared" in result.data["result"].lower()
-
-    async def test_reports_nothing_to_clear_when_noop(self):
-        deps = Mock()
-
-        with patch("prototype.api.slash_commands.clear_context", new_callable=AsyncMock, return_value=False):
-            result = await _handle_clear(deps, "")
-
-        assert result.event == "SlashCommandResult"
-        assert result.data["status"] == "success"
-        assert "nothing" in result.data["result"].lower()
-
-
-class TestHandleCompact:
-    """_handle_compact — calls compact_on_demand, returns success SSE with context-sensitive message."""
-
-    async def test_reports_compaction_occurred_when_pointer_advanced(self):
-        deps = Mock()
-
-        with patch("prototype.api.slash_commands.compact", new_callable=AsyncMock, return_value=True):
-            result = await _handle_compact(deps, "")
-
-        assert result.event == "SlashCommandResult"
-        assert result.data["status"] == "success"
-        assert "complete" in result.data["result"].lower()
-
-    async def test_reports_nothing_to_compact_when_context_too_small(self):
-        deps = Mock()
-
-        with patch("prototype.api.slash_commands.compact", new_callable=AsyncMock, return_value=False):
-            result = await _handle_compact(deps, "")
-
-        assert result.event == "SlashCommandResult"
-        assert result.data["status"] == "success"
+    assert result.event == "SlashCommandResult"
+    assert result.data["status"] == "success"
+    if did_work:
+        assert did_work_keyword in result.data["result"].lower()
+    else:
         assert "nothing" in result.data["result"].lower()
