@@ -25,8 +25,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 class SlashCommandHandler(Protocol):
-    """Protocol for slash command handlers. All handlers receive deps and args."""
-    async def __call__(self, deps: "AgentDeps", args: str) -> ServerSentEvent: ...
+    """Protocol for slash command handlers.
+
+    Handlers receive only deps for now — no args are passed because no current command
+    uses them. Add args back to this signature (and handle_slash_cmd dispatch) when needed.
+    """
+    async def __call__(self, deps: "AgentDeps") -> ServerSentEvent: ...
 
 
 @dataclass
@@ -41,37 +45,37 @@ class SlashCommandDef:
 # Handlers
 # ---------------------------------------------------------------------------
 
-async def _handle_recompile(deps: "AgentDeps", args: str) -> ServerSentEvent:
+async def _handle_recompile(deps: "AgentDeps") -> ServerSentEvent:
     """Handler for /recompile command. Recompiles the system prompt from current memory blocks."""
     await compile_system_prompt(deps)
     await deps.commit_changes_refresh_agent_record()
     return ServerSentEvent(
-        data={"name": "user_recompile", "args": args, "result": "System prompt recompiled successfully", "status": "success"},
+        data={"name": "user_recompile", "result": "System prompt recompiled successfully", "status": "success"},
         event="SlashCommandResult",
     )
 
 
-def _bool_result_sse(name: str, args: str, did_work: bool, did_work_msg: str, noop_msg: str) -> ServerSentEvent:
+def _bool_result_sse(name: str, did_work: bool, did_work_msg: str, noop_msg: str) -> ServerSentEvent:
     """Construct a success SlashCommandResult SSE whose result string reflects a boolean operation outcome."""
     return ServerSentEvent(
-        data={"name": name, "args": args, "result": did_work_msg if did_work else noop_msg, "status": "success"},
+        data={"name": name, "result": did_work_msg if did_work else noop_msg, "status": "success"},
         event="SlashCommandResult",
     )
 
 
-async def _handle_clear(deps: "AgentDeps", args: str) -> ServerSentEvent:
+async def _handle_clear(deps: "AgentDeps") -> ServerSentEvent:
     """Handler for /clear command. Advances context window start to give a fresh session."""
     did_clear = await clear_context(deps)
-    return _bool_result_sse("user_clear", args, did_clear,
+    return _bool_result_sse("user_clear", did_clear,
         did_work_msg="Context cleared — fresh session started",
         noop_msg="Nothing to clear — no messages in context",
     )
 
 
-async def _handle_compact(deps: "AgentDeps", args: str) -> ServerSentEvent:
+async def _handle_compact(deps: "AgentDeps") -> ServerSentEvent:
     """Handler for /compact command. Runs on-demand compaction."""
     did_compact = await compact(deps, total_tokens=deps.config.soft_compaction_limit)
-    return _bool_result_sse("user_compact", args, did_compact,
+    return _bool_result_sse("user_compact", did_compact,
         did_work_msg="Compaction complete",
         noop_msg="Nothing to compact — context too small",
     )
@@ -155,7 +159,7 @@ async def handle_slash_cmd(deps: "AgentDeps", msg: str) -> ServerSentEvent:
     cmd, args = parsed
     handler = SLASH_COMMANDS[cmd].handler
     try:
-        return await handler(deps, args)
+        return await handler(deps)
     except Exception as e:
         logger.exception("Slash command /%s failed", cmd)
         return ServerSentEvent(

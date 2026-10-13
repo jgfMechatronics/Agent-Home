@@ -50,15 +50,12 @@ class TestIsSlashCmd:
 class TestHandleSlashCmd:
     """handle_slash_cmd dispatch logic."""
 
-    @pytest.mark.parametrize("msg,expected_args", [
-        ("/recompile", ""),
-        ("/recompile some args", "some args"),
-    ])
-    async def test_dispatches_to_handler_with_correct_args(self, msg, expected_args):
-        """handle_slash_cmd parses the message and calls the registered handler with the right args."""
+    @pytest.mark.parametrize("msg", ["/recompile", "/recompile some args"])
+    async def test_dispatches_to_handler(self, msg):
+        """handle_slash_cmd calls the registered handler with deps only (no args passed down)."""
         deps = Mock()
         expected_sse = ServerSentEvent(
-            data={"name": "user_recompile", "args": expected_args, "result": "ok", "status": "success"},
+            data={"name": "user_recompile", "result": "ok", "status": "success"},
             event="SlashCommandResult",
         )
         mock_handler = AsyncMock(return_value=expected_sse)
@@ -67,7 +64,7 @@ class TestHandleSlashCmd:
         with patch.dict("prototype.api.slash_commands.SLASH_COMMANDS", {"recompile": mock_def}):
             result = await handle_slash_cmd(deps, msg)
 
-        mock_handler.assert_awaited_once_with(deps, expected_args)
+        mock_handler.assert_awaited_once_with(deps)
         assert result is expected_sse
 
     async def test_returns_error_sse_on_handler_exception(self):
@@ -99,7 +96,7 @@ class TestHandleRecompile:
         deps.commit_changes_refresh_agent_record = AsyncMock()
 
         with patch("prototype.api.slash_commands.compile_system_prompt", new_callable=AsyncMock) as mock_compile:
-            result = await _handle_recompile(deps, "")
+            result = await _handle_recompile(deps)
 
         mock_compile.assert_awaited_once_with(deps)
         deps.commit_changes_refresh_agent_record.assert_awaited_once()
@@ -122,7 +119,7 @@ async def test_slash_handler_returns_success_sse_with_context_sensitive_message(
     deps = Mock()
 
     with patch(patch_target, new_callable=AsyncMock, return_value=did_work):
-        result = await handler(deps, "")
+        result = await handler(deps)
 
     assert result.event == "SlashCommandResult"
     assert result.data["status"] == "success"
