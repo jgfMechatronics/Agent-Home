@@ -316,21 +316,32 @@ class TestCompactToolPairAtomicity:
 class TestClearContext:
     """clear_context advances context_window_start past all existing messages."""
 
-    async def test_advances_past_all_messages(self, session: AsyncSession, agent_deps: AgentDeps):
+    async def test_advances_past_all_messages_and_returns_true(self, session: AsyncSession, agent_deps: AgentDeps):
         """After clear_context, context_window_start is beyond the last persisted message."""
         msgs = make_alternating_messages(4)
         records = await _persist_messages_load_records(agent_deps, msgs)
         last_seq_id = max(r.seq_id for r in records)
 
-        await clear_context(agent_deps)
+        result = await clear_context(agent_deps)
 
+        assert result is True
         assert agent_deps.context_window_start == last_seq_id + 1
 
-    async def test_no_messages_leaves_start_at_zero(self, session: AsyncSession, agent_deps: AgentDeps):
-        """clear_context on an agent with no messages leaves context_window_start at 0."""
-        await clear_context(agent_deps)
+    async def test_no_messages_is_noop_and_returns_false(self, session: AsyncSession, agent_deps: AgentDeps):
+        """clear_context on an agent with no messages is a no-op and returns False."""
+        result = await clear_context(agent_deps)
 
+        assert result is False
         assert agent_deps.context_window_start == 0
+
+    async def test_already_cleared_is_noop_and_returns_false(self, session: AsyncSession, agent_deps: AgentDeps):
+        """Second /clear with no new messages since the first is a no-op."""
+        await _persist_messages_load_records(agent_deps, make_alternating_messages(2))
+        await clear_context(agent_deps)  # first clear advances pointer
+
+        result = await clear_context(agent_deps)  # nothing new to clear
+
+        assert result is False
 
     async def test_resets_compaction_warning_fired(self, session: AsyncSession, agent_deps: AgentDeps):
         """clear_context resets compaction_warning_fired so a fresh warning can fire."""

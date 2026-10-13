@@ -110,19 +110,28 @@ class TestHandleRecompile:
 
 
 class TestHandleClear:
-    """_handle_clear — calls clear_context, returns success SSE."""
+    """_handle_clear — calls clear_context, returns success SSE with context-sensitive message."""
 
-    async def test_calls_clear_context_and_returns_success_sse(self):
+    async def test_reports_cleared_when_pointer_advanced(self):
         deps = Mock()
 
-        with patch("prototype.api.slash_commands.clear_context", new_callable=AsyncMock) as mock_clear:
+        with patch("prototype.api.slash_commands.clear_context", new_callable=AsyncMock, return_value=True):
             result = await _handle_clear(deps, "")
 
-        mock_clear.assert_awaited_once_with(deps)
         assert result.event == "SlashCommandResult"
         assert result.data["name"] == "user_clear"
         assert result.data["status"] == "success"
-        assert result.data["result"]
+        assert "cleared" in result.data["result"].lower()
+
+    async def test_reports_nothing_to_clear_when_noop(self):
+        deps = Mock()
+
+        with patch("prototype.api.slash_commands.clear_context", new_callable=AsyncMock, return_value=False):
+            result = await _handle_clear(deps, "")
+
+        assert result.event == "SlashCommandResult"
+        assert result.data["status"] == "success"
+        assert "nothing" in result.data["result"].lower()
 
 
 class TestHandleCompact:

@@ -53,9 +53,10 @@ async def _handle_recompile(deps: "AgentDeps", args: str) -> ServerSentEvent:
 
 async def _handle_clear(deps: "AgentDeps", args: str) -> ServerSentEvent:
     """Handler for /clear command. Advances context window start to give a fresh session."""
-    await clear_context(deps)
+    did_clear = await clear_context(deps)
+    result = "Context cleared — fresh session started" if did_clear else "Nothing to clear — no messages in context"
     return ServerSentEvent(
-        data={"name": "user_clear", "args": args, "result": "Context cleared — fresh session started", "status": "success"},
+        data={"name": "user_clear", "args": args, "result": result, "status": "success"},
         event="SlashCommandResult",
     )
 

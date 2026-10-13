@@ -94,18 +94,22 @@ async def compact(deps: AgentDeps, total_tokens: int) -> bool:
     return True
 
 
-async def clear_context(deps: AgentDeps) -> None:
+async def clear_context(deps: AgentDeps) -> bool:
     """Advance context_window_start to the next seq_id, giving the agent a fresh session.
 
     Messages before the clear remain in the DB (retrievable, not deleted) but are
     excluded from subsequent runs. The compaction warning flag is reset so a fresh
     warning can fire when the new context grows.
+
+    Returns True if the pointer was advanced, False if there was nothing to clear.
     """
     result = await deps.session.execute(
         select(func.max(MessageRecord.seq_id)).where(MessageRecord.agent_id == deps.agent_id)
     )
     max_seq_id = result.scalar()
-    # Advance past the last persisted message; if no messages exist, 0 is already correct.
-    deps.context_window_start = (max_seq_id + 1) if max_seq_id is not None else 0
-    deps.compaction_warning_fired = False
-    await deps.commit_changes_refresh_agent_record()
+    if max_seq_id is not None and ((max_seq_id + 1) > deps.context_window_start):
+        deps.context_window_start = max_seq_id + 1
+        deps.compaction_warning_fired = False
+        await deps.commit_changes_refresh_agent_record()
+        return True
+    return False
