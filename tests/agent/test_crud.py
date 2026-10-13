@@ -124,29 +124,27 @@ class TestReplaceFunctionCommonBehaviors:
 class TestReplaceAgentConfig:
     """Function-specific tests for replace_agent_config."""
 
-    async def test_resets_compaction_warning_when_limit_changes(
-        self, session: AsyncSession, agent_record, agent_deps: AgentDeps
+    @pytest.mark.parametrize("limit_delta,reset_expected", [
+        (1,  True),   # limit raised  → fresh warning needed for new uncovered zone
+        (0,  False),  # limit unchanged → no new uncovered zone
+        (-1, False),  # limit lowered  → compaction fires sooner, consolidation already covers it
+    ])
+    async def test_compaction_warning_reset_depends_on_limit_direction(
+        self,
+        session: AsyncSession,
+        agent_record,
+        agent_deps: AgentDeps,
+        limit_delta: int,
+        reset_expected: bool,
     ):
-        """compaction_warning_fired is reset to False when soft_compaction_limit changes."""
+        """compaction_warning_fired is reset only when soft_compaction_limit is raised."""
         agent_deps.compaction_warning_fired = True
-        new_config = SAMPLE_AGENT_CONFIG.model_copy(
-            update={"soft_compaction_limit": SAMPLE_AGENT_CONFIG.soft_compaction_limit + 1}
-        )
+        new_limit = SAMPLE_AGENT_CONFIG.soft_compaction_limit + limit_delta
+        new_config = SAMPLE_AGENT_CONFIG.model_copy(update={"soft_compaction_limit": new_limit})
 
         await replace_agent_config(agent_deps, new_config)
 
-        assert agent_deps.compaction_warning_fired is False
-
-    async def test_does_not_reset_compaction_warning_when_limit_unchanged(
-        self, session: AsyncSession, agent_record, agent_deps: AgentDeps
-    ):
-        """compaction_warning_fired is preserved when soft_compaction_limit is unchanged."""
-        agent_deps.compaction_warning_fired = True
-        same_limit_config = SAMPLE_AGENT_CONFIG.model_copy(update={"thinking_mode": False})
-
-        await replace_agent_config(agent_deps, same_limit_config)
-
-        assert agent_deps.compaction_warning_fired is True
+        assert agent_deps.compaction_warning_fired is not reset_expected
 
 
 class TestReplaceSystemInstructions:
