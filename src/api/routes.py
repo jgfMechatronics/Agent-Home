@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
+from memory.system_prompt_compilation import compile_system_prompt
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
 from agent.broadcast_streaming import BroadcastHub, RunErrorEvent, run_agent_with_broadcast
@@ -364,6 +365,14 @@ async def cancel_agent_run(
     if agent_app_state is None or not agent_app_state.lock.locked():
         raise HTTPException(status_code=409, detail=f"Agent {agent_id!r} has no active run")
     agent_app_state.cancel_requested.set() # If there was a previous unserviced cancellation request, no harm in setting again
+
+
+@router.post("/{agent_id}/recompile_system_prompt")
+async def recompile_system_prompt(agent_id: str, deps: AgentDeps = Depends(get_agent_deps)) -> dict:
+    """Recompile the system prompt from current memory blocks."""
+    await compile_system_prompt(deps)
+    await deps.commit_changes_refresh_agent_record()
+    return {"status": "ok"}
 
 
 @router.get("/{agent_id}/messages")

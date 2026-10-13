@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from utils.slash_cmd_client import async_send_slash_cmd
+
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -171,6 +171,7 @@ async def import_agent_file(af_path: Path, client: "AsyncClient") -> str:
         block_response.raise_for_status()
 
     # Recompile system prompt so blocks are included in context
-    await async_send_slash_cmd(client, agent_id, "recompile")
+    response = await client.post(f"/agents/{agent_id}/recompile_system_prompt")
+    response.raise_for_status()
 
     return agent_id

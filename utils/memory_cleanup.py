@@ -20,7 +20,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from utils.slash_cmd_client import send_slash_cmd
+
 
 load_dotenv()
 
@@ -207,8 +207,8 @@ def put_skill(client: httpx.Client, agent_id: str, content: str) -> None:
 
 
 def recompile(client: httpx.Client, agent_id: str) -> None:
-    """Trigger system prompt recompilation via /recompile slash command."""
-    send_slash_cmd(client, agent_id, "recompile")
+    """Trigger system prompt recompilation."""
+    client.post(f"/agents/{agent_id}/recompile_system_prompt").raise_for_status()
 
 
 # --- Main Flows ---
