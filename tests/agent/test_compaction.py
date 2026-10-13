@@ -9,7 +9,7 @@ and advances context_window_start to retain the target fraction of current messa
 import logging
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart, RetryPromptPart
@@ -366,15 +366,15 @@ class TestClearContext:
 
     async def test_commits_changes(self, session: AsyncSession, agent_deps: AgentDeps):
         """clear_context commits so the new pointer survives a session expiry."""
-        from sqlalchemy import event as sa_event
+        await _persist_messages_load_records(agent_deps, make_alternating_messages(2))
+
         committed = False
 
-        @sa_event.listens_for(session.sync_session, "after_commit")
+        @event.listens_for(session.sync_session, "after_commit")
         def on_commit(sess):
             nonlocal committed
             committed = True
 
-        await _persist_messages_load_records(agent_deps, make_alternating_messages(2))
         await clear_context(agent_deps)
 
         assert committed
