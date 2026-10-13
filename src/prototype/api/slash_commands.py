@@ -8,7 +8,7 @@ To add a new command: implement a SlashCommandHandler and register it in SLASH_C
 """
 import logging
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Protocol, TYPE_CHECKING
+from typing import Any, Protocol, TYPE_CHECKING
 
 from fastapi.sse import ServerSentEvent
 from agent.compaction import clear_context, compact
@@ -51,20 +51,8 @@ async def _handle_recompile(deps: "AgentDeps", args: str) -> ServerSentEvent:
     )
 
 
-async def _handle_bool_op(
-    deps: "AgentDeps",
-    args: str,
-    name: str,
-    op: Callable[["AgentDeps"], Awaitable[bool]],
-    did_work_msg: str,
-    noop_msg: str,
-) -> ServerSentEvent:
-    """Build a SlashCommandResult SSE from a boolean operation on deps.
-
-    Calls op(deps), then returns a success SSE whose result string is did_work_msg
-    if op returned True, or noop_msg if it returned False.
-    """
-    did_work = await op(deps)
+def _bool_result_sse(name: str, args: str, did_work: bool, did_work_msg: str, noop_msg: str) -> ServerSentEvent:
+    """Construct a success SlashCommandResult SSE whose result string reflects a boolean operation outcome."""
     return ServerSentEvent(
         data={"name": name, "args": args, "result": did_work_msg if did_work else noop_msg, "status": "success"},
         event="SlashCommandResult",
@@ -73,10 +61,8 @@ async def _handle_bool_op(
 
 async def _handle_clear(deps: "AgentDeps", args: str) -> ServerSentEvent:
     """Handler for /clear command. Advances context window start to give a fresh session."""
-    return await _handle_bool_op(
-        deps, args,
-        name="user_clear",
-        op=clear_context,
+    did_clear = await clear_context(deps)
+    return _bool_result_sse("user_clear", args, did_clear,
         did_work_msg="Context cleared — fresh session started",
         noop_msg="Nothing to clear — no messages in context",
     )
@@ -84,10 +70,8 @@ async def _handle_clear(deps: "AgentDeps", args: str) -> ServerSentEvent:
 
 async def _handle_compact(deps: "AgentDeps", args: str) -> ServerSentEvent:
     """Handler for /compact command. Runs on-demand compaction."""
-    return await _handle_bool_op(
-        deps, args,
-        name="user_compact",
-        op=lambda d: compact(d, total_tokens=d.config.soft_compaction_limit),
+    did_compact = await compact(deps, total_tokens=deps.config.soft_compaction_limit)
+    return _bool_result_sse("user_compact", args, did_compact,
         did_work_msg="Compaction complete",
         noop_msg="Nothing to compact — context too small",
     )
