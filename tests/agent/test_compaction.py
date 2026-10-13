@@ -191,7 +191,7 @@ class TestCompactReturnValue(CompactTestBase):
 
     async def test_returns_false_when_context_too_small(self, session: AsyncSession):
         """MIN_MESSAGES_AFTER_COMPACTION guard prevents compaction; compact returns False."""
-        await self._setup(session, limit=100, target=0.5, msg_count=2, total_tokens=5000)
+        await self._setup(session, limit=100, target=0.5, msg_count=2, total_tokens=1100)
         result = await compact(self.deps, total_tokens=self.total_tokens)
         assert result is False
 
