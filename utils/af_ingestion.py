@@ -169,7 +169,9 @@ async def import_agent_file(af_path: Path, client: "AsyncClient") -> str:
         block_response.raise_for_status()
 
     # Recompile system prompt so blocks are included in context
-    recompile_response = await client.post(f"/agents/{agent_id}/recompile_system_prompt")
-    recompile_response.raise_for_status()
+    async with client.stream("POST", f"/agents/{agent_id}/messages", json={"message": "/recompile"}) as response:
+        response.raise_for_status()
+        async for _ in response.aiter_lines():
+            pass  # drain SSE stream; command completes server-side before stream closes
 
     return agent_id

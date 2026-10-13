@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, TYPE_CHECKING
 
 from fastapi.sse import ServerSentEvent
+from agent.compaction import clear_context, compact_on_demand
 from memory.system_prompt_compilation import compile_system_prompt
 
 if TYPE_CHECKING:
@@ -50,6 +51,25 @@ async def _handle_recompile(deps: "AgentDeps", args: str) -> ServerSentEvent:
     )
 
 
+async def _handle_clear(deps: "AgentDeps", args: str) -> ServerSentEvent:
+    """Handler for /clear command. Advances context window start to give a fresh session."""
+    await clear_context(deps)
+    return ServerSentEvent(
+        data={"name": "user_clear", "args": args, "result": "Context cleared — fresh session started", "status": "success"},
+        event="SlashCommandResult",
+    )
+
+
+async def _handle_compact(deps: "AgentDeps", args: str) -> ServerSentEvent:
+    """Handler for /compact command. Runs on-demand compaction."""
+    did_compact = await compact_on_demand(deps)
+    result = "Compaction complete" if did_compact else "Nothing to compact — context too small"
+    return ServerSentEvent(
+        data={"name": "user_compact", "args": args, "result": result, "status": "success"},
+        event="SlashCommandResult",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -58,6 +78,14 @@ SLASH_COMMANDS: dict[str, SlashCommandDef] = {
     "recompile": SlashCommandDef(
         handler=_handle_recompile,
         description="Recompile memory blocks into system prompt",
+    ),
+    "clear": SlashCommandDef(
+        handler=_handle_clear,
+        description="Clear context window — fresh session, history preserved in DB",
+    ),
+    "compact": SlashCommandDef(
+        handler=_handle_compact,
+        description="Run on-demand compaction to reduce context size",
     ),
 }
 

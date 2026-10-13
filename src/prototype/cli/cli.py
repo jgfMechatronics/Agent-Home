@@ -643,6 +643,15 @@ async def process_sse_event(
         # Stream complete — print response header if no events produced one
         if not stream_state.response_started:
             output(state, "\nAssistant: ", end="")
+    elif event_type == "SlashCommandResult":
+        status = data.get("status", "unknown")
+        result = data.get("result", "")
+        if state.headless:
+            output_json(state, {"status": status, "result": result})
+        elif status == "success":
+            output(state, f"\n{result}")
+        else:
+            output_error(state, result)
     elif event_type == "Error":
         output(state, f"\n[Error: {data.get('message', 'Unknown error')}]")
 
@@ -828,26 +837,6 @@ async def cmd_show_blocks(state: CLIState, client: httpx.AsyncClient, args: list
         output_error(state, f"Request failed: {e}")
 
 
-async def cmd_recompile(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
-    """Trigger system prompt recompilation for the active agent."""
-    if not state.active_agent_id:
-        output_error(state, "No active agent. Use '/use <agent_id>' first.")
-        return
-    
-    try:
-        response = await client.post(f"{state.server_url}/agents/{state.active_agent_id}/recompile_system_prompt")
-        response.raise_for_status()
-        
-        if state.headless:
-            output_json(state, {"status": "ok", "agent_id": state.active_agent_id})
-        else:
-            output(state, "System prompt recompiled successfully.")
-    except httpx.HTTPStatusError as e:
-        output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
-    except httpx.RequestError as e:
-        output_error(state, f"Request failed: {e}")
-
-
 async def cmd_instructions(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """Edit system instructions in $EDITOR."""
     base = f"{state.server_url}/agents/{state.active_agent_id}/system-instructions"
@@ -985,9 +974,9 @@ async def cmd_agents(state: CLIState, client: httpx.AsyncClient, args: list[str]
         output_error(state, f"Request failed: {e}")
 
 
-def cmd_help(state: CLIState) -> None:
-    """Show help."""
-    help_text = """
+async def cmd_help(state: CLIState, client: httpx.AsyncClient) -> None:
+    """Show help, including dynamically discovered server-side slash commands."""
+    static_help = """
 Commands (prefix with /):
     /create           Create a new agent (interactive config wizard)
     /create -q <n>    Create agent with defaults (quick mode)
@@ -1000,20 +989,33 @@ Commands (prefix with /):
     /newblock         Create a new memory block (interactive)
     /content <label>  Edit memory block content in $EDITOR
     /settings <label> Edit memory block settings in $EDITOR
-    /recompile        Trigger system prompt recompilation
     /instructions     Edit system instructions in $EDITOR
     /config           Edit agent config in $EDITOR
     /help             Show this help
     /quit or /exit    Exit CLI
-
-Default: Any text without / prefix is sent as a chat message.
-
-Example:
-    /create -q my-test-agent
-    /use <paste-agent-id-here>
-    Hello, how are you?
 """
-    output(state, help_text)
+    output(state, static_help)
+
+    # Dynamically fetch server-side slash commands and list them.
+    try:
+        response = await client.get(f"{state.server_url}/agents/slash-commands")
+        response.raise_for_status()
+        commands = response.json()
+        if commands:
+            output(state, "Server commands (sent as messages to active agent):")
+            for cmd in commands:
+                name = cmd.get("name", "?")
+                desc = cmd.get("description", "")
+                output(state, f"    /{name:<16}  {desc}")
+            output(state, "")
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        pass  # Discovery failure is non-fatal — static help is already shown
+
+    output(state, "Default: Any text without / prefix is sent as a chat message.\n")
+    output(state, "Example:")
+    output(state, "    /create -q my-test-agent")
+    output(state, "    /use <paste-agent-id-here>")
+    output(state, "    Hello, how are you?\n")
 
 
 # --- Main Loop ---
@@ -1026,7 +1028,6 @@ COMMANDS = {
     "info": cmd_info,
     "list-blocks": cmd_list_blocks,
     "show-blocks": cmd_show_blocks,
-    "recompile": cmd_recompile,
     "instructions": cmd_instructions,
     "config": cmd_config,
     "newblock": cmd_newblock,
@@ -1051,14 +1052,17 @@ async def run_command(state: CLIState, client: httpx.AsyncClient, line: str) -> 
             return False
         
         if cmd == "help":
-            cmd_help(state)
+            await cmd_help(state, client)
             return True
         
         handler = COMMANDS.get(cmd)
         if handler:
             await handler(state, client, args)
         else:
-            output_error(state, f"Unknown command: /{cmd}. Type '/help' for available commands.")
+            # Unknown CLI command — pass through to the agent as a message.
+            # Server-side slash commands (/recompile, /clear, /compact, etc.) are
+            # handled this way: the messages route intercepts them before the agent loop.
+            await cmd_chat(state, client, [line])
     else:
         # Default: treat entire line as chat message
         await cmd_chat(state, client, [line])

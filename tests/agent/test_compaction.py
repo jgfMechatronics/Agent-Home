@@ -16,7 +16,7 @@ from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart, Ret
 
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
-from agent.compaction import compact, is_compaction_needed
+from agent.compaction import clear_context, compact, compact_on_demand, is_compaction_needed
 from agent.types import AgentConfig, AgentDeps
 from conftest import (
     SAMPLE_AGENT_CONFIG,
@@ -296,3 +296,96 @@ class TestCompactToolPairAtomicity:
         await session.refresh(data["agent"])
         await session.refresh(data["records"][5])
         assert data["agent"].context_window_start == data["records"][5].seq_id
+
+
+class TestClearContext:
+    """clear_context advances context_window_start past all existing messages."""
+
+    async def test_advances_past_all_messages(self, session: AsyncSession, agent_deps: AgentDeps):
+        """After clear_context, context_window_start is beyond the last persisted message."""
+        msgs = make_alternating_messages(4)
+        records = await _persist_messages_load_records(agent_deps, msgs)
+        last_seq_id = max(r.seq_id for r in records)
+
+        await clear_context(agent_deps)
+
+        assert agent_deps.context_window_start == last_seq_id + 1
+
+    async def test_no_messages_leaves_start_at_zero(self, session: AsyncSession, agent_deps: AgentDeps):
+        """clear_context on an agent with no messages leaves context_window_start at 0."""
+        await clear_context(agent_deps)
+
+        assert agent_deps.context_window_start == 0
+
+    async def test_resets_compaction_warning_fired(self, session: AsyncSession, agent_deps: AgentDeps):
+        """clear_context resets compaction_warning_fired so a fresh warning can fire."""
+        agent_deps.compaction_warning_fired = True
+        await _persist_messages_load_records(agent_deps, make_alternating_messages(4))
+
+        await clear_context(agent_deps)
+
+        assert agent_deps.compaction_warning_fired is False
+
+    async def test_messages_remain_in_db(self, session: AsyncSession, agent_deps: AgentDeps):
+        """Messages before the clear are preserved in the DB, not deleted."""
+        msgs = make_alternating_messages(4)
+        await _persist_messages_load_records(agent_deps, msgs)
+
+        await clear_context(agent_deps)
+
+        all_records = await session.execute(
+            select(MessageRecord).where(MessageRecord.agent_id == agent_deps.agent_id)
+        )
+        assert len(all_records.scalars().all()) == 4
+
+    async def test_commits_changes(self, session: AsyncSession, agent_deps: AgentDeps):
+        """clear_context commits so the new pointer survives a session expiry."""
+        from sqlalchemy import event as sa_event
+        committed = False
+
+        @sa_event.listens_for(session.sync_session, "after_commit")
+        def on_commit(sess):
+            nonlocal committed
+            committed = True
+
+        await _persist_messages_load_records(agent_deps, make_alternating_messages(2))
+        await clear_context(agent_deps)
+
+        assert committed
+
+
+class TestCompactOnDemand:
+    """compact_on_demand runs compaction and reports whether it advanced the pointer."""
+
+    async def test_returns_true_when_pointer_advances(self, session: AsyncSession):
+        """With enough messages, compact_on_demand advances the pointer and returns True."""
+        config = _make_config(soft_compaction_limit=1000, compaction_target_fraction=0.25)
+        data = await _make_agent_with_messages(session, 10, config=config)
+        deps = data["deps"]
+        start_before = deps.context_window_start
+
+        result = await compact_on_demand(deps)
+
+        assert result is True
+        assert deps.context_window_start > start_before
+
+    async def test_returns_false_when_context_too_small(self, session: AsyncSession, agent_deps: AgentDeps):
+        """compact_on_demand returns False if context is at or below MIN_MESSAGES guard."""
+        msgs = make_alternating_messages(2)  # below MIN_MESSAGES_AFTER_COMPACTION=4
+        await _persist_messages_load_records(agent_deps, msgs)
+
+        result = await compact_on_demand(agent_deps)
+
+        assert result is False
+
+    async def test_resets_compaction_warning_when_compacts(self, session: AsyncSession):
+        """compact_on_demand resets compaction_warning_fired when compaction occurs."""
+        config = _make_config(soft_compaction_limit=1000, compaction_target_fraction=0.25)
+        data = await _make_agent_with_messages(session, 10, config=config)
+        deps = data["deps"]
+        deps.compaction_warning_fired = True
+
+        result = await compact_on_demand(deps)
+
+        assert result is True
+        assert deps.compaction_warning_fired is False

@@ -5,9 +5,12 @@ when token limits are exceeded.
 """
 import logging
 
+from sqlalchemy import func, select
+
 from agent.types import AgentConfig, AgentDeps
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import deserialize_messages, load_messages
+from db.models import MessageRecord
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 
 logger = logging.getLogger(__name__)
@@ -88,3 +91,33 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     deps.compaction_warning_fired = False  # Reset for next compaction cycle
     await compile_system_prompt(deps)
     await deps.commit_changes_refresh_agent_record()
+
+
+async def clear_context(deps: AgentDeps) -> None:
+    """Advance context_window_start to the next seq_id, giving the agent a fresh session.
+
+    Messages before the clear remain in the DB (retrievable, not deleted) but are
+    excluded from subsequent runs. The compaction warning flag is reset so a fresh
+    warning can fire when the new context grows.
+    """
+    result = await deps.session.execute(
+        select(func.max(MessageRecord.seq_id)).where(MessageRecord.agent_id == deps.agent_id)
+    )
+    max_seq_id = result.scalar()
+    # Advance past the last persisted message; if no messages exist, 0 is already correct.
+    deps.context_window_start = (max_seq_id + 1) if max_seq_id is not None else 0
+    deps.compaction_warning_fired = False
+    await deps.commit_changes_refresh_agent_record()
+
+
+async def compact_on_demand(deps: AgentDeps) -> bool:
+    """Run compaction on demand, as if the context were at the soft limit.
+
+    Uses soft_compaction_limit as a representative token count so the retention
+    fraction math in compact() produces the same result it would at the limit.
+    Returns True if compaction actually advanced the pointer, False if context was
+    too small to compact (MIN_MESSAGES_AFTER_COMPACTION guard).
+    """
+    before = deps.context_window_start
+    await compact(deps, total_tokens=deps.config.soft_compaction_limit)
+    return deps.context_window_start != before

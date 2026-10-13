@@ -48,7 +48,6 @@ from memory.block_crud import (
     update_block,
     update_block_settings,
 )
-from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import load_messages
 
 
@@ -161,20 +160,6 @@ async def handle_message(
         logger.exception("Unexpected error in handle_message for agent %s", agent_id)
         await deps.session.rollback()
         yield map_to_sse(RunErrorEvent.from_exception(e))
-
-
-@router.post("/{agent_id}/recompile_system_prompt")
-async def recompile_system_prompt_route_handler(
-    agent_id: str,
-    deps: AgentDeps = Depends(get_agent_deps),
-) -> bool: # We may or may not want this to return a bool
-    """
-    TODO: This is temp just to be able to test out memory system functionality, we may not actually want this
-    if we do, need to design proper and unit test
-    """
-
-    await compile_system_prompt(deps)
-    return True
 
 
 @router.get("")

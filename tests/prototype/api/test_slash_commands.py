@@ -7,6 +7,8 @@ import pytest
 from fastapi.sse import ServerSentEvent
 
 from prototype.api.slash_commands import (
+    _handle_clear,
+    _handle_compact,
     _handle_recompile,
     _parse_slash_cmd,
     handle_slash_cmd,
@@ -22,6 +24,8 @@ class TestParseSlashCmd:
         ("/recompile", ("recompile", "")),
         ("/recompile some args", ("recompile", "some args")),
         ("/RECOMPILE", ("recompile", "")),
+        ("/clear", ("clear", "")),
+        ("/compact", ("compact", "")),
         ("recompile", None),       # no leading slash
         ("/unknown_cmd", None),    # unrecognized command passes through to model
         ("/", None),               # slash with no command
@@ -103,3 +107,43 @@ class TestHandleRecompile:
         assert result.data["name"] == "user_recompile"
         assert result.data["status"] == "success"
         assert result.data["result"]  # non-empty result message
+
+
+class TestHandleClear:
+    """_handle_clear — calls clear_context, returns success SSE."""
+
+    async def test_calls_clear_context_and_returns_success_sse(self):
+        deps = Mock()
+
+        with patch("prototype.api.slash_commands.clear_context", new_callable=AsyncMock) as mock_clear:
+            result = await _handle_clear(deps, "")
+
+        mock_clear.assert_awaited_once_with(deps)
+        assert result.event == "SlashCommandResult"
+        assert result.data["name"] == "user_clear"
+        assert result.data["status"] == "success"
+        assert result.data["result"]
+
+
+class TestHandleCompact:
+    """_handle_compact — calls compact_on_demand, returns success SSE with context-sensitive message."""
+
+    async def test_reports_compaction_occurred_when_pointer_advanced(self):
+        deps = Mock()
+
+        with patch("prototype.api.slash_commands.compact_on_demand", new_callable=AsyncMock, return_value=True):
+            result = await _handle_compact(deps, "")
+
+        assert result.event == "SlashCommandResult"
+        assert result.data["status"] == "success"
+        assert "complete" in result.data["result"].lower()
+
+    async def test_reports_nothing_to_compact_when_context_too_small(self):
+        deps = Mock()
+
+        with patch("prototype.api.slash_commands.compact_on_demand", new_callable=AsyncMock, return_value=False):
+            result = await _handle_compact(deps, "")
+
+        assert result.event == "SlashCommandResult"
+        assert result.data["status"] == "success"
+        assert "nothing" in result.data["result"].lower()
