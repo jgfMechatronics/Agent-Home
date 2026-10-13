@@ -316,58 +316,58 @@ class TestCompactToolPairAtomicity:
 class TestClearContext:
     """clear_context advances context_window_start past all existing messages."""
 
-    async def test_advances_past_all_messages_and_returns_true(self, session: AsyncSession, agent_deps: AgentDeps):
-        """After clear_context, context_window_start is beyond the last persisted message."""
-        msgs = make_alternating_messages(4)
+    N_MESSAGES = 4
+
+    @pytest_asyncio.fixture
+    async def persist_some_messages(self, agent_deps: AgentDeps):
+        """Fixture that persists N_MESSAGES alternating messages for test setup."""
+        msgs = make_alternating_messages(self.N_MESSAGES)
         records = await _persist_messages_load_records(agent_deps, msgs)
-        last_seq_id = max(r.seq_id for r in records)
+        return records
+
+    async def test_advances_past_all_messages_and_returns_true(self, agent_deps: AgentDeps, persist_some_messages):
+        """After clear_context, context_window_start is beyond the last persisted message."""
+        last_seq_id = max(r.seq_id for r in persist_some_messages)
 
         result = await clear_context(agent_deps)
 
         assert result is True
         assert agent_deps.context_window_start == last_seq_id + 1
 
-    async def test_no_messages_is_noop_and_returns_false(self, session: AsyncSession, agent_deps: AgentDeps):
+    async def test_no_messages_is_noop_and_returns_false(self, agent_deps: AgentDeps):
         """clear_context on an agent with no messages is a no-op and returns False."""
         result = await clear_context(agent_deps)
 
         assert result is False
         assert agent_deps.context_window_start == 0
 
-    async def test_already_cleared_is_noop_and_returns_false(self, session: AsyncSession, agent_deps: AgentDeps):
+    async def test_already_cleared_is_noop_and_returns_false(self, agent_deps: AgentDeps, persist_some_messages):
         """Second /clear with no new messages since the first is a no-op."""
-        await _persist_messages_load_records(agent_deps, make_alternating_messages(2))
         await clear_context(agent_deps)  # first clear advances pointer
 
         result = await clear_context(agent_deps)  # nothing new to clear
 
         assert result is False
 
-    async def test_resets_compaction_warning_fired(self, session: AsyncSession, agent_deps: AgentDeps):
+    async def test_resets_compaction_warning_fired(self, agent_deps: AgentDeps, persist_some_messages):
         """clear_context resets compaction_warning_fired so a fresh warning can fire."""
         agent_deps.compaction_warning_fired = True
-        await _persist_messages_load_records(agent_deps, make_alternating_messages(4))
 
         await clear_context(agent_deps)
 
         assert agent_deps.compaction_warning_fired is False
 
-    async def test_messages_remain_in_db(self, session: AsyncSession, agent_deps: AgentDeps):
+    async def test_messages_remain_in_db(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
         """Messages before the clear are preserved in the DB, not deleted."""
-        msgs = make_alternating_messages(4)
-        await _persist_messages_load_records(agent_deps, msgs)
-
         await clear_context(agent_deps)
 
         all_records = await session.execute(
             select(MessageRecord).where(MessageRecord.agent_id == agent_deps.agent_id)
         )
-        assert len(all_records.scalars().all()) == 4
+        assert len(all_records.scalars().all()) == self.N_MESSAGES
 
-    async def test_commits_changes(self, session: AsyncSession, agent_deps: AgentDeps):
+    async def test_commits_changes(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
         """clear_context commits so the new pointer survives a session expiry."""
-        await _persist_messages_load_records(agent_deps, make_alternating_messages(2))
-
         committed = False
 
         @event.listens_for(session.sync_session, "after_commit")
