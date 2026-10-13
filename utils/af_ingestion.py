@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from httpx_sse import aconnect_sse
+from utils.slash_cmd_client import async_send_slash_cmd
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -171,15 +171,6 @@ async def import_agent_file(af_path: Path, client: "AsyncClient") -> str:
         block_response.raise_for_status()
 
     # Recompile system prompt so blocks are included in context
-    async with aconnect_sse(client, "POST", f"/agents/{agent_id}/messages", json={"message": "/recompile"}) as event_source:
-        async for event in event_source.aiter_sse():
-            if event.event != "SlashCommandResult":
-                continue
-            data = json.loads(event.data)
-            if data.get("name") != "user_recompile":
-                continue
-            if data.get("status") != "success":
-                raise RuntimeError(f"Recompile failed: {data.get('result')}")
-            break
+    await async_send_slash_cmd(client, agent_id, "recompile")
 
     return agent_id
