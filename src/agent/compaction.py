@@ -32,16 +32,17 @@ def is_compaction_needed(total_tokens: int | None, config: AgentConfig) -> bool:
     return total_tokens > config.soft_compaction_limit
 
 
-async def compact(deps: AgentDeps, total_tokens: int) -> bool:
+async def compact(deps: AgentDeps) -> bool:
     """Advance context_window_start to reduce context size.
     
-    Estimates system prompt tokens from character count, calculates average
-    tokens per message, and advances the pointer to retain the target fraction
-    of current message tokens.
+    Derives total_tokens from the last ModelResponse in context (where pydantic-ai
+    stores cumulative usage), estimates system prompt tokens from character count,
+    and advances the pointer to retain the target fraction of current message tokens.
     
     Guarantees:
     - Never evicts the most recent 4 messages
     - No-op if 4 or fewer messages in context
+    - No-op if no ModelResponse found in context (context too young to compact)
     - Does NOT delete messages (pointer manipulation only)
     - Tool call/return pairs are kept atomic (never split across the boundary)
     - Calls compile_system_prompt after advancing pointer
@@ -55,7 +56,21 @@ async def compact(deps: AgentDeps, total_tokens: int) -> bool:
     if len(messages) <= MIN_MESSAGES_AFTER_COMPACTION:
         return False
 
-    # TODO (low priority): we may eventually want a more sophisticated way to estiamte tokens, and some sort of 
+    last_response = next(
+        (m for m in reversed(messages) if m.type == "ModelResponse"),
+        None,
+    )
+    if last_response is None:
+        logger.warning("compact: no ModelResponse found in context — skipping compaction")
+        return False
+    if last_response.total_tokens is None:
+        raise RuntimeError(
+            f"compact: ModelResponse (seq_id={last_response.seq_id}) has total_tokens=None — "
+            "usage data missing; cannot calculate compaction target"
+        )
+    total_tokens = last_response.total_tokens
+
+    # TODO (low priority): we may eventually want a more sophisticated way to estimate tokens, and some sort of
     # check and loop on resulting in-context message token count to be more accurate if we find it necessary
     sys_tokens = len(deps.compiled_system_prompt) / 4
     msg_tokens = total_tokens - sys_tokens

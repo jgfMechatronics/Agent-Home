@@ -43,6 +43,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
     ThinkingPart,
+    RequestUsage,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -165,9 +166,15 @@ def make_request(content: str = "hello") -> ModelRequest:
     return ModelRequest(parts=[UserPromptPart(content=content)])
 
 
-def make_response(content: str = "hi") -> ModelResponse:
-    """Minimal ModelResponse with a single TextPart."""
-    return ModelResponse(parts=[TextPart(content=content)])
+def make_response(content: str = "hi", *, total_tokens: int | None = None) -> ModelResponse:
+    """Minimal ModelResponse with a single TextPart.
+    
+    Pass total_tokens to simulate real API usage data (stored in MessageRecord.total_tokens
+    when persisted via persist_messages). RequestUsage.total_tokens is a computed property
+    (input_tokens + output_tokens), so total_tokens is carried entirely in input_tokens.
+    """
+    usage = RequestUsage(input_tokens=total_tokens, output_tokens=0) if total_tokens is not None else RequestUsage()
+    return ModelResponse(parts=[TextPart(content=content)], usage=usage)
 
 
 def make_alternating_messages(count: int, prefix: str = "msg") -> list[ModelMessage]:

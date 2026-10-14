@@ -2,7 +2,7 @@
 
 Tests is_compaction_needed and compact functions.
 
-compact(deps, total_tokens) receives the total_tokens from the API response.
+compact(deps) derives total_tokens from the last ModelResponse in context.
 It estimates system prompt tokens from char count, calculates message tokens,
 and advances context_window_start to retain the target fraction of current message tokens.
 """
@@ -59,10 +59,13 @@ async def _make_agent_with_messages(
     *,
     config: AgentConfig | None = None,
     system_prompt_chars: int = 400,
+    total_tokens: int | None = None,
 ) -> dict:
     """Factory for creating an agent with N alternating request/response messages.
 
     System prompt is set to a string of specified char length (for token estimation testing).
+    Pass total_tokens to set usage on the last response, simulating real API data that
+    compact() reads when calculating the compaction target.
     Returns dict with agent, messages, deps for test access.
     """
     if config is None:
@@ -79,6 +82,9 @@ async def _make_agent_with_messages(
 
     deps = AgentDeps(session=session, agent_record=agent)
     pydantic_msgs = make_alternating_messages(message_count)
+    if total_tokens is not None:
+        # Replace the last message (always a response for even counts) with one carrying usage data
+        pydantic_msgs[-1] = make_response(total_tokens=total_tokens)
     messages = await _persist_messages_load_records(deps, pydantic_msgs)
 
     return {"agent": agent, "messages": messages, "deps": deps}
@@ -129,15 +135,19 @@ class CompactTestBase:
         msg_count: int,
         total_tokens: int,
     ):
-        """Set up test scenario with specified compaction parameters."""
+        """Set up test scenario with specified compaction parameters.
+        
+        total_tokens is stored on the last ModelResponse record so compact() can
+        derive it without relying on a caller-supplied value.
+        """
         config = _make_config(soft_compaction_limit=limit, compaction_target_fraction=target)
         data = await _make_agent_with_messages(
-            session, message_count=msg_count, config=config, system_prompt_chars=400
+            session, message_count=msg_count, config=config, system_prompt_chars=400,
+            total_tokens=total_tokens,
         )
         self.agent = data["agent"]
         self.messages = data["messages"]
         self.deps = data["deps"]
-        self.total_tokens = total_tokens
 
 class TestCompactCommon(CompactTestBase):
     """Tests with standard config: 500 limit, 0.5 target, 10 messages, 1100 tokens."""
@@ -152,14 +162,14 @@ class TestCompactCommon(CompactTestBase):
         """compact advances context_window_start pointer in DB."""
         assert self.agent.context_window_start == 0  # Defaults to 0 for fresh agents
         
-        await compact(self.deps, total_tokens=self.total_tokens)
+        await compact(self.deps)
 
         await session.refresh(self.agent)
         assert self.agent.context_window_start > 0
 
     async def test_does_not_delete_messages(self, session: AsyncSession):
         """compact does NOT delete any messages — pointer only."""
-        await compact(self.deps, total_tokens=self.total_tokens)
+        await compact(self.deps)
 
         # Verify all messages still exist in DB via count query
         result = await session.execute(
@@ -176,7 +186,7 @@ class TestCompactCommon(CompactTestBase):
         
         spy = mocker.spy(compaction_module, "compile_system_prompt")
         
-        await compact(self.deps, total_tokens=self.total_tokens)
+        await compact(self.deps)
         
         spy.assert_called_once_with(self.deps)
 
@@ -186,13 +196,13 @@ class TestCompactReturnValue(CompactTestBase):
 
     async def test_returns_true_when_compaction_occurs(self, session: AsyncSession):
         await self._setup(session, limit=500, target=0.5, msg_count=10, total_tokens=1100)
-        result = await compact(self.deps, total_tokens=self.total_tokens)
+        result = await compact(self.deps)
         assert result is True
 
     async def test_returns_false_when_context_too_small(self, session: AsyncSession):
         """MIN_MESSAGES_AFTER_COMPACTION guard prevents compaction; compact returns False."""
         await self._setup(session, limit=100, target=0.5, msg_count=2, total_tokens=1100)
-        result = await compact(self.deps, total_tokens=self.total_tokens)
+        result = await compact(self.deps)
         assert result is False
 
 
@@ -203,7 +213,7 @@ class TestCompactEdgeCases(CompactTestBase):
         """compact never evicts the most recent 4 messages."""
         await self._setup(session, limit=100, target=0.01, msg_count=10, total_tokens=5000)
         
-        await compact(self.deps, total_tokens=self.total_tokens)
+        await compact(self.deps)
         
         await session.refresh(self.agent)
         await session.refresh(self.messages[-4])
@@ -213,7 +223,7 @@ class TestCompactEdgeCases(CompactTestBase):
         """compact is a no-op when agent has 4 or fewer messages in context."""
         await self._setup(session, limit=100, target=0.1, msg_count=4, total_tokens=5000)
         
-        await compact(self.deps, total_tokens=self.total_tokens)
+        await compact(self.deps)
         
         await session.refresh(self.agent)
         # Should remain 0 — nothing to compact
@@ -231,7 +241,7 @@ class TestCompactEdgeCases(CompactTestBase):
         """
         await self._setup(session, limit=10000, target=0.5, msg_count=20, total_tokens=2100)
         
-        await compact(self.deps, total_tokens=self.total_tokens)
+        await compact(self.deps)
         
         await session.refresh(self.agent)
         for m in self.messages:
@@ -242,6 +252,24 @@ class TestCompactEdgeCases(CompactTestBase):
         
         # Expect exactly 10 (50% of 20); allow ±1 for integer rounding
         assert 9 <= len(in_context) <= 11
+
+    async def test_returns_false_when_no_model_responses_in_context(self, session: AsyncSession, agent_deps: AgentDeps):
+        """compact returns False without error when context contains only ModelRequests."""
+        requests_only = [make_request(f"msg {i}") for i in range(6)]
+        await _persist_messages_load_records(agent_deps, requests_only)
+
+        result = await compact(agent_deps)
+
+        assert result is False
+        assert agent_deps.context_window_start == 0
+
+    async def test_raises_when_model_response_total_tokens_is_none(self, session: AsyncSession):
+        """compact raises RuntimeError when the last ModelResponse has no usage data."""
+        # make_response() without total_tokens produces a record with total_tokens=None in DB
+        await self._setup(session, limit=500, target=0.5, msg_count=10, total_tokens=None)
+
+        with pytest.raises(RuntimeError, match="total_tokens=None"):
+            await compact(self.deps)
 
 
 class TestCompactToolPairAtomicity:
@@ -254,6 +282,8 @@ class TestCompactToolPairAtomicity:
     This results in an invalid message history being sent to the model on every subsequent turn,
     soft locking the agent.
     """
+
+    TOTAL_TOKENS = 1250
 
     async def _make_agent_with_tool_sequence(
         self,
@@ -276,7 +306,7 @@ class TestCompactToolPairAtomicity:
             tool_response_request,    # – ModelRequest(ToolReturnPart | RetryPromptPart) — must stay paired with 5
             make_response("resp 7"),
             make_request("msg 8"),
-            make_response("resp 9"),
+            make_response("resp 9", total_tokens=self.TOTAL_TOKENS),
         ]
         records = await _persist_messages_load_records(agent_deps, pydantic_msgs)
         return {"agent": agent_deps._agent_record, "records": records, "deps": agent_deps}
@@ -306,7 +336,7 @@ class TestCompactToolPairAtomicity:
         assert any(isinstance(p, ToolCallPart) for p in call_record.parts)
         assert any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in return_record.parts)
 
-        await compact(data["deps"], total_tokens=1250)
+        await compact(data["deps"])
 
         await session.refresh(data["agent"])
         await session.refresh(data["records"][5])
