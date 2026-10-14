@@ -51,7 +51,7 @@ from db.models import AgentRecord
 
 # Stamp assertions compare against add_timestamp_prefix built at assert time —
 # freeze the clock so runner-stamp and expected-stamp can't straddle a second.
-pytestmark = pytest.mark.usefixtures("_frozen_stamp_clock")
+pytestmark = pytest.mark.usefixtures("frozen_stamp_clock")
 
 # --- Module-level test data ---
 

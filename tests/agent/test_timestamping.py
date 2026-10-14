@@ -12,10 +12,10 @@ from agent.timestamping import TZ_ENV_VAR, ToolReturnTimestamper, _resolve_tz, a
 from conftest import FROZEN_NOW
 
 # Stamp assertions are deterministic — this module opts into the frozen clock.
-pytestmark = pytest.mark.usefixtures("_frozen_stamp_clock")
+pytestmark = pytest.mark.usefixtures("frozen_stamp_clock")
 
 
-# Frozen timestamp from conftest._frozen_stamp_clock (2026-10-10 12:00:00 UTC)
+# Frozen timestamp from conftest.frozen_stamp_clock (2026-10-10 12:00:00 UTC)
 FROZEN_STAMP = "⏰ [Oct 10, 2026 12:00:00 UTC]"
 
 

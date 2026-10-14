@@ -67,12 +67,12 @@ it (e.g. .astimezone(...)) when asserting on stamps in other zones."""
 
 
 @pytest.fixture
-def _frozen_stamp_clock():
+def frozen_stamp_clock():
     """Freeze the clock (time-machine) for timestamp determinism.
 
     NOT autouse: some tests need real, incrementing timestamps. Modules/classes
     that assert on stamped content opt in via
-    `pytestmark = pytest.mark.usefixtures("_frozen_stamp_clock")`.
+    `pytestmark = pytest.mark.usefixtures("frozen_stamp_clock")`.
     """
     with time_machine.travel(FROZEN_NOW):
         yield
