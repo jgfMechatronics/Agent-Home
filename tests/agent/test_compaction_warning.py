@@ -223,12 +223,14 @@ class TestCompactionWarnerUnit:
         mock_deps.compaction_warning_fired = True  # Flag is set from previous warning
         mock_deps.commit_changes_refresh_agent_record = AsyncMock()
         
-        # Need > 4 messages; type="ModelResponse" avoids deserialization branch
-        mock_messages = [MagicMock(seq_id=i, type="ModelResponse") for i in range(n_messages)]
+        # Need > 4 messages; type="ModelResponse" avoids deserialization branch.
+        # Set total_tokens on the last record so compact() can derive it without a real API call.
+        mock_messages = [MagicMock(seq_id=i, type="ModelResponse", total_tokens=None) for i in range(n_messages)]
+        mock_messages[-1].total_tokens = total_tokens
         
         with patch("agent.compaction.load_messages", return_value=mock_messages):
             with patch("agent.compaction.compile_system_prompt", new_callable=AsyncMock):
-                await compact(mock_deps, total_tokens=total_tokens)
+                await compact(mock_deps)
         
         # Verify compaction actually ran (didn't early-return)
         assert mock_deps.context_window_start is not None, "Compaction didn't run — check test constants"

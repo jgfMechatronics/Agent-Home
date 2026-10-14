@@ -74,10 +74,7 @@ async def _handle_clear(deps: "AgentDeps") -> ServerSentEvent:
 
 async def _handle_compact(deps: "AgentDeps") -> ServerSentEvent:
     """Handler for /compact command. Runs on-demand compaction."""
-    # Pass soft_compaction_limit as total_tokens — treats the context as if the limit were just hit.
-    # Result: post-compact context lands at the configured retention fraction of the limit,
-    # deterministic regardless of actual current token count.
-    did_compact = await compact(deps, total_tokens=deps.config.soft_compaction_limit)
+    did_compact = await compact(deps)
     return _bool_result_sse("user_compact", did_compact,
         did_work_msg="Compaction complete",
         noop_msg="Nothing to compact — context too small",

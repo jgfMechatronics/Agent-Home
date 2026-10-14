@@ -171,7 +171,7 @@ async def run_stateful_agent(agent: Agent,
                         # Mid-turn compaction check (after cancel — cancel supersedes compaction).
                         # Only fire at clean message boundaries: after a tool returns or at natural turn end.
                         if isinstance(event, (ToolResultEvent, AgentRunResultEvent)) and is_compaction_needed(last_total_tokens_value, deps.config):
-                            await compact(deps, last_total_tokens_value)
+                            await compact(deps)
 
                             if not isinstance(event, AgentRunResultEvent):
                                 # agent wasn't finished, restart them with a fresh run.
