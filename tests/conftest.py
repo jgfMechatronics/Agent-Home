@@ -30,7 +30,6 @@ from db.models import (
     AgentRecord,
     Base,
     MemoryBlockRecord,
-    MessageRecord,
     SystemPromptSnapshot,
     ToolDefinitionSnapshot,
     utcnow,
@@ -43,11 +42,11 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
     ThinkingPart,
-    RequestUsage,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.usage import RequestUsage
 
 
 def mock_run_context(deps: AgentDeps):
