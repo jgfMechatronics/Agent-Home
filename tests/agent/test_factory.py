@@ -547,15 +547,17 @@ class TestBuildModelSettings:
         "openrouter:z-ai/glm-5.3",
     ])
     def test_base_settings_defaults(self, model_name: str):
-        """All providers: parallel_tool_calls=False, thinking=False, output capped at 32k.
+        """All providers: parallel_tool_calls=False, thinking=False, output capped at 32k, 180s inter-chunk timeout.
 
         The max_tokens cap bounds a degenerate generation (provider glitch → no stop
-        token) to 32k tokens instead of an unbounded runaway stream.
+        token) to 32k tokens instead of an unbounded runaway stream. The timeout caps
+        how long a hung provider can stall the run (pydantic-ai's default is 600s).
         """
         settings = _build_model_settings(self._config(model_name))
         assert settings.get("parallel_tool_calls") is False
         assert settings.get("thinking") is False
         assert settings.get("max_tokens") == self.EXPECTED_MAX_TOKENS
+        assert settings.get("timeout") == 180
 
     @pytest.mark.parametrize("model_name", [
         "together:meta-llama/Llama-3.3-70B-Instruct-Turbo",

@@ -159,6 +159,15 @@ async def run_stateful_agent(agent: Agent,
                         if await _check_and_handle_cancel(agent_app_state, deps, agent.toolsets):
                             return
 
+                        # TODO: cancellation is cooperative and only serviced between yielded
+                        # events. While we're parked in stream.__anext__() awaiting the model's
+                        # HTTP response (e.g. a provider that hangs before its first byte), no
+                        # events arrive, so a cancel request sits ignored until the next event —
+                        # bounded by the ModelSettings inter-chunk timeout (180s) but still
+                        # minutes. The user should be able to stop a hung request promptly.
+                        # (Candidates floated in discussion, not a decision: racing
+                        # __anext__() against the cancel event, or true task cancellation.)
+
                         # Mid-turn compaction check (after cancel — cancel supersedes compaction).
                         # Only fire at clean message boundaries: after a tool returns or at natural turn end.
                         if isinstance(event, (ToolResultEvent, AgentRunResultEvent)) and is_compaction_needed(last_total_tokens_value, deps.config):
