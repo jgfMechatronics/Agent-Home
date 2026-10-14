@@ -66,7 +66,7 @@ class TestToolReturnTimestamper:
         out = await self.run_hook(wrapped)
         assert isinstance(out, ToolReturn)
         assert out.return_value == f"{FROZEN_STAMP}\nstand-in text"
-        assert out.metadata == {"handle": "run/call.0"}, "envelope metadata must survive unstamped"
+        assert out.metadata == wrapped.metadata, "envelope metadata must survive unstamped"
 
     async def test_tool_return_envelope_non_string_passthrough(self):
         """A ToolReturn with a non-string return_value passes through untouched."""
