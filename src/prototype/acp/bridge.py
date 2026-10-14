@@ -367,6 +367,9 @@ async def process_sse_event(
     
     elif event_type == "SlashCommandResult":
         name = data.get("name", "user_unknown")
+        # TODO: slash commands no longer include "args" in their SSE payload (dropped in Development/SlashCommands).
+        # args_str is always "" and args_dict always None — this branch is dead weight.
+        # Clean up: remove args_str/args_dict and pass None directly; investigate ACP-native representation first.
         args_str = data.get("args", "")
         result = data.get("result", "")
         status = "completed" if data.get("status") == "success" else "failed"

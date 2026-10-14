@@ -74,6 +74,9 @@ async def _handle_clear(deps: "AgentDeps") -> ServerSentEvent:
 
 async def _handle_compact(deps: "AgentDeps") -> ServerSentEvent:
     """Handler for /compact command. Runs on-demand compaction."""
+    # Pass soft_compaction_limit as total_tokens — treats the context as if the limit were just hit.
+    # Result: post-compact context lands at the configured retention fraction of the limit,
+    # deterministic regardless of actual current token count.
     did_compact = await compact(deps, total_tokens=deps.config.soft_compaction_limit)
     return _bool_result_sse("user_compact", did_compact,
         did_work_msg="Compaction complete",
@@ -128,7 +131,8 @@ def _parse_slash_cmd(msg: str) -> str | None:
     """
     if not msg.startswith("/"):
         return None
-    cmd = msg[1:].split()[0].lower() if msg[1:].split() else None
+    parts = msg[1:].split()
+    cmd = parts[0].lower() if parts else None
     if not cmd or cmd not in SLASH_COMMANDS:
         return None
     return cmd
