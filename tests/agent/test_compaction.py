@@ -133,7 +133,7 @@ class CompactTestBase:
         limit: int,
         target: float,
         msg_count: int,
-        total_tokens: int,
+        total_tokens: int | None,
     ):
         """Set up test scenario with specified compaction parameters.
         
@@ -253,7 +253,7 @@ class TestCompactEdgeCases(CompactTestBase):
         # Expect exactly 10 (50% of 20); allow ±1 for integer rounding
         assert 9 <= len(in_context) <= 11
 
-    async def test_returns_false_when_no_model_responses_in_context(self, session: AsyncSession, agent_deps: AgentDeps):
+    async def test_returns_false_when_no_model_responses_in_context(self, agent_deps: AgentDeps):
         """compact returns False without error when context contains only ModelRequests."""
         requests_only = [make_request(f"msg {i}") for i in range(6)]
         await _persist_messages_load_records(agent_deps, requests_only)

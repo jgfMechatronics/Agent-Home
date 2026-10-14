@@ -23,7 +23,7 @@ def _get_total_tokens_from_messages(messages: list[MessageRecord]) -> int:
     """Extract total_tokens from the last ModelResponse in messages.
     
     Args:
-        messages: List of deserialized messages to search.
+        messages: List of MessageRecord DB objects to search.
     
     Returns:
         total_tokens from the last ModelResponse.
@@ -62,7 +62,7 @@ def is_compaction_needed(total_tokens: int | None, config: AgentConfig) -> bool:
 async def compact(deps: AgentDeps) -> bool:
     """Advance context_window_start to reduce context size.
     
-    Derives total_tokens from the last ModelResponse in context (where we store cumulative usage from pydantic AI), 
+    Derives total_tokens from the last ModelResponse in context (where we store cumulative usage from pydantic AI),
     estimates system prompt tokens from character count,
     and advances the pointer to retain the target fraction of current message tokens.
     
