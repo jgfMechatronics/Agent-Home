@@ -1,7 +1,6 @@
 """Tests for agent/timestamping.py — wall-clock stamp injection."""
 
 import logging
-import re
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 
@@ -11,17 +10,8 @@ from pydantic_ai.messages import ToolReturn
 import agent.timestamping
 from agent.timestamping import TZ_ENV_VAR, ToolReturnTimestamper, _now, _resolve_tz, add_timestamp_prefix
 
-# Shape of the stamp header line: ⏰ [Mon DD, YYYY HH:MM:SS ZONE] followed by newline
-STAMP_RE = re.compile(r"^⏰ \[[A-Z][a-z]{2} \d{2}, \d{4} \d{2}:\d{2}:\d{2} [A-Z]{2,5}\]\n")
-
 
 class TestAddTimestampPrefix:
-    def test_stamp_shape(self):
-        """Stamped message starts with the ⏰-marked timestamp header line."""
-        stamped = add_timestamp_prefix("hello")
-        assert STAMP_RE.match(stamped), f"Bad stamp shape: {stamped!r}"
-        assert stamped.endswith("hello")
-
     def test_stamp_value_frozen_clock(self):
         """With the suite-wide frozen clock (conftest), the stamp is fully deterministic."""
         assert add_timestamp_prefix("hello") == "⏰ [Oct 10, 2026 12:00:00 UTC]\nhello"
