@@ -2,22 +2,17 @@
 
 import logging
 import re
+from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic_ai.messages import ToolReturn
 
 import agent.timestamping
-from agent.timestamping import TZ_ENV_VAR, ToolReturnTimestamper, _resolve_tz, add_timestamp_prefix
+from agent.timestamping import TZ_ENV_VAR, ToolReturnTimestamper, _now, _resolve_tz, add_timestamp_prefix
 
 # Shape of the stamp header line: ⏰ [Mon DD, YYYY HH:MM:SS ZONE] followed by newline
 STAMP_RE = re.compile(r"^⏰ \[[A-Z][a-z]{2} \d{2}, \d{4} \d{2}:\d{2}:\d{2} [A-Z]{2,5}\]\n")
-
-
-@pytest.fixture(autouse=True)
-def _fresh_tz_cache(monkeypatch):
-    """TZ resolution is cached per-process; tests each start with a clear cache."""
-    monkeypatch.setattr(agent.timestamping, "_tz_cache", None)
 
 
 class TestAddTimestampPrefix:
@@ -104,9 +99,8 @@ class TestResolveTz:
         assert resolved == ZoneInfo("UTC")
         assert "AGENT_HOME_TZ" in caplog.text and "Not/AZone" in caplog.text
 
-    def test_resolution_is_cached(self, monkeypatch):
-        """Second call does not re-read the env var (cheap after first resolution)."""
-        monkeypatch.setenv(TZ_ENV_VAR, "America/New_York")
-        first = _resolve_tz()
-        monkeypatch.setenv(TZ_ENV_VAR, "UTC")  # would change the answer if re-read
-        assert _resolve_tz() is first
+    def test_now_reads_module_level_tz_info(self, monkeypatch):
+        """_now() reads _tz_info (resolved once at import). The test seam is
+        patching the module attribute — setenv after import is too late."""
+        monkeypatch.setattr(agent.timestamping, "_tz_info", ZoneInfo("Asia/Tokyo"))
+        assert _now().utcoffset() == timedelta(hours=9)  # Tokyo has no DST

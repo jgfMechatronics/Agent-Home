@@ -31,37 +31,38 @@ logger = logging.getLogger(__name__)
 # fixed offsets (TZ=EST) are silently wrong half the year on DST transitions.
 TZ_ENV_VAR = "AGENT_HOME_TZ"
 
-_tz_cache: ZoneInfo | None = None
-
 
 def _resolve_tz() -> ZoneInfo:
     """Resolve the display timezone from AGENT_HOME_TZ, defaulting to UTC.
 
-    Resolution is cached per-process; the env var is read once. An invalid zone
-    logs an error and falls back to UTC — the stamp is self-describing (zone
-    abbreviation included), so this never produces silently-wrong times.
+    Pure: reads the env var at call time and always returns a valid zone — an
+    invalid name logs an error and falls back to UTC (the stamp is
+    self-describing, zone abbreviation included, so this never produces
+    silently-wrong times). Module-level `_tz_info` below captures the
+    resolution once at import; the env var must therefore be set before this
+    module is first imported (same pattern as api.app's AGENT_HOME_DB_PATH).
     """
-    global _tz_cache
-    if _tz_cache is None:
-        name = os.environ.get(TZ_ENV_VAR, "UTC")
-        try:
-            _tz_cache = ZoneInfo(name)
-        except (ZoneInfoNotFoundError, ValueError):
-            logger.error(
-                "Invalid %s=%r — falling back to UTC. Use an IANA zone name "
-                "(e.g. 'America/New_York'), not a fixed offset like 'EST'.",
-                TZ_ENV_VAR,
-                name,
-            )
-            _tz_cache = ZoneInfo("UTC")
-        if name == "UTC" and TZ_ENV_VAR not in os.environ:
-            logger.info("%s not set — timestamps default to UTC", TZ_ENV_VAR)
-    return _tz_cache
+    name = os.environ.get(TZ_ENV_VAR, "UTC")
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.error(
+            "Invalid %s=%r — falling back to UTC. Use an IANA zone name "
+            "(e.g. 'America/New_York'), not a fixed offset like 'EST'.",
+            TZ_ENV_VAR,
+            name,
+        )
+        return ZoneInfo("UTC")
+
+
+_tz_info: ZoneInfo = _resolve_tz()
+if TZ_ENV_VAR not in os.environ:
+    logger.info("%s not set — timestamps default to UTC", TZ_ENV_VAR)
 
 
 def _now() -> datetime:
     """Current time in the display timezone. Seam for deterministic tests."""
-    return datetime.now(_resolve_tz())
+    return datetime.now(_tz_info)
 
 
 def add_timestamp_prefix(text: str) -> str:
