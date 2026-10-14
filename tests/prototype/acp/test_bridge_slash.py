@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+from messages.messages import format_system_alert
 from prototype.acp.bridge import BridgeState, StreamState, process_sse_event
 
 
@@ -74,7 +75,7 @@ class TestDispatchEventSlashCommandResult:
             await process_sse_event(state, stream_state, SESSION_ID, "SlashCommandResult", slash_data(result=result_text), {})
 
         update = get_update(mock_send, 0)
-        assert update["content"]["text"] == f"<system_alert>{result_text}</system_alert>"
+        assert update["content"]["text"] == format_system_alert(result_text)
 
     @pytest.mark.asyncio
     async def test_error_result_text_still_surfaced(self, state, stream_state):

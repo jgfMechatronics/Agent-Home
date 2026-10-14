@@ -18,6 +18,8 @@ from typing import Any
 
 import httpx
 
+from messages.messages import format_system_alert
+
 logger = logging.getLogger(__name__)
 
 # Maximum number of historical messages to replay when toad connects
@@ -366,11 +368,10 @@ async def process_sse_event(
         ))
     
     elif event_type == "SlashCommandResult":
-        # ACP has no native command-result type — send as an agent_message_chunk wrapped in
-        # system_alert tags (matches format_system_alert() in messages/messages.py) so Nori
-        # renders it visually distinct from a real agent response.
+        # ACP has no native command-result type — send as an agent_message_chunk wrapped via
+        # format_system_alert() so Nori renders it visually distinct from a real agent response.
         result = data.get("result", "")
-        send(agent_message_chunk(session_id, f"<system_alert>{result}</system_alert>"))
+        send(agent_message_chunk(session_id, format_system_alert(result)))
 
     elif event_type == "AgentRunResultEvent":
         # Turn complete — extract usage if present
