@@ -366,17 +366,11 @@ async def process_sse_event(
         ))
     
     elif event_type == "SlashCommandResult":
-        name = data.get("name", "user_unknown")
-        # TODO: slash commands no longer include "args" in their SSE payload (dropped in Development/SlashCommands).
-        # args_str is always "" and args_dict always None — this branch is dead weight.
-        # Clean up: remove args_str/args_dict and pass None directly; investigate ACP-native representation first.
-        args_str = data.get("args", "")
+        # ACP has no native command-result type — send as an agent_message_chunk wrapped in
+        # system_alert tags (matches format_system_alert() in messages/messages.py) so Nori
+        # renders it visually distinct from a real agent response.
         result = data.get("result", "")
-        status = "completed" if data.get("status") == "success" else "failed"
-        tool_call_id = f"slash_{name}_{int(datetime.now().timestamp() * 1000)}"
-        args_dict = {"args": args_str} if args_str else None
-        send(tool_call(session_id, tool_call_id, name, args_dict))
-        send(tool_call_update(session_id, tool_call_id, result, status, args_dict))
+        send(agent_message_chunk(session_id, f"<system_alert>{result}</system_alert>"))
 
     elif event_type == "AgentRunResultEvent":
         # Turn complete — extract usage if present
