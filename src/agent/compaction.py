@@ -35,8 +35,8 @@ def is_compaction_needed(total_tokens: int | None, config: AgentConfig) -> bool:
 async def compact(deps: AgentDeps) -> bool:
     """Advance context_window_start to reduce context size.
     
-    Derives total_tokens from the last ModelResponse in context (where pydantic-ai
-    stores cumulative usage), estimates system prompt tokens from character count,
+    Derives total_tokens from the last ModelResponse in context (where we store cumulative usage from pydantic AI), 
+    estimates system prompt tokens from character count,
     and advances the pointer to retain the target fraction of current message tokens.
     
     Guarantees:
