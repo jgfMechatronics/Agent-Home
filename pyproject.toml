@@ -43,6 +43,7 @@ packages = [
     "src/messages",
     "src/mcp_tools",
     "src/prototype",
+    "utils",
 ]
 
 [tool.pytest.ini_options]
