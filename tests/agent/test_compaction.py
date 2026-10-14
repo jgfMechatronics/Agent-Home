@@ -263,6 +263,17 @@ class TestCompactEdgeCases(CompactTestBase):
         assert result is False
         assert agent_deps.context_window_start == 0
 
+    async def test_crawls_back_past_trailing_request_for_total_tokens(self, agent_deps: AgentDeps):
+        """compact() correctly finds total_tokens when the last message in context is a ModelRequest."""
+        msgs = make_alternating_messages(10)   # ends with response at index 9
+        msgs[-1] = make_response(total_tokens=1100)
+        msgs.append(make_request("new user message"))  # trailing request — compact() must skip it
+        await _persist_messages_load_records(agent_deps, msgs)
+
+        result = await compact(agent_deps)
+
+        assert result is True  # found total_tokens on the response, compaction proceeded
+
     async def test_raises_when_model_response_total_tokens_is_none(self, session: AsyncSession):
         """compact raises RuntimeError when the last ModelResponse has no usage data."""
         # make_response() without total_tokens produces a record with total_tokens=None in DB
