@@ -11,8 +11,6 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, Mock
 
-import agent.timestamping  # noqa: F401 — imported for tests that monkeypatch its seams
-
 import pytest
 import pytest_asyncio
 import time_machine
