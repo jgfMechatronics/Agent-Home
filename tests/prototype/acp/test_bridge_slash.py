@@ -3,8 +3,8 @@ Tests for SlashCommandResult event handling in acp.bridge.dispatch_event.
 
 SlashCommandResult is a synthetic SSE event type emitted by the server when
 a slash command (e.g. /recompile) completes. The bridge translates it into a
-tool_call + tool_call_update ACP notification pair so toad can display it as
-a tool call.
+single agent_message_chunk wrapped in system_alert XML tags so Nori renders it
+visually distinct from a real agent response.
 """
 
 import json
@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+from messages.messages import format_system_alert
 from prototype.acp.bridge import BridgeState, StreamState, process_sse_event
 
 
@@ -38,7 +39,6 @@ def slash_data(**overrides) -> str:
     """Build a SlashCommandResult data JSON string with sensible defaults."""
     payload = {
         "name": "user_recompile",
-        "args": "",
         "result": "System prompt recompiled successfully",
         "status": "success",
     }
@@ -55,34 +55,36 @@ def get_update(mock_send, call_index: int) -> dict:
 
 
 class TestDispatchEventSlashCommandResult:
-    """dispatch_event emits a tool_call + tool_call_update pair for SlashCommandResult events."""
+    """dispatch_event emits a single agent_message_chunk for SlashCommandResult events."""
 
     @pytest.mark.asyncio
-    async def test_happy_path_emits_correct_notification_pair(self, state, stream_state):
-        """Success SlashCommandResult → tool_call (in_progress) + tool_call_update (completed)."""
+    async def test_emits_single_agent_message_chunk(self, state, stream_state):
+        """SlashCommandResult → exactly one agent_message_chunk."""
         with patch("prototype.acp.bridge.send") as mock_send:
             await process_sse_event(state, stream_state, SESSION_ID, "SlashCommandResult", slash_data(), {})
 
-        assert mock_send.call_count == 2
-
-        first = get_update(mock_send, 0)
-        assert first["sessionUpdate"] == "tool_call"
-        assert first["status"] == "in_progress"
-        assert first["toolCallId"].startswith("slash_user_recompile_")
-
-        second = get_update(mock_send, 1)
-        assert second["sessionUpdate"] == "tool_call_update"
-        assert second["status"] == "completed"
-        assert second["toolCallId"] == first["toolCallId"]  # IDs must match
+        assert mock_send.call_count == 1
+        update = get_update(mock_send, 0)
+        assert update["sessionUpdate"] == "agent_message_chunk"
 
     @pytest.mark.asyncio
-    async def test_error_status_maps_to_failed(self, state, stream_state):
-        """A SlashCommandResult with status='error' maps to 'failed' on the tool_call_update."""
+    async def test_result_text_wrapped_in_system_alert_tags(self, state, stream_state):
+        """Result text is wrapped in <system_alert> tags so Nori renders it distinctly."""
+        result_text = "System prompt recompiled successfully"
+        with patch("prototype.acp.bridge.send") as mock_send:
+            await process_sse_event(state, stream_state, SESSION_ID, "SlashCommandResult", slash_data(result=result_text), {})
+
+        update = get_update(mock_send, 0)
+        assert update["content"]["text"] == format_system_alert(result_text)
+
+    @pytest.mark.asyncio
+    async def test_error_result_text_still_surfaced(self, state, stream_state):
+        """Failed slash commands still surface their result text in the chunk."""
         with patch("prototype.acp.bridge.send") as mock_send:
             await process_sse_event(
                 state, stream_state, SESSION_ID, "SlashCommandResult",
                 slash_data(status="error", result="Command failed: oops"), {}
             )
 
-        second = get_update(mock_send, 1)
-        assert second["status"] == "failed"
+        update = get_update(mock_send, 0)
+        assert "Command failed: oops" in update["content"]["text"]

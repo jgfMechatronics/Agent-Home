@@ -5,9 +5,12 @@ when token limits are exceeded.
 """
 import logging
 
+from sqlalchemy import func, select
+
 from agent.types import AgentConfig, AgentDeps
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import deserialize_messages, load_messages
+from db.models import MessageRecord
 from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
 
 logger = logging.getLogger(__name__)
@@ -29,7 +32,7 @@ def is_compaction_needed(total_tokens: int | None, config: AgentConfig) -> bool:
     return total_tokens > config.soft_compaction_limit
 
 
-async def compact(deps: AgentDeps, total_tokens: int) -> None:
+async def compact(deps: AgentDeps, total_tokens: int) -> bool:
     """Advance context_window_start to reduce context size.
     
     Estimates system prompt tokens from character count, calculates average
@@ -50,7 +53,7 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
 
     # small context guard/avoid div by 0
     if len(messages) <= MIN_MESSAGES_AFTER_COMPACTION:
-        return
+        return False
 
     # TODO (low priority): we may eventually want a more sophisticated way to estiamte tokens, and some sort of 
     # check and loop on resulting in-context message token count to be more accurate if we find it necessary
@@ -58,7 +61,7 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     msg_tokens = total_tokens - sys_tokens
     avg_tokens_per_msg = msg_tokens / len(messages)
     if avg_tokens_per_msg <= 0:
-        return  # System prompt dominates token budget — can't estimate, skip this turn
+        return False  # System prompt dominates token budget — can't estimate, skip this turn
     # Target a fraction of the current message tokens rather than a fraction of the total limit.
     # This keeps compaction aggression constant as core memory grows — larger core means more frequent
     # compaction (fires sooner) but not more aggressive compaction (always retains the same fraction
@@ -67,7 +70,7 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     n_msg_to_keep = max(MIN_MESSAGES_AFTER_COMPACTION, int(target_msg_tokens / avg_tokens_per_msg))
 
     if n_msg_to_keep >= len(messages):
-        return
+        return False
 
     # Ensure tool call/return pairs are never split across the compaction boundary.
     # If the candidate start message is a ToolReturnPart or RetryPromptPart, include
@@ -82,9 +85,31 @@ async def compact(deps: AgentDeps, total_tokens: int) -> None:
     # so in practice this is at most an efficiency thing (turns compact into a no op if n_msg_to_keep == len(messages))
     # rather than a proper safety guard
     if n_msg_to_keep >= len(messages):
-        return
+        return False
 
     deps.context_window_start = messages[-n_msg_to_keep].seq_id
     deps.compaction_warning_fired = False  # Reset for next compaction cycle
     await compile_system_prompt(deps)
     await deps.commit_changes_refresh_agent_record()
+    return True
+
+
+async def clear_context(deps: AgentDeps) -> bool:
+    """Advance context_window_start to the next seq_id, giving the agent a fresh session.
+
+    Messages before the clear remain in the DB (retrievable, not deleted) but are
+    excluded from subsequent runs. The compaction warning flag is reset so a fresh
+    warning can fire when the new context grows.
+
+    Returns True if the pointer was advanced, False if there was nothing to clear.
+    """
+    result = await deps.session.execute(
+        select(func.max(MessageRecord.seq_id)).where(MessageRecord.agent_id == deps.agent_id)
+    )
+    max_seq_id = result.scalar()
+    if max_seq_id is not None and ((max_seq_id + 1) > deps.context_window_start):
+        deps.context_window_start = max_seq_id + 1
+        deps.compaction_warning_fired = False
+        await deps.commit_changes_refresh_agent_record()
+        return True
+    return False

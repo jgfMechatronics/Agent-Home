@@ -121,6 +121,32 @@ class TestReplaceFunctionCommonBehaviors:
         assert committed, "Function did not commit"
 
 
+class TestReplaceAgentConfig:
+    """Function-specific tests for replace_agent_config."""
+
+    @pytest.mark.parametrize("limit_delta,reset_expected", [
+        (1,  True),   # limit raised  → fresh warning needed for new uncovered zone
+        (0,  False),  # limit unchanged → no new uncovered zone
+        (-1, False),  # limit lowered  → compaction fires sooner, consolidation already covers it
+    ])
+    async def test_compaction_warning_reset_depends_on_limit_direction(
+        self,
+        session: AsyncSession,
+        agent_record,
+        agent_deps: AgentDeps,
+        limit_delta: int,
+        reset_expected: bool,
+    ):
+        """compaction_warning_fired is reset only when soft_compaction_limit is raised."""
+        agent_deps.compaction_warning_fired = True
+        new_limit = SAMPLE_AGENT_CONFIG.soft_compaction_limit + limit_delta
+        new_config = SAMPLE_AGENT_CONFIG.model_copy(update={"soft_compaction_limit": new_limit})
+
+        await replace_agent_config(agent_deps, new_config)
+
+        assert agent_deps.compaction_warning_fired is not reset_expected
+
+
 class TestReplaceSystemInstructions:
     """Function-specific tests for replace_system_instructions."""
 

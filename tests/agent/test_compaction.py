@@ -9,14 +9,14 @@ and advances context_window_start to retain the target fraction of current messa
 import logging
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart, RetryPromptPart
 
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
-from agent.compaction import compact, is_compaction_needed
+from agent.compaction import clear_context, compact, is_compaction_needed
 from agent.types import AgentConfig, AgentDeps
 from conftest import (
     SAMPLE_AGENT_CONFIG,
@@ -181,6 +181,21 @@ class TestCompactCommon(CompactTestBase):
         spy.assert_called_once_with(self.deps)
 
 
+class TestCompactReturnValue(CompactTestBase):
+    """compact() returns True when it advances the pointer, False when it's a no-op."""
+
+    async def test_returns_true_when_compaction_occurs(self, session: AsyncSession):
+        await self._setup(session, limit=500, target=0.5, msg_count=10, total_tokens=1100)
+        result = await compact(self.deps, total_tokens=self.total_tokens)
+        assert result is True
+
+    async def test_returns_false_when_context_too_small(self, session: AsyncSession):
+        """MIN_MESSAGES_AFTER_COMPACTION guard prevents compaction; compact returns False."""
+        await self._setup(session, limit=100, target=0.5, msg_count=2, total_tokens=1100)
+        result = await compact(self.deps, total_tokens=self.total_tokens)
+        assert result is False
+
+
 class TestCompactEdgeCases(CompactTestBase):
     """Tests for edge cases requiring per-test bespoke setup params"""
 
@@ -296,3 +311,79 @@ class TestCompactToolPairAtomicity:
         await session.refresh(data["agent"])
         await session.refresh(data["records"][5])
         assert data["agent"].context_window_start == data["records"][5].seq_id
+
+
+class TestClearContext:
+    """clear_context advances context_window_start past all existing messages."""
+
+    N_MESSAGES = 4
+
+    @pytest_asyncio.fixture
+    async def persist_some_messages(self, agent_deps: AgentDeps):
+        """Fixture that persists N_MESSAGES alternating messages for test setup."""
+        msgs = make_alternating_messages(self.N_MESSAGES)
+        records = await _persist_messages_load_records(agent_deps, msgs)
+        return records
+
+    async def test_old_messages_excluded_new_messages_visible_after_clear(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
+        """After clear_context, windowed load shows no old messages; new messages after clear are visible."""
+        result = await clear_context(agent_deps)
+
+        assert result is True
+
+        # Old messages excluded from windowed view
+        visible = await load_messages(session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
+        assert not visible
+
+        # New message added after clear IS visible in windowed view
+        new_msg = make_request("test message after clear")
+        await persist_messages(agent_deps, [new_msg], [])
+        visible = await load_messages(session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
+        assert len(visible) == 1
+
+    async def test_no_messages_is_noop_and_returns_false(self, agent_deps: AgentDeps):
+        """clear_context on an agent with no messages is a no-op and returns False."""
+        result = await clear_context(agent_deps)
+
+        assert result is False
+        assert agent_deps.context_window_start == 0
+
+    async def test_already_cleared_is_noop_and_returns_false(self, agent_deps: AgentDeps, persist_some_messages):
+        """Second /clear with no new messages since the first is a no-op."""
+        await clear_context(agent_deps)  # first clear advances pointer
+
+        pre_no_op_ctx_start = agent_deps.context_window_start
+        result = await clear_context(agent_deps)  # nothing new to clear
+
+        assert result is False
+        assert pre_no_op_ctx_start == agent_deps.context_window_start
+
+    async def test_resets_compaction_warning_fired(self, agent_deps: AgentDeps, persist_some_messages):
+        """clear_context resets compaction_warning_fired so a fresh warning can fire."""
+        agent_deps.compaction_warning_fired = True
+
+        await clear_context(agent_deps)
+
+        assert agent_deps.compaction_warning_fired is False
+
+    async def test_messages_remain_in_db(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
+        """Messages before the clear are preserved in the DB, not deleted."""
+        await clear_context(agent_deps)
+
+        all_records = await session.execute(
+            select(MessageRecord).where(MessageRecord.agent_id == agent_deps.agent_id)
+        )
+        assert len(all_records.scalars().all()) == self.N_MESSAGES
+
+    async def test_commits_changes(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
+        """clear_context commits so the new pointer survives a session expiry."""
+        committed = False
+
+        @event.listens_for(session.sync_session, "after_commit")
+        def on_commit(sess):
+            nonlocal committed
+            committed = True
+
+        await clear_context(agent_deps)
+
+        assert committed
