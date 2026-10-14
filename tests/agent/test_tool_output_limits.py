@@ -35,6 +35,10 @@ from agent.factory import TOOL_OUTPUT_SPILL_THRESHOLD_CHARS, _build_capabilities
 from agent.timestamping import add_timestamp_prefix
 from agent.types import AgentDeps
 
+# Stamp assertions compare against add_timestamp_prefix built at assert time —
+# freeze the clock so runner-stamp and expected-stamp can't straddle a second.
+pytestmark = pytest.mark.usefixtures("_frozen_stamp_clock")
+
 
 # --- Payload fixtures ---
 

@@ -49,6 +49,10 @@ from api.fastapi_deps import get_agent_and_deps
 from conftest import make_mock_agent, _make_mock_session, local_dummy_tool, assert_ModelMessage_list_eq
 from db.models import AgentRecord
 
+# Stamp assertions compare against add_timestamp_prefix built at assert time —
+# freeze the clock so runner-stamp and expected-stamp can't straddle a second.
+pytestmark = pytest.mark.usefixtures("_frozen_stamp_clock")
+
 # --- Module-level test data ---
 
 TOOL_CALL_PART = ToolCallPart(tool_name="memory_replace", args={"label": "notes"}, tool_call_id="call-1")

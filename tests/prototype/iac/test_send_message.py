@@ -29,6 +29,10 @@ import prototype.iac.send_message as iac_module
 # TODO: move to conftest once on a proper PR branch
 from tests.agent.test_runner import FunctionModelTestAgent, _PersistenceAndCancellationTestBase
 
+# Stamp assertions compare against add_timestamp_prefix built at assert time —
+# freeze the clock so runner-stamp and expected-stamp can't straddle a second.
+pytestmark = pytest.mark.usefixtures("_frozen_stamp_clock")
+
 
 class TestSendMessage:
     """send_message tool: inter-agent communication."""
