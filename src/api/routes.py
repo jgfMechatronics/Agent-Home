@@ -21,7 +21,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
-from memory.system_prompt_compilation import compile_system_prompt
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
 from agent.broadcast_streaming import BroadcastHub, RunErrorEvent, run_agent_with_broadcast
@@ -49,6 +48,7 @@ from memory.block_crud import (
     update_block,
     update_block_settings,
 )
+from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import load_messages
 
 
@@ -161,6 +161,20 @@ async def handle_message(
         logger.exception("Unexpected error in handle_message for agent %s", agent_id)
         await deps.session.rollback()
         yield map_to_sse(RunErrorEvent.from_exception(e))
+
+
+@router.post("/{agent_id}/recompile_system_prompt")
+async def recompile_system_prompt_route_handler(
+    agent_id: str,
+    deps: AgentDeps = Depends(get_agent_deps),
+) -> bool: # We may or may not want this to return a bool
+    """
+    TODO: This is temp just to be able to test out memory system functionality, we may not actually want this
+    if we do, need to design proper and unit test
+    """
+
+    await compile_system_prompt(deps)
+    return True
 
 
 @router.get("")
@@ -365,14 +379,6 @@ async def cancel_agent_run(
     if agent_app_state is None or not agent_app_state.lock.locked():
         raise HTTPException(status_code=409, detail=f"Agent {agent_id!r} has no active run")
     agent_app_state.cancel_requested.set() # If there was a previous unserviced cancellation request, no harm in setting again
-
-
-@router.post("/{agent_id}/recompile_system_prompt")
-async def recompile_system_prompt(agent_id: str, deps: AgentDeps = Depends(get_agent_deps)) -> dict:
-    """Recompile the system prompt from current memory blocks."""
-    await compile_system_prompt(deps)
-    await deps.commit_changes_refresh_agent_record()
-    return {"status": "ok"}
 
 
 @router.get("/{agent_id}/messages")
