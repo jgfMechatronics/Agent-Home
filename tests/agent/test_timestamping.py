@@ -11,10 +11,14 @@ import agent.timestamping
 from agent.timestamping import TZ_ENV_VAR, ToolReturnTimestamper, _now, _resolve_tz, add_timestamp_prefix
 
 
+# Frozen timestamp from conftest._frozen_stamp_clock (2026-10-10 12:00:00 UTC)
+FROZEN_STAMP = "⏰ [Oct 10, 2026 12:00:00 UTC]"
+
+
 class TestAddTimestampPrefix:
     def test_stamp_value_frozen_clock(self):
         """With the suite-wide frozen clock (conftest), the stamp is fully deterministic."""
-        assert add_timestamp_prefix("hello") == "⏰ [Oct 10, 2026 12:00:00 UTC]\nhello"
+        assert add_timestamp_prefix("hello") == f"{FROZEN_STAMP}\nhello"
 
     def test_empty_string_passthrough(self):
         """Empty strings (empty user prompts, empty tool returns) are not stamped."""
@@ -25,6 +29,15 @@ class TestToolReturnTimestamper:
     """Unit tests for the capability hook's gating. Real-hook-path behavior
     (production capabilities list, spill ordering) lives in test_tool_output_limits.py."""
 
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        """Create a fresh ToolReturnTimestamper for each test."""
+        self.cap = ToolReturnTimestamper()
+
+    async def run_hook(self, result):
+        """Helper to execute the hook with minimal boilerplate."""
+        return await self.cap.after_tool_execute(None, call=None, tool_def=None, args=None, result=result)
+
     @pytest.mark.parametrize(
         "result",
         [None, 42, 3.14, {"key": "value"}, ["a", "b"], {"nested": [1, 2]}],
@@ -33,37 +46,32 @@ class TestToolReturnTimestamper:
     async def test_non_string_results_pass_through_untouched(self, result):
         """Non-string results (structured data, multimodal parts) are never
         stringified or copied — the provider serialization layer owns them."""
-        cap = ToolReturnTimestamper()
-        out = await cap.after_tool_execute(None, call=None, tool_def=None, args=None, result=result)
+        out = await self.run_hook(result)
         assert out is result
 
     async def test_string_result_stamped(self):
         """String results get the timestamp header (frozen clock → deterministic)."""
-        cap = ToolReturnTimestamper()
-        out = await cap.after_tool_execute(None, call=None, tool_def=None, args=None, result="tool output")
-        assert out == "⏰ [Oct 10, 2026 12:00:00 UTC]\ntool output"
+        out = await self.run_hook("tool output")
+        assert out == f"{FROZEN_STAMP}\ntool output"
 
     async def test_empty_string_result_not_stamped(self):
         """Empty tool returns stay empty rather than becoming a bare stamp."""
-        cap = ToolReturnTimestamper()
-        out = await cap.after_tool_execute(None, call=None, tool_def=None, args=None, result="")
+        out = await self.run_hook("")
         assert out == ""
 
     async def test_tool_return_envelope_string_stamped(self):
         """Spilled results arrive wrapped in ToolReturn (handle metadata envelope);
         the stamp goes on return_value, the envelope and metadata survive intact."""
-        cap = ToolReturnTimestamper()
         wrapped = ToolReturn(return_value="stand-in text", metadata={"handle": "run/call.0"})
-        out = await cap.after_tool_execute(None, call=None, tool_def=None, args=None, result=wrapped)
+        out = await self.run_hook(wrapped)
         assert isinstance(out, ToolReturn)
-        assert out.return_value == "⏰ [Oct 10, 2026 12:00:00 UTC]\nstand-in text"
+        assert out.return_value == f"{FROZEN_STAMP}\nstand-in text"
         assert out.metadata == {"handle": "run/call.0"}, "envelope metadata must survive unstamped"
 
     async def test_tool_return_envelope_non_string_passthrough(self):
         """A ToolReturn with a non-string return_value passes through untouched."""
-        cap = ToolReturnTimestamper()
         wrapped = ToolReturn(return_value={"spilled": "dict"}, metadata=None)
-        out = await cap.after_tool_execute(None, call=None, tool_def=None, args=None, result=wrapped)
+        out = await self.run_hook(wrapped)
         assert out is wrapped
 
 
