@@ -89,7 +89,7 @@ class TestResolveTz:
 
         Note: legacy fixed-offset zones like 'EST' are NOT invalid to zoneinfo —
         they resolve (no DST, wrong half the year) and are the documented footgun;
-        the design just requires IANA names in practice.
+        IANA names are recommended, not enforced — 'EST' is the operator's mistake.
         """
         monkeypatch.setenv(TZ_ENV_VAR, "Not/AZone")
         with caplog.at_level(logging.ERROR):

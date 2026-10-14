@@ -27,8 +27,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Must be an IANA zone name (e.g. "America/New_York"), NOT a fixed offset —
-# fixed offsets (TZ=EST) are silently wrong half the year on DST transitions.
+# Should be an IANA zone name (e.g. "America/New_York"). Legacy fixed-offset
+# zones (TZ=EST) resolve without error but are wrong half the year on DST
+# transitions — recommended against, not rejected.
 TZ_ENV_VAR = "AGENT_HOME_TZ"
 
 
@@ -36,9 +37,11 @@ def _resolve_tz() -> ZoneInfo:
     """Resolve the display timezone from AGENT_HOME_TZ, defaulting to UTC.
 
     Pure: reads the env var at call time and always returns a valid zone — an
-    invalid name logs an error and falls back to UTC (the stamp is
-    self-describing, zone abbreviation included, so this never produces
-    silently-wrong times). Module-level `_tz_info` below captures the
+    unparseable name logs an error and falls back to UTC (the fallback is
+    self-describing, zone abbreviation included, so it never produces
+    silently-wrong times). Legacy fixed-offset zones like 'EST' resolve and
+    are used as-is — wrong half the year, but the operator's choice.
+    Module-level `_tz_info` below captures the
     resolution once at import; the env var must therefore be set before this
     module is first imported (same pattern as api.app's AGENT_HOME_DB_PATH).
     """
@@ -51,8 +54,9 @@ def _resolve_tz() -> ZoneInfo:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
         logger.error(
-            "Invalid %s=%r — falling back to UTC. Use an IANA zone name "
-            "(e.g. 'America/New_York'), not a fixed offset like 'EST'.",
+            "Invalid %s=%r — falling back to UTC. Prefer an IANA zone name "
+            "(e.g. 'America/New_York'); legacy fixed-offset zones like 'EST' "
+            "resolve but are wrong half the year.",
             TZ_ENV_VAR,
             name,
         )
