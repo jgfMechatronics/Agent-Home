@@ -1,6 +1,7 @@
 import hashlib
 import os
 import uuid
+from zoneinfo import ZoneInfo
 
 # Must be set before any import of api.app (which reads it at module level).
 # Conftest is imported first by pytest, making this the right place for it.
@@ -12,6 +13,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 import pytest_asyncio
+import time_machine
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
@@ -55,6 +57,23 @@ def mock_run_context(deps: AgentDeps):
     ctx = Mock(spec=RunContext)
     ctx.deps = deps
     return ctx
+
+
+FROZEN_NOW = datetime(2026, 10, 10, 12, 0, 0, tzinfo=ZoneInfo("UTC"))
+"""The frozen instant for timestamp tests. Importable so tests can do math on
+it (e.g. .astimezone(...)) when asserting on stamps in other zones."""
+
+
+@pytest.fixture
+def frozen_stamp_clock():
+    """Freeze the clock (time-machine) for timestamp determinism.
+
+    NOT autouse: some tests need real, incrementing timestamps. Modules/classes
+    that assert on stamped content opt in via
+    `pytestmark = pytest.mark.usefixtures("frozen_stamp_clock")`.
+    """
+    with time_machine.travel(FROZEN_NOW):
+        yield
 
 
 SAMPLE_AGENT_CONFIG_DATA = { "model_name": "anthropic:claude-sonnet-4-20250514",

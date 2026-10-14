@@ -14,6 +14,7 @@ from pydantic_ai.models.function import DeltaToolCall, DeltaToolCalls, FunctionM
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.runner import COMPACTION_RESUME_NOTICE, run_stateful_agent, is_compaction_needed as _real_is_compaction_needed
+from agent.timestamping import add_timestamp_prefix
 from agent.types import AgentAppState, AgentDeps
 from conftest import SAMPLE_AGENT_CONFIG, _make_mock_session, make_alternating_messages, mock_run_context, assert_ModelMessage_list_eq
 from db.models import AgentRecord
@@ -27,6 +28,10 @@ import prototype.iac.send_message as iac_module
 
 # TODO: move to conftest once on a proper PR branch
 from tests.agent.test_runner import FunctionModelTestAgent, _PersistenceAndCancellationTestBase
+
+# Stamp assertions compare against add_timestamp_prefix built at assert time —
+# freeze the clock so runner-stamp and expected-stamp can't straddle a second.
+pytestmark = pytest.mark.usefixtures("frozen_stamp_clock")
 
 
 class TestSendMessage:
@@ -398,9 +403,9 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
 
         expected = [
             # iter1: initial inter-agent message + step 1 tool call/return
-            ModelRequest(parts=[UserPromptPart(content=_format_inter_agent_message(
+            ModelRequest(parts=[UserPromptPart(content=add_timestamp_prefix(_format_inter_agent_message(
                 "sender-agent", "hello from sender"
-            ))]),
+            )))]),
             ModelResponse(parts=[FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
             ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
             # iter2: compaction resume notice + steps 2 and 3 tool call/return pairs
@@ -423,7 +428,7 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
             for msg in call.kwargs["messages"]
         ]
         a_expected = [
-            ModelRequest(parts=[UserPromptPart(content="send a message")]),
+            ModelRequest(parts=[UserPromptPart(content=add_timestamp_prefix("send a message"))]),
             ModelResponse(parts=[ToolCallPart(
                 tool_name="send_message",
                 args=_SenderTestAgent.SEND_MSG_ARGS,
