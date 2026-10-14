@@ -42,7 +42,11 @@ def _resolve_tz() -> ZoneInfo:
     resolution once at import; the env var must therefore be set before this
     module is first imported (same pattern as api.app's AGENT_HOME_DB_PATH).
     """
-    name = os.environ.get(TZ_ENV_VAR, "UTC")
+    name = os.environ.get(TZ_ENV_VAR, None)
+    if name is None:
+        logger.info("%s not set — timestamps default to UTC", TZ_ENV_VAR)
+        name = "UTC"
+
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError):
@@ -56,8 +60,6 @@ def _resolve_tz() -> ZoneInfo:
 
 
 _tz_info: ZoneInfo = _resolve_tz()
-if TZ_ENV_VAR not in os.environ:
-    logger.info("%s not set — timestamps default to UTC", TZ_ENV_VAR)
 
 
 def _now() -> datetime:
