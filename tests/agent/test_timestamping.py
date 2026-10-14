@@ -28,6 +28,15 @@ class TestAddTimestampPrefix:
         """Empty strings (empty user prompts, empty tool returns) are not stamped."""
         assert add_timestamp_prefix("") == ""
 
+    def test_stamp_zone_comes_from_tz_info(self, monkeypatch):
+        """add_timestamp_prefix reads _tz_info at call time — patching the
+        zone seam changes the stamp's zone. Frozen instant (FROZEN_NOW),
+        expressed in the patched zone via astimezone math."""
+        tokyo = ZoneInfo("Asia/Tokyo")
+        monkeypatch.setattr(agent.timestamping, "_tz_info", tokyo)
+        expected_ts = FROZEN_NOW.astimezone(tokyo).strftime("%b %d, %Y %H:%M:%S %Z")
+        assert add_timestamp_prefix("hello") == f"⏰ [{expected_ts}]\nhello"
+
 
 class TestToolReturnTimestamper:
     """Unit tests for the capability hook's gating. Real-hook-path behavior
@@ -100,12 +109,3 @@ class TestResolveTz:
             resolved = _resolve_tz()
         assert resolved == ZoneInfo("UTC")
         assert "AGENT_HOME_TZ" in caplog.text and "Not/AZone" in caplog.text
-
-    def test_stamp_zone_comes_from_tz_info(self, monkeypatch):
-        """add_timestamp_prefix reads _tz_info at call time — patching the
-        zone seam changes the stamp's zone. Frozen instant (FROZEN_NOW),
-        expressed in the patched zone via astimezone math."""
-        tokyo = ZoneInfo("Asia/Tokyo")
-        monkeypatch.setattr(agent.timestamping, "_tz_info", tokyo)
-        expected_ts = FROZEN_NOW.astimezone(tokyo).strftime("%b %d, %Y %H:%M:%S %Z")
-        assert add_timestamp_prefix("hello") == f"⏰ [{expected_ts}]\nhello"

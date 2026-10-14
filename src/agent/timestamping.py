@@ -41,9 +41,9 @@ def _resolve_tz() -> ZoneInfo:
     self-describing, zone abbreviation included, so it never produces
     silently-wrong times). Legacy fixed-offset zones like 'EST' resolve and
     are used as-is — wrong half the year, but the operator's choice.
-    Module-level `_tz_info` below captures the
-    resolution once at import; the env var must therefore be set before this
-    module is first imported (same pattern as api.app's AGENT_HOME_DB_PATH).
+    Module-level `_tz_info` below captures the resolution once at import;
+    the env var must therefore be set before this module is first imported
+    (same pattern as api.app's AGENT_HOME_DB_PATH).
     """
     name = os.environ.get(TZ_ENV_VAR, None)
     if name is None:

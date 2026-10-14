@@ -188,7 +188,7 @@ class TestSpill:
         assert PAYLOAD_MARKER.encode() in spill_file.read_bytes()
 
     @pytest.mark.parametrize("toolset_builder", TOOLSET_BUILDERS)
-    async def test_small_return_passes_through_untouched(self, agent_deps: AgentDeps, toolset_builder):
+    async def test_small_return_passes_through_unspilled(self, agent_deps: AgentDeps, toolset_builder):
         """A return under the threshold is the tool's return value, timestamp-stamped."""
         agent = _build_agent(
             [TOOL_CALL_STEP, COMPLETION_STEP], agent_deps, [toolset_builder(SMALL_RETURN)],
