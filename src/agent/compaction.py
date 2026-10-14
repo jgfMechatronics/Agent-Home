@@ -19,6 +19,33 @@ logger = logging.getLogger(__name__)
 MIN_MESSAGES_AFTER_COMPACTION = 4
 
 
+def _get_total_tokens_from_messages(messages: list[MessageRecord]) -> int:
+    """Extract total_tokens from the last ModelResponse in messages.
+    
+    Args:
+        messages: List of deserialized messages to search.
+    
+    Returns:
+        total_tokens from the last ModelResponse.
+    
+    Raises:
+        ValueError: If no ModelResponse found in messages.
+        RuntimeError: If ModelResponse.total_tokens is None.
+    """
+    last_response = next(
+        (m for m in reversed(messages) if m.type == "ModelResponse"),
+        None,
+    )
+    if last_response is None:
+        raise ValueError("No ModelResponse found in messages")
+    if last_response.total_tokens is None:
+        raise RuntimeError(
+            f"ModelResponse (seq_id={last_response.seq_id}) has total_tokens=None — "
+            "usage data missing; cannot calculate compaction target"
+        )
+    return last_response.total_tokens
+
+
 def is_compaction_needed(total_tokens: int | None, config: AgentConfig) -> bool:
     """Check if compaction should be triggered based on token count.
 
@@ -56,19 +83,11 @@ async def compact(deps: AgentDeps) -> bool:
     if len(messages) <= MIN_MESSAGES_AFTER_COMPACTION:
         return False
 
-    last_response = next(
-        (m for m in reversed(messages) if m.type == "ModelResponse"),
-        None,
-    )
-    if last_response is None:
+    try:
+        total_tokens = _get_total_tokens_from_messages(messages)
+    except ValueError:
         logger.warning("compact: no ModelResponse found in context — skipping compaction")
         return False
-    if last_response.total_tokens is None:
-        raise RuntimeError(
-            f"compact: ModelResponse (seq_id={last_response.seq_id}) has total_tokens=None — "
-            "usage data missing; cannot calculate compaction target"
-        )
-    total_tokens = last_response.total_tokens
 
     # TODO (low priority): we may eventually want a more sophisticated way to estimate tokens, and some sort of
     # check and loop on resulting in-context message token count to be more accurate if we find it necessary
