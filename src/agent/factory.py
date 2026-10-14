@@ -66,10 +66,16 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     # generation (e.g. a provider glitch that stops emitting stop tokens) runs unbounded.
     # 36864 = xhigh budget (32768) + 4096 answer room, mirroring pydantic-ai's own
     # min-room-after-thinking-budget logic; Anthropic requires max_tokens > budget.
+    # timeout (180s) caps how long pydantic-ai waits between HTTP chunks — pydantic-ai's
+    # default is 600s. For streaming responses this is an inter-chunk timeout, not a total
+    # run length: thinking deltas and content tokens stream continuously, resetting the
+    # clock, so 180s of silence means a genuine hang, not a slow run (e.g. an OpenRouter
+    # provider that accepted the request and never sends a byte).
     settings = ModelSettings(
         parallel_tool_calls=False,
         thinking=config.thinking_mode,
         max_tokens=36864,
+        timeout=180,
     )
 
     if isinstance(m, AnthropicModel):
