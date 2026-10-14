@@ -66,11 +66,6 @@ def _resolve_tz() -> ZoneInfo:
 _tz_info: ZoneInfo = _resolve_tz()
 
 
-def _now() -> datetime:
-    """Current time in the display timezone. Seam for deterministic tests."""
-    return datetime.now(_tz_info)
-
-
 def add_timestamp_prefix(text: str) -> str:
     """Prefix a non-empty string with the wall-clock timestamp header.
 
@@ -83,7 +78,7 @@ def add_timestamp_prefix(text: str) -> str:
     """
     if not text:
         return text
-    return f"⏰ [{_now():%b %d, %Y %H:%M:%S %Z}]\n{text}"
+    return f"⏰ [{datetime.now(_tz_info):%b %d, %Y %H:%M:%S %Z}]\n{text}"
 
 
 @dataclass

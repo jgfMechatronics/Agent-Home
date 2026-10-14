@@ -60,3 +60,8 @@ package = true
 
 [tool.pyright]
 extraPaths = ["src", "."]
+
+[dependency-groups]
+dev = [
+    "time-machine>=3.5.1",
+]

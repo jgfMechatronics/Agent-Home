@@ -11,10 +11,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, Mock
 
-import agent.timestamping
+import agent.timestamping  # noqa: F401 — imported for tests that monkeypatch its seams
 
 import pytest
 import pytest_asyncio
+import time_machine
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
@@ -60,19 +61,21 @@ def mock_run_context(deps: AgentDeps):
     return ctx
 
 
-@pytest.fixture(autouse=True)
-def _frozen_stamp_clock(monkeypatch):
-    """Freeze timestamp injection (agent/timestamping.py) for determinism.
+FROZEN_NOW = datetime(2026, 10, 10, 12, 0, 0, tzinfo=ZoneInfo("UTC"))
+"""The frozen instant for timestamp tests. Importable so tests can do math on
+it (e.g. .astimezone(...)) when asserting on stamps in other zones."""
 
-    All tests see stamps as of a fixed UTC moment. Tests asserting persisted
-    user-message content build expected values with add_timestamp_prefix(...)
-    itself, so the stamp format is never duplicated in expectations.
+
+@pytest.fixture
+def _frozen_stamp_clock():
+    """Freeze the clock (time-machine) for timestamp determinism.
+
+    NOT autouse: some tests need real, incrementing timestamps. Modules/classes
+    that assert on stamped content opt in via
+    `pytestmark = pytest.mark.usefixtures("_frozen_stamp_clock")`.
     """
-    monkeypatch.setattr(
-        agent.timestamping,
-        "_now",
-        lambda: datetime(2026, 10, 10, 12, 0, 0, tzinfo=ZoneInfo("UTC")),
-    )
+    with time_machine.travel(FROZEN_NOW):
+        yield
 
 
 SAMPLE_AGENT_CONFIG_DATA = { "model_name": "anthropic:claude-sonnet-4-20250514",

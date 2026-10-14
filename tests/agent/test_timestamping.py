@@ -1,14 +1,18 @@
 """Tests for agent/timestamping.py — wall-clock stamp injection."""
 
 import logging
-from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic_ai.messages import ToolReturn
 
 import agent.timestamping
-from agent.timestamping import TZ_ENV_VAR, ToolReturnTimestamper, _now, _resolve_tz, add_timestamp_prefix
+from agent.timestamping import TZ_ENV_VAR, ToolReturnTimestamper, _resolve_tz, add_timestamp_prefix
+
+from conftest import FROZEN_NOW
+
+# Stamp assertions are deterministic — this module opts into the frozen clock.
+pytestmark = pytest.mark.usefixtures("_frozen_stamp_clock")
 
 
 # Frozen timestamp from conftest._frozen_stamp_clock (2026-10-10 12:00:00 UTC)
@@ -97,8 +101,11 @@ class TestResolveTz:
         assert resolved == ZoneInfo("UTC")
         assert "AGENT_HOME_TZ" in caplog.text and "Not/AZone" in caplog.text
 
-    def test_now_reads_module_level_tz_info(self, monkeypatch):
-        """_now() reads _tz_info (resolved once at import). The test seam is
-        patching the module attribute — setenv after import is too late."""
-        monkeypatch.setattr(agent.timestamping, "_tz_info", ZoneInfo("Asia/Tokyo"))
-        assert _now().utcoffset() == timedelta(hours=9)  # Tokyo has no DST
+    def test_stamp_zone_comes_from_tz_info(self, monkeypatch):
+        """add_timestamp_prefix reads _tz_info at call time — patching the
+        zone seam changes the stamp's zone. Frozen instant (FROZEN_NOW),
+        expressed in the patched zone via astimezone math."""
+        tokyo = ZoneInfo("Asia/Tokyo")
+        monkeypatch.setattr(agent.timestamping, "_tz_info", tokyo)
+        expected_ts = FROZEN_NOW.astimezone(tokyo).strftime("%b %d, %Y %H:%M:%S %Z")
+        assert add_timestamp_prefix("hello") == f"⏰ [{expected_ts}]\nhello"
