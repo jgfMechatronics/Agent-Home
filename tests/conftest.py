@@ -1,6 +1,7 @@
 import hashlib
 import os
 import uuid
+from zoneinfo import ZoneInfo
 
 # Must be set before any import of api.app (which reads it at module level).
 # Conftest is imported first by pytest, making this the right place for it.
@@ -9,6 +10,8 @@ os.environ.setdefault("AGENT_HOME_DB_PATH", os.path.expanduser("~/.agent-home_py
 from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, Mock
+
+import agent.timestamping
 
 import pytest
 import pytest_asyncio
@@ -65,10 +68,6 @@ def _frozen_stamp_clock(monkeypatch):
     user-message content build expected values with add_timestamp_prefix(...)
     itself, so the stamp format is never duplicated in expectations.
     """
-    from zoneinfo import ZoneInfo
-
-    import agent.timestamping
-
     monkeypatch.setattr(
         agent.timestamping,
         "_now",
