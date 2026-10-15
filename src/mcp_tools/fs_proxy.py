@@ -19,8 +19,11 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from fastmcp.server import create_proxy
+from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.transforms import ToolTransform
 from fastmcp.tools.tool_transform import ToolTransformConfig
+
+from mcp_tools.cc_result_format import format_cc_tool_result
 
 if TYPE_CHECKING:
     from fastmcp.server.providers.proxy import FastMCPProxy
@@ -67,6 +70,33 @@ async def _warmup_lifespan(server: "FastMCPProxy"):
     yield
 
 
+class _CCResultFormatMiddleware(Middleware):
+    """Rewrite claude mcp serve's JSON tool results into CC-native text.
+
+    Serve serializes results as JSON objects; CC's own agents see plain
+    strings. The formatter (cc_result_format) maps between them — pure
+    function, defensive pass-through on anything unexpected. Only single
+    text-content results are candidates; anything richer passes untouched.
+    """
+
+    async def on_call_tool(
+        self,
+        context: "MiddlewareContext",
+        call_next,
+    ):
+        result = await call_next(context)
+        content = result.content
+        if (
+            len(content) == 1
+            and getattr(content[0], "type", None) == "text"
+        ):
+            text = content[0].text
+            formatted = format_cc_tool_result(context.message.name, text, result.is_error)
+            if formatted != text:
+                content[0].text = formatted
+        return result
+
+
 def create_fs_proxy(env: dict[str, str] | None = None):
     """Create a FastMCP proxy for the Claude Code MCP tool server.
 
@@ -93,6 +123,7 @@ def create_fs_proxy(env: dict[str, str] | None = None):
         lifespan=_warmup_lifespan,
     )
     proxy.enable(names=_ALLOWED_TOOLS, only=True)
+    proxy.add_middleware(_CCResultFormatMiddleware())
     proxy.add_transform(ToolTransform({
         "Bash": ToolTransformConfig(
             description=_BASH_DESCRIPTION,
