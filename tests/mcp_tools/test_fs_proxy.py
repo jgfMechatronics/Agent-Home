@@ -45,7 +45,7 @@ class TestCreateFsProxy:
         # Verify create_proxy was called with config containing our env
         mock_create_proxy.assert_called_once()
         config_arg = mock_create_proxy.call_args[0][0]
-        assert config_arg["mcpServers"]["desktop-commander"]["env"] == test_env
+        assert config_arg["mcpServers"]["claude-code"]["env"] == test_env
 
     def test_no_env_key_when_none(self, mocker):
         """Verify env key is omitted from config when no env passed."""
@@ -57,4 +57,31 @@ class TestCreateFsProxy:
 
         mock_create_proxy.assert_called_once()
         config_arg = mock_create_proxy.call_args[0][0]
-        assert "env" not in config_arg["mcpServers"]["desktop-commander"]
+        assert "env" not in config_arg["mcpServers"]["claude-code"]
+
+    def test_backend_is_claude_code_serve(self, mocker):
+        """The proxied backend must be `claude mcp serve` — the pure tool server,
+        not the agent-loop wrapper."""
+        mock_create_proxy = mocker.patch("mcp_tools.fs_proxy.create_proxy")
+        mock_create_proxy.return_value = mocker.MagicMock()
+
+        create_fs_proxy()
+
+        config_arg = mock_create_proxy.call_args[0][0]
+        server_config = config_arg["mcpServers"]["claude-code"]
+        assert server_config["command"] == "claude"
+        assert server_config["args"] == ["mcp", "serve"]
+
+    def test_allowlist_enforced(self, mocker):
+        """Only the allowlisted CC tools are exposed — the CC tool surface includes
+        session/account-bound tools that must not leak through."""
+        mock_create_proxy = mocker.patch("mcp_tools.fs_proxy.create_proxy")
+        mock_proxy = mocker.MagicMock()
+        mock_create_proxy.return_value = mock_proxy
+
+        create_fs_proxy()
+
+        mock_proxy.enable.assert_called_once()
+        kwargs = mock_proxy.enable.call_args.kwargs
+        assert kwargs["names"] == {"Read", "Edit", "Write", "Bash"}
+        assert kwargs["only"] is True
