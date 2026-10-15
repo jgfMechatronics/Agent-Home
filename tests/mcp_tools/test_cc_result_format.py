@@ -25,18 +25,29 @@ def _read_json(content: str, start_line: int = 1) -> str:
 
 class TestRead:
     def test_numbered_lines_with_trailing_newline(self):
-        """[doc] file `alpha\\nbeta\\ngamma\\n` renders as numbered lines incl. final empty."""
+        """[doc] file `alpha\\nbeta\\ngamma\\n` renders as numbered lines incl. final empty,
+        under a file header (structural stamp/content separation)."""
         assert (
             format_cc_tool_result("Read", _read_json("alpha\nbeta\ngamma\n"), False)
-            == "1\talpha\n2\tbeta\n3\tgamma\n4\t"
+            == "[/x/file.txt — lines 1-4 of 4]\n1\talpha\n2\tbeta\n3\tgamma\n4\t"
         )
 
     def test_partial_read_keeps_absolute_numbering(self):
-        """[doc] offset: 2, limit: 1 gives `2\\tbeta` — startLine carries the absolute line."""
-        assert format_cc_tool_result("Read", _read_json("beta", start_line=2), False) == "2\tbeta"
+        """[doc] offset: 2, limit: 1 gives `2\\tbeta` — startLine carries the absolute line.
+        The header reports the partial window against the file total."""
+        payload = json.dumps({
+            "type": "text",
+            "file": {"filePath": "/x/file.txt", "content": "beta", "numLines": 1,
+                     "startLine": 2, "totalLines": 40},
+        })
+        assert format_cc_tool_result("Read", payload, False) == (
+            "[/x/file.txt — lines 2-2 of 40]\n2\tbeta"
+        )
 
     def test_file_without_trailing_newline(self):
-        assert format_cc_tool_result("Read", _read_json("one\ntwo"), False) == "1\tone\n2\ttwo"
+        assert format_cc_tool_result("Read", _read_json("one\ntwo"), False) == (
+            "[/x/file.txt — lines 1-2 of 2]\n1\tone\n2\ttwo"
+        )
 
     def test_missing_file_error_passes_through(self):
         """[doc] Read errors arrive as isError text already in native form."""
