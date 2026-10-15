@@ -39,7 +39,13 @@ def format_cc_tool_result(tool_name: str, text: str, is_error: bool) -> str:
 
 
 def _format_read(payload: dict) -> str:
-    """Render file content as numbered lines: `<n>\\t<line>`, 1-based absolute.
+    """Numbered lines with a one-line file header: `<n>\\t<line>`, 1-based absolute.
+
+    The header (`[/path — lines X-Y of Z]`) separates the (stamped) tool-return
+    metadata from file content structurally — content lines could themselves be
+    timestamps (logs, transcripts), so position alone can't disambiguate. It
+    also carries partial-read context the numbered format loses (which file,
+    what window of the total).
 
     A file ending with a newline produces a final empty line (`<n>\\t`),
     matching native. Partial reads keep absolute numbering via `startLine`.
@@ -49,9 +55,14 @@ def _format_read(payload: dict) -> str:
         return payload.get("content", "") if isinstance(payload, dict) else ""
     content = file_info.get("content", "")
     start_line = file_info.get("startLine", 1)
-    return "\n".join(
+    num_lines = len(content.split("\n"))
+    total_lines = file_info.get("totalLines", num_lines)
+    file_path = file_info.get("filePath", "<unknown>")
+    header = f"[{file_path} — lines {start_line}-{start_line + num_lines - 1} of {total_lines}]"
+    numbered = "\n".join(
         f"{start_line + i}\t{line}" for i, line in enumerate(content.split("\n"))
     )
+    return f"{header}\n{numbered}"
 
 
 def _format_write(payload: dict) -> str:
