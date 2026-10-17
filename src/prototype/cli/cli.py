@@ -12,7 +12,7 @@ Usage:
 Commands:
     create [name]     Create a new agent (interactive config wizard)
     create -q <name>  Create agent with defaults (skip wizard)
-    use <agent_id>    Set active agent for subsequent commands
+    use <name>        Set active agent by name (or ID)
     chat <message>    Send message to active agent (streaming)
     history [-b]      View message history (--brief for condensed)
     info              View agent info
@@ -210,7 +210,7 @@ async def _edit_and_put(
         success_message: Message to display on successful update
     """
     if not state.active_agent_id:
-        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        output_error(state, "No active agent. Use '/use <name>' first.")
         return
     
     if state.headless:
@@ -419,27 +419,30 @@ async def cmd_create(state: CLIState, client: httpx.AsyncClient, args: list[str]
 
 
 async def cmd_use(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
-    """Set active agent."""
+    """Set active agent by name or ID."""
     if not args:
-        output_error(state, "Usage: use <agent_id>")
+        output_error(state, "Usage: use <agent_name_or_id>")
         return
     
-    agent_id = args[0]
+    identifier = args[0]
     
-    # Verify agent exists
+    # Try by name first, fall back to by ID
     try:
-        response = await client.get(f"{state.server_url}/agents/{agent_id}")
+        response = await client.get(f"{state.server_url}/agents/by-name/{identifier}")
+        if response.status_code == 404:
+            # Not found by name, try as ID
+            response = await client.get(f"{state.server_url}/agents/{identifier}")
         response.raise_for_status()
         data = response.json()
         
-        state.active_agent_id = agent_id
+        state.active_agent_id = data["id"]
         if state.headless:
-            output_json(state, {"status": "ok", "agent_id": agent_id})
+            output_json(state, {"status": "ok", "agent_id": data["id"]})
         else:
-            output(state, f"Now using agent: {data['name']} ({agent_id[:8]}...)")
+            output(state, f"Now using agent: {data['name']} ({data['id'][:8]}...)")
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            output_error(state, f"Agent not found: {agent_id}")
+            output_error(state, f"Agent not found: {identifier}")
         else:
             output_error(state, f"HTTP {e.response.status_code}: {e.response.text}")
     except httpx.RequestError as e:
@@ -449,7 +452,7 @@ async def cmd_use(state: CLIState, client: httpx.AsyncClient, args: list[str]) -
 async def cmd_chat(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """Send a message and stream the response."""
     if not state.active_agent_id:
-        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        output_error(state, "No active agent. Use '/use <name>' first.")
         return
     
     if not args:
@@ -659,7 +662,7 @@ async def process_sse_event(
 async def cmd_history(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """View message history. Use --brief for condensed output (saves tokens)."""
     if not state.active_agent_id:
-        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        output_error(state, "No active agent. Use '/use <name>' first.")
         return
     
     brief_mode = "--brief" in args or "-b" in args
@@ -752,7 +755,7 @@ async def cmd_history(state: CLIState, client: httpx.AsyncClient, args: list[str
 async def cmd_info(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """View agent info."""
     if not state.active_agent_id:
-        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        output_error(state, "No active agent. Use '/use <name>' first.")
         return
     
     try:
@@ -779,7 +782,7 @@ async def cmd_info(state: CLIState, client: httpx.AsyncClient, args: list[str]) 
 async def cmd_list_blocks(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """List memory block names."""
     if not state.active_agent_id:
-        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        output_error(state, "No active agent. Use '/use <name>' first.")
         return
     
     try:
@@ -805,7 +808,7 @@ async def cmd_list_blocks(state: CLIState, client: httpx.AsyncClient, args: list
 async def cmd_show_blocks(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """View core memory blocks with content."""
     if not state.active_agent_id:
-        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        output_error(state, "No active agent. Use '/use <name>' first.")
         return
     
     try:
@@ -866,7 +869,7 @@ async def cmd_config(state: CLIState, client: httpx.AsyncClient, args: list[str]
 async def cmd_newblock(state: CLIState, client: httpx.AsyncClient, args: list[str]) -> None:
     """Create a new memory block for the active agent."""
     if not state.active_agent_id:
-        output_error(state, "No active agent. Use '/use <agent_id>' first.")
+        output_error(state, "No active agent. Use '/use <name>' first.")
         return
     
     if state.headless:
