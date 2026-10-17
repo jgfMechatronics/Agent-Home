@@ -14,6 +14,15 @@ async def get_agent_record(session: AsyncSession, agent_id: str) -> AgentRecord 
     return await session.get(AgentRecord, agent_id)
 
 
+async def get_agent_record_by_name(session: AsyncSession, name: str) -> AgentRecord | None:
+    """Load agent by name. Returns None if not found.
+
+    Efficient single-row lookup — name has a unique constraint in the schema.
+    """
+    result = await session.execute(select(AgentRecord).where(AgentRecord.name == name))
+    return result.scalar_one_or_none()
+
+
 async def get_all_agents(session: AsyncSession) -> list[AgentRecord]:
     """Return all agents on the server."""
     result = await session.execute(select(AgentRecord))
