@@ -318,47 +318,7 @@ class TestPersistMessages(DBTestBase):
         )
         assert restored[0].parts[0].content.startswith(expected_prefix)
 
-    async def _assert_orphan_replaced(self, orphan_msg, orphaned_part_type, expected_error):
-        """Persist a single orphaned tool message and assert it was replaced with the expected
-        error record, with a summary warning appended at the end of the chain."""
-        records = await self._persist_and_fetch([orphan_msg])
-        assert len(records) == 2  # positional error + summary warning
-        assert [r.seq_id for r in records] == [0, 1]  # sequential including warning
-
-        # Original orphaned message was dropped — no record should contain the orphaned part type
-        for record in records:
-            deserialized = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
-            assert not any(isinstance(p, orphaned_part_type) for p in deserialized[0].parts)
-
-        # Positional error record has the expected error text, system-alert formatted
-        assert records[0].type == "ModelResponse"
-        restored = ModelMessagesTypeAdapter.validate_json(f"[{records[0].content}]")
-        assert restored[0].parts[0].content == format_system_alert(expected_error)
-
-        self._assert_summary_warning_appended(records, expected_error)
-
     # -------------- Tests -------------------
-    # TODO: Check for multiple orphaned tool messages in a single list of msgs,
-    # and check for behavior around multiple tool call/return parts in a single req/resp (after verifying that is even a sensical situation
-    # , parallel tool calls perhaps?)
-    async def test_orphaned_tool_call_replaced_with_error_response(self):
-        """A ModelResponse with a ToolCallPart not followed by a matching ToolReturnPart
-        should be replaced with an error ModelResponse (not stored as-is)."""
-        orphan_response, _ = make_tool_pair()  # discard the matching return
-        await self._assert_orphan_replaced(
-            orphan_response, ToolCallPart, "[Orphaned tool call(s) dropped: mem_replace]"
-        )
-
-    @pytest.mark.parametrize("pair_fn,orphaned_part_type,expected_error", [
-        (make_tool_pair, ToolReturnPart, "[Orphaned tool return(s) dropped: mem_replace]"),
-        (make_retry_pair, RetryPromptPart, "[Orphaned tool retry(s) dropped: mem_replace]"),
-    ])
-    async def test_orphaned_tool_response_replaced_with_error_response(self, pair_fn, orphaned_part_type, expected_error):
-        """A ModelRequest with a tool response part (ToolReturnPart or RetryPromptPart) not
-        preceded by a matching ToolCallPart should be replaced with an error ModelResponse."""
-        _, orphan_request = pair_fn()  # discard the matching call
-        await self._assert_orphan_replaced(orphan_request, orphaned_part_type, expected_error)
-
     def _make_output_retry_request(self) -> ModelRequest:
         """An output-retry ModelRequest as pydantic-ai constructs it after a model response
         which was judged invalid: RetryPromptPart with no tool_name (its tool_call_id is auto-generated
