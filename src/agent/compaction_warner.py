@@ -69,8 +69,13 @@ class CompactionWarner(AbstractCapability[AgentDeps]):
             #
             # Known issue: A crash between this commit and the warning being delivered/persisted
             # (next turn) would result in the flag being set but the agent never seeing the
-            # warning. This is an acceptable tradeoff — the crash window is narrow, and the
-            # consequence is one missed consolidation opportunity, not data loss.
+            # warning. Acceptable tradeoff — narrow window, consequence is one missed
+            # consolidation opportunity, not data loss.
+            #
+            # Future mitigation if needed: Derive "warned this cycle" from message history
+            # instead of the DB flag. Stamp warning with context_window_start as cycle marker,
+            # check ctx.messages + ctx.pending_messages for matching marker. Would eliminate
+            # the crash window entirely but adds complexity.
             ctx.deps.compaction_warning_fired = True
             await ctx.deps.commit_changes_refresh_agent_record()
             
