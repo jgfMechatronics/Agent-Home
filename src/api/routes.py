@@ -20,7 +20,15 @@ from pydantic_ai import Agent, AgentRunResultEvent
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.crud import agent_exists, create_agent_record, get_agent_record, get_all_agents, replace_agent_config, replace_system_instructions
+from agent.crud import (
+    agent_exists,
+    create_agent_record,
+    get_agent_record,
+    get_agent_record_by_name,
+    get_all_agents,
+    replace_agent_config,
+    replace_system_instructions,
+)
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
 from agent.broadcast_streaming import BroadcastHub, RunErrorEvent, run_agent_with_broadcast
@@ -83,10 +91,18 @@ def map_to_sse(event: Any) -> ServerSentEvent:
 
 
 async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
-    """Load agent record, raising 404 if not found."""
+    """Load agent record by ID, raising 404 if not found."""
     record = await get_agent_record(session, agent_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Agent {agent_id!r} not found")
+    return record
+
+
+async def _get_agent_record_by_name_or_404(session: AsyncSession, agent_name: str) -> Any:
+    """Load agent record by name, raising 404 if not found."""
+    record = await get_agent_record_by_name(session, agent_name)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Agent with name {agent_name!r} not found")
     return record
 
 
@@ -251,6 +267,16 @@ async def get_agent_info(
 ) -> AgentMetadataResponse:
     """Return metadata for an existing agent."""
     record = await _get_agent_record_or_404(session, agent_id)
+    return AgentMetadataResponse.from_record(record)
+
+
+@router.get("/by-name/{agent_name}")
+async def get_agent_info_by_name(
+    agent_name: str,
+    session: AsyncSession = Depends(get_session_dep),
+) -> AgentMetadataResponse:
+    """Return metadata for an agent by name."""
+    record = await _get_agent_record_by_name_or_404(session, agent_name)
     return AgentMetadataResponse.from_record(record)
 
 
