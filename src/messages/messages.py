@@ -21,7 +21,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
-    ToolCallPart,
     repair_messages,
 )
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -217,10 +216,10 @@ async def persist_messages(
     Returns the last non-None total_tokens seen across all messages, or None if no usage data was found.
 
     Pre-processing:
-    - Orphaned tool calls/returns (unmatched ToolCallPart or ToolReturnPart) are replaced with an error ModelResponse.
+    - repair_messages() is called to synthesize ToolReturnParts for any orphaned tool calls.
     - Serialization failures inject an error ModelResponse in place of the bad message.
-    - Both orphan replacements and serialization failures append a summary warning at the END of
-      the chain (referencing the original message timestamp) so errors aren't buried in long histories.
+    - Serialization failures append a summary warning at the END of the chain
+      (referencing the original message timestamp) so errors aren't buried in long histories.
     """
     if not messages:
         return None
