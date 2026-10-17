@@ -50,9 +50,6 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     ModelSettings with the unified 'thinking' field, which pydantic-ai maps
     to each provider's native reasoning parameter.
 
-    parallel_tool_calls=False is applied for all providers: our orphan remover
-    is not compatible with parallel tool calls.
-
     max_tokens (36864) bounds output for all providers, capping degenerate
     generation (provider glitch with no stop token) instead of running away,
     while exceeding every thinking level's budget (Anthropic requires
@@ -73,7 +70,6 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     # clock, so 180s of silence means a genuine hang, not a slow run (e.g. an OpenRouter
     # provider that accepted the request and never sends a byte).
     settings = ModelSettings(
-        parallel_tool_calls=False,
         thinking=config.thinking_mode,
         max_tokens=36864,
         timeout=180,

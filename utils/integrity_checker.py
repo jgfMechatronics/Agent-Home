@@ -18,7 +18,7 @@ from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequ
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 from db.models import MessageRecord
-from messages.messages import load_messages, deserialize_messages, is_valid_msg_pair, is_system_alert
+from messages.messages import load_messages, deserialize_messages, is_system_alert
 from common.constants import INTEGRITY_LOCKFILE_NAME
 
 
@@ -356,18 +356,35 @@ def _check_for_empty_content(records: Sequence[MessageRecord]) -> list[Integrity
     ]
 
 
+def _is_valid_msg_pair(response_msg: ModelMessage | None, request_msg: ModelMessage | None) -> bool:
+    """True if response_msg/request_msg form a valid adjacent ModelResponse/ModelRequest tool pair.
+
+    Requires response_msg to have ToolCallPart(s) and request_msg to have matching
+    ToolReturnPart(s)/RetryPromptPart(s) with the same tool_call_ids.
+    RetryPromptParts without a tool_name (output retries) are excluded from id comparison.
+    """
+    if not isinstance(response_msg, ModelResponse) or not isinstance(request_msg, ModelRequest):
+        return False
+    call_ids = {p.tool_call_id for p in response_msg.parts if isinstance(p, ToolCallPart)}
+    return_ids = {
+        p.tool_call_id
+        for p in request_msg.parts
+        if isinstance(p, ToolReturnPart) or (isinstance(p, RetryPromptPart) and p.tool_name is not None)
+    }
+    return call_ids == return_ids
+
+
 def _check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: Sequence[ModelMessage]) -> list[IntegrityIssue]:
     """Check that every ToolCallPart has a matching ToolReturnPart or RetryPromptPart, and vice versa.
 
     Uses adjacency-based pairing: a tool call must be immediately followed by its return, and
-    a tool return must be immediately preceded by its call. Mirrors the sanitization logic in
-    persist_messages._replace_orphaned_tool_messages.
+    a tool return must be immediately preceded by its call.
     """
     issues: list[IntegrityIssue] = []
     for i, (record, msg) in enumerate(zip(records, messages)):
         if isinstance(msg, ModelResponse) and any(isinstance(p, ToolCallPart) for p in msg.parts):
             next_msg = messages[i + 1] if i + 1 < len(messages) else None
-            if not is_valid_msg_pair(msg, next_msg):
+            if not _is_valid_msg_pair(msg, next_msg):
                 issues.append(IntegrityIssue(
                     check_type="orphaned_tool_call",
                     severity=ERROR,
@@ -376,7 +393,7 @@ def _check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: 
                 ))
         elif isinstance(msg, ModelRequest) and any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in msg.parts):
             prev_msg = messages[i - 1] if i > 0 else None
-            if not is_valid_msg_pair(prev_msg, msg):
+            if not _is_valid_msg_pair(prev_msg, msg):
                 issues.append(IntegrityIssue(
                     check_type="orphaned_tool_return",
                     severity=ERROR,

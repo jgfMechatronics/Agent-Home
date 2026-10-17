@@ -21,9 +21,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
-    ToolCallPart,
-    ToolReturnPart,
-    RetryPromptPart,
+    repair_messages,
 )
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.tools import ToolDefinition
@@ -57,97 +55,6 @@ def is_system_alert(text: str) -> bool:
     """Check if text was formatted by format_system_alert."""
     return text.startswith(f"<{_SYSTEM_ALERT_TEXT}>") and text.endswith(f"</{_SYSTEM_ALERT_TEXT}>")
 
-
-def _make_orphan_replacement(
-    msg: ModelMessage, part_type: type
-) -> tuple[tuple[datetime, str], ModelResponse]:
-    """Build the error entry and replacement ModelResponse for an orphaned tool message.
-
-    part_type should be ToolCallPart, ToolReturnPart, or RetryPromptPart.
-    Returns (error_entry, error_response) ready to append to errors and sanitized_msgs.
-    """
-    match part_type.__name__:
-        case "ToolCallPart":
-            label = "call"
-        case "ToolReturnPart":
-            label = "return"
-        case "RetryPromptPart":
-            label = "retry"
-        case unexpected:
-            label = f"part of unexpected type {unexpected}"
-
-    # RetryPromptPart.tool_name may be None — filter to avoid join errors
-    tool_names = [p.tool_name for p in msg.parts if isinstance(p, part_type) and p.tool_name is not None]
-    error_text = f"[Orphaned tool {label}(s) dropped: {', '.join(tool_names)}]"
-    return (utcnow(), error_text), ModelResponse(parts=[TextPart(content=format_system_alert(error_text))])
-
-
-def is_valid_msg_pair(response_msg: ModelMessage | None, request_msg: ModelMessage | None) -> bool:
-    """True if response_msg/request_msg form a valid adjacent ModelResponse/ModelRequest pair.
-
-    For pairs with tool parts, requires response_msg to be a ModelResponse with ToolCallPart(s)
-    and request_msg a ModelRequest whose ToolReturnPart(s)/RetryPromptPart(s) share those exact
-    tool_call_ids (every call answered, every return answers a call). Both ToolReturnPart and
-    RetryPromptPart are valid responses to a ToolCallPart.
-
-    RetryPromptParts without a tool_name (output retries — pydantic-ai inserts these after
-    responses it judges invalid; their tool_call_id is a synthetic auto-generated value that
-    matches no real tool call) don't respond to any tool call and are excluded from the id
-    comparison, so a no-tool-call Response followed by an output-retry Request is a valid pair.
-    """
-    if not isinstance(response_msg, ModelResponse) or not isinstance(request_msg, ModelRequest):
-        return False
-    call_ids = {p.tool_call_id for p in response_msg.parts if isinstance(p, ToolCallPart)}
-    return_ids = {
-        p.tool_call_id
-        for p in request_msg.parts
-        if isinstance(p, ToolReturnPart) or (isinstance(p, RetryPromptPart) and p.tool_name is not None)
-    }
-    return call_ids == return_ids
-
-
-def _replace_orphaned_tool_messages(
-    messages: list[ModelMessage],
-) -> tuple[list[ModelMessage], list[tuple[datetime, str]]]:
-    """Replace orphaned tool calls and returns with error ModelResponses.
-
-    - Orphaned call: a ModelResponse with ToolCallPart(s) not immediately followed by
-      a ModelRequest with matching ToolReturnPart(s).
-    - Orphaned return: a ModelRequest with ToolReturnPart(s) or tool-retry RetryPromptPart(s)
-      not immediately preceded by a ModelResponse with matching ToolCallPart(s).
-    - Output retries (RetryPromptPart with no tool_name) are feedback on an invalid response,
-      not responses to tool calls, so they never count as orphans and pass through unchanged
-      (see is_valid_msg_pair).
-
-    Returns (processed_messages, errors) where errors is a list of (original_ts, error_text)
-    pairs suitable for summary warning appending at end of message chain in persist_messages.
-
-    TODO: This algorithm is rather inefficient and a bit confusing
-    The two cases could probably be commonized further but that doesn't solve touching every element on the list
-    It also checks that every tool call has a return and every tool return has a call which is redundant. 
-    It also cannot properly handle multiple tool parts in a single msg (parallel calls?)
-    Def a better way to do this.
-    """
-    sanitized_msgs: list[ModelMessage] = []
-    errors: list[tuple[datetime, str]] = []
-    for i, msg in enumerate(messages):
-        if isinstance(msg, ModelResponse) and any(isinstance(p, ToolCallPart) for p in msg.parts):
-            next_msg = messages[i + 1] if i + 1 < len(messages) else None
-            if not is_valid_msg_pair(msg, next_msg):
-                error_entry, error_response = _make_orphan_replacement(msg, ToolCallPart)
-                errors.append(error_entry)
-                sanitized_msgs.append(error_response)
-                continue # Skips below append of original msg
-        elif isinstance(msg, ModelRequest) and any(isinstance(p, (ToolReturnPart, RetryPromptPart)) for p in msg.parts):
-            prev_msg = sanitized_msgs[-1] if sanitized_msgs else None
-            if not is_valid_msg_pair(prev_msg, msg):
-                part_type = ToolReturnPart if any(isinstance(p, ToolReturnPart) for p in msg.parts) else RetryPromptPart
-                error_entry, error_response = _make_orphan_replacement(msg, part_type)
-                errors.append(error_entry)
-                sanitized_msgs.append(error_response)
-                continue
-        sanitized_msgs.append(msg)
-    return sanitized_msgs, errors
 
 
 def dump_msg_json(msg: ModelMessage) -> str:
@@ -309,10 +216,10 @@ async def persist_messages(
     Returns the last non-None total_tokens seen across all messages, or None if no usage data was found.
 
     Pre-processing:
-    - Orphaned tool calls/returns (unmatched ToolCallPart or ToolReturnPart) are replaced with an error ModelResponse.
+    - repair_messages() is called to synthesize ToolReturnParts for any orphaned tool calls.
     - Serialization failures inject an error ModelResponse in place of the bad message.
-    - Both orphan replacements and serialization failures append a summary warning at the END of
-      the chain (referencing the original message timestamp) so errors aren't buried in long histories.
+    - Serialization failures append a summary warning at the END of the chain
+      (referencing the original message timestamp) so errors aren't buried in long histories.
     """
     if not messages:
         return None
@@ -337,7 +244,8 @@ async def persist_messages(
         deps.session, deps.agent_id, deps.context_window_start
     )
 
-    messages, errors = _replace_orphaned_tool_messages(messages)
+    messages = repair_messages(messages)
+    errors: list[tuple[datetime, str]] = []
     last_total_tokens: int | None = None
 
     for i, msg in enumerate(messages):
