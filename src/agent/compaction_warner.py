@@ -66,6 +66,11 @@ class CompactionWarner(AbstractCapability[AgentDeps]):
             # operations (model inference, tool calls). Without this, autoflush on subsequent
             # SELECTs would acquire a write lock that stays held until the next explicit commit,
             # potentially causing "database is locked" errors for other agents.
+            #
+            # Known issue: A crash between this commit and the warning being delivered/persisted
+            # (next turn) would result in the flag being set but the agent never seeing the
+            # warning. This is an acceptable tradeoff — the crash window is narrow, and the
+            # consequence is one missed consolidation opportunity, not data loss.
             ctx.deps.compaction_warning_fired = True
             await ctx.deps.commit_changes_refresh_agent_record()
             
