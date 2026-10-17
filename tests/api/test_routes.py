@@ -115,6 +115,26 @@ class TestCreateAgentNameUniqueness:
         assert second.json()["detail"] == f"Agent name already in use: {TestCreateAgent._NAME!r}"
 
 
+class TestGetAgentByName:
+    """GET /agents/by-name/{agent_name} — agent metadata by name."""
+
+    async def test_returns_agent_metadata(self, client: AsyncClient, agent_record: AgentRecord):
+        """Returns the agent's metadata when looked up by name."""
+        response = await client.get(f"/agents/by-name/{agent_record.name}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == str(agent_record.id)
+        assert data["name"] == agent_record.name
+
+    async def test_not_found(self, client: AsyncClient):
+        """Returns 404 for nonexistent agent name."""
+        response = await client.get("/agents/by-name/nonexistent-agent")
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"]
+
+
 class TestGetConfig:
     """GET /agents/{agent_id}/config — agent config."""
 

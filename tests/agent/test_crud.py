@@ -8,7 +8,7 @@ import pytest_asyncio
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.crud import create_agent_record, get_agent_record, replace_agent_config, replace_system_instructions
+from agent.crud import create_agent_record, get_agent_record, get_agent_record_by_name, replace_agent_config, replace_system_instructions
 from agent.types import AgentDeps
 from conftest import SAMPLE_AGENT_CONFIG
 from messages.messages import load_messages
@@ -48,17 +48,37 @@ class TestCreateAgentRecord:
         await self.assert_record_as_expected(fetched)
 
 
-# --- get_agent_record tests ---
+# --- get_agent_record / get_agent_record_by_name tests ---
+#
+# Both functions return AgentRecord | None based on a lookup key.
+# Parametrized to test both via the same test logic.
 
-class TestGetAgentRecord:
-    """Tests for get_agent_record."""
+_GET_AGENT_FUNCTIONS = [
+    pytest.param(
+        get_agent_record,
+        lambda r: r.id,
+        "nonexistent-id",
+        id="by_id",
+    ),
+    pytest.param(
+        get_agent_record_by_name,
+        lambda r: r.name,
+        "nonexistent-name",
+        id="by_name",
+    ),
+]
 
-    async def test_returns_record_for_known_id(self, session: AsyncSession, agent_record):
-        result = await get_agent_record(session, agent_record.id)
+
+@pytest.mark.parametrize("get_fn,key_extractor,unknown_key", _GET_AGENT_FUNCTIONS)
+class TestGetAgentRecordFunctions:
+    """Tests for get_agent_record and get_agent_record_by_name."""
+
+    async def test_returns_record_for_known_key(self, session: AsyncSession, agent_record, get_fn, key_extractor, unknown_key):
+        result = await get_fn(session, key_extractor(agent_record))
         assert result == agent_record
 
-    async def test_returns_none_for_unknown_id(self, session: AsyncSession):
-        result = await get_agent_record(session, "nonexistent-id")
+    async def test_returns_none_for_unknown_key(self, session: AsyncSession, get_fn, key_extractor, unknown_key):
+        result = await get_fn(session, unknown_key)
         assert result is None
 
 
