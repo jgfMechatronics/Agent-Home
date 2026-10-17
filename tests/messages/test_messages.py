@@ -319,6 +319,25 @@ class TestPersistMessages(DBTestBase):
         assert restored[0].parts[0].content.startswith(expected_prefix)
 
     # -------------- Tests -------------------
+    async def test_orphaned_tool_call_repaired_by_persist(self):
+        """persist_messages calls repair_messages(): an orphaned tool call (no matching return)
+        results in both the original ModelResponse and a synthesized ModelRequest(ToolReturnPart)
+        being stored in the DB."""
+        orphan_response, _ = make_tool_pair()  # discard the matching return
+        tool_call_id = orphan_response.parts[0].tool_call_id
+
+        records = await self._persist_and_fetch([orphan_response])
+
+        assert len(records) == 2
+        # Original call record preserved
+        assert records[0].type == "ModelResponse"
+        # Synthesized return added — ToolReturnPart with matching tool_call_id
+        assert records[1].type == "ModelRequest"
+        restored_return = ModelMessagesTypeAdapter.validate_json(f"[{records[1].content}]")[0]
+        synthesized = [p for p in restored_return.parts if isinstance(p, ToolReturnPart)]
+        assert len(synthesized) == 1
+        assert synthesized[0].tool_call_id == tool_call_id
+
     def _make_output_retry_request(self) -> ModelRequest:
         """An output-retry ModelRequest as pydantic-ai constructs it after a model response
         which was judged invalid: RetryPromptPart with no tool_name (its tool_call_id is auto-generated
