@@ -62,8 +62,22 @@ class CompactionWarner(AbstractCapability[AgentDeps]):
         # Check if we've crossed the threshold
         total_tokens = response.usage.total_tokens if response.usage.total_tokens else 0
         if total_tokens >= threshold:
-            # Set flag (will be persisted by runner's commit)
+            # Set flag and commit immediately to avoid holding a write lock during slow
+            # operations (model inference, tool calls). Without this, autoflush on subsequent
+            # SELECTs would acquire a write lock that stays held until the next explicit commit,
+            # potentially causing "database is locked" errors for other agents.
+            #
+            # Known issue: A crash between this commit and the warning being delivered/persisted
+            # (next turn) would result in the flag being set but the agent never seeing the
+            # warning. Acceptable tradeoff — narrow window, consequence is one missed
+            # consolidation opportunity, not data loss.
+            #
+            # Future mitigation if needed: Derive "warned this cycle" from message history
+            # instead of the DB flag. Stamp warning with context_window_start as cycle marker,
+            # check ctx.messages + ctx.pending_messages for matching marker. Would eliminate
+            # the crash window entirely but adds complexity.
             ctx.deps.compaction_warning_fired = True
+            await ctx.deps.commit_changes_refresh_agent_record()
             
             # Enqueue warning — delivered on next request, available for persistence in message history
             ctx.enqueue(UserPromptPart(content=COMPACTION_WARNING_TEXT))

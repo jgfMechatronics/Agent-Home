@@ -186,6 +186,7 @@ class TestCompactionWarnerUnit:
         mock_deps = MagicMock()
         mock_deps.config = mock_config
         mock_deps.compaction_warning_fired = False
+        mock_deps.commit_changes_refresh_agent_record = AsyncMock()
         
         mock_ctx = MagicMock()
         mock_ctx.deps = mock_deps
