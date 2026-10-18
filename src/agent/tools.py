@@ -319,13 +319,18 @@ async def memory_read(
 # Tool Registry
 # =============================================================================
 
+# Tools that mutate the database must run sequentially to avoid SQLAlchemy session
+# race conditions when pydantic-ai executes parallel tool calls in separate tasks.
+# sequential=True makes the tool act as a barrier: it runs alone, not overlapping
+# with other tool calls.
+
 TOOL_REGISTRY: dict[str, Callable | Tool[AgentDeps]] = {
-    "memory_replace": memory_replace,
-    "memory_insert": memory_insert,
-    "memory_read": memory_read,
+    "memory_replace": Tool(memory_replace, sequential=True),
+    "memory_insert": Tool(memory_insert, sequential=True),
+    "memory_read": Tool(memory_read, sequential=True),
     "duckduckgo_search": duckduckgo_search_tool(max_results=5),
     "web_fetch": web_fetch_tool(),
-    "send_message": send_message,
+    "send_message": Tool(send_message, sequential=True),
 }
 
 
