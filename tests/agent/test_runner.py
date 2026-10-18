@@ -37,6 +37,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 # Local
@@ -1276,6 +1277,52 @@ async def _mcp_completion_stream(messages: list, info: AgentInfo) -> None:
     yield FunctionModelTestAgent.COMPLETION_TEXT
 
 
+# Expected ToolDefinitions for the TestMCPTools agent (tools=[local_dummy_tool], toolsets=[mcp_read_file]).
+# Schemas are inferred from tool signatures — verify exact content against first test failure if needed.
+_EXPECTED_LOCAL_TOOL_DEF = ToolDefinition(
+    name="local_dummy_tool",
+    description="A local function tool used in MCP integration tests.",
+    parameters_json_schema={
+        "additionalProperties": False,
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+        "type": "object",
+    },
+)
+_EXPECTED_MCP_TOOL_DEF = ToolDefinition(
+    name="mcp_read_file",
+    description="Read a file from disk.",
+    parameters_json_schema={
+        "additionalProperties": False,
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+        "type": "object",
+    },
+)
+# Injected by ToolOutputLimits capability. Signature: (handle, offset=0, limit=200, from_end=False, pattern=None).
+# pattern is str | None — exact anyOf rendering may vary; fix against first failure if needed.
+_EXPECTED_READ_TOOL_RESULT_DEF = ToolDefinition(
+    name="read_tool_result",
+    description="Read a slice of a spilled tool result.",
+    parameters_json_schema={
+        "additionalProperties": False,
+        "properties": {
+            "handle": {"type": "string"},
+            "offset": {"default": 0, "type": "integer"},
+            "limit": {"default": 200, "type": "integer"},
+            "from_end": {"default": False, "type": "boolean"},
+            "pattern": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": None},
+        },
+        "required": ["handle"],
+        "type": "object",
+    },
+)
+_EXPECTED_MCP_AGENT_TOOL_DEFS = sorted(
+    [_EXPECTED_LOCAL_TOOL_DEF, _EXPECTED_MCP_TOOL_DEF, _EXPECTED_READ_TOOL_RESULT_DEF],
+    key=lambda td: td.name,
+)
+
+
 class TestMCPTools(_BaseRouteTest):
     """Integration tests for MCP toolset functionality.
 
@@ -1318,6 +1365,20 @@ class TestMCPTools(_BaseRouteTest):
     def tool_call_agent(self, in_process_mcp_toolset):
         """Agent that calls the MCP tool then completes."""
         return self._build_agent(self._tool_call_stream, in_process_mcp_toolset)
+
+    async def test_tool_definitions_reach_persist_messages(self, agent_deps, completion_agent):
+        """Runner must pass tool_definitions from tool_manager.tool_defs to every persist_messages call.
+
+        Verifies the exact ToolDefinition objects (name + schema) passed to persist_messages match
+        what was configured on the agent — both user-supplied and capability-injected (read_tool_result).
+        """
+        async for _ in run_stateful_agent(completion_agent, agent_deps, AgentAppState(), "hello"):
+            pass
+
+        assert self.mock_persist_messages.called, "persist_messages must be called at least once"
+        for call in self.mock_persist_messages.call_args_list:
+            tool_defs = sorted(call.kwargs["tool_definitions"], key=lambda td: td.name)
+            assert tool_defs == _EXPECTED_MCP_AGENT_TOOL_DEFS
 
     async def test_mcp_tool_call_returns_expected_result(self, agent_deps, tool_call_agent):
         """MCP tool can be called and returns expected result through the runner."""
