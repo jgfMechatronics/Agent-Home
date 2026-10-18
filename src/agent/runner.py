@@ -115,78 +115,39 @@ async def run_stateful_agent(agent: Agent,
     # timestamp (agents otherwise fabricate times in memory entries). Compaction
     # resume notices below are system alerts and intentionally unstamped.
     user_prompt = add_timestamp_prefix(user_prompt)
-
-    interrupted_by_compaction = True
-    while interrupted_by_compaction:
-        interrupted_by_compaction = False
         
-        records = await load_messages(deps.session, deps.agent_id, start_seq_id=deps.context_window_start)
-        message_history = deserialize_messages(records)
-        
-        # pydantic-ai merges adjacent same-type messages, which shifts indices in the captured messages list
-        merge_adjustment = _count_adjacent_message_merges(message_history)
-        # Track where new messages start for persistence; adjust for merges pydantic-ai will perform
-        new_message_idx = len(message_history) - merge_adjustment
+    records = await load_messages(deps.session, deps.agent_id, start_seq_id=deps.context_window_start)
+    message_history = deserialize_messages(records)        
 
-        with capture_run_messages() as messages:
-            try:
-                async with agent.run_stream_events(user_prompt=user_prompt,
-                                                    message_history=message_history,
-                                                    deps=deps,
-                                                    usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT)) as stream:
-                    last_total_tokens_value = None
+    try:
+        async with agent.iter(user_prompt=user_prompt, 
+                              deps=deps, 
+                              message_history=message_history,
+                              usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT)) as run:
+            
+            persisted_msgs_cursor = 0
+            
+            async for node in run:
+                # persist messages if required. TODO: break into fcn?
+                msgs_to_persist = run.new_messages()[persisted_msgs_cursor:]
+                # Avoid passing a tool call part into persit without return. Only need to check last part of last msg.
+                # If there's a lone call somewhere else, the history is degenerate and repair_messages() call in persist_messages() will clean up
+                if msgs_to_persist and (not isinstance(msgs_to_persist[-1].parts[-1], ToolCallPart)):
+                    tool_defs = run.ctx.deps.tool_manager.tool_defs
+                    await persist_messages(deps, msgs_to_persist, tool_defs)
 
-                    async for event in stream:
-                        yield event
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as event_stream:
+                        async for event in event_stream:
+                            yield event
+                            # Probably want to service cancel here rather than node boundaries, would be the most reponsive. 
+                            # Except then we have some funny gating on cancellation: Only serviced during model request node. Might need to service in multiple spots (*gasp*)
 
-                        messages_to_persist = []
-                        last_part_of_last_msg = messages[-1].parts[-1] if (messages and messages[-1].parts) else None
 
-                        if (isinstance(event, ToolResultEvent)
-                            and isinstance(event.part, ToolReturnPart)
-                            and not isinstance(last_part_of_last_msg, ToolReturnPart)
-                            and isinstance(last_part_of_last_msg, ToolCallPart)):
-                            # As of 1.97.0, pydantic-ai adds the ToolReturn to the captured messages list only
-                            # when the next step starts, not when ToolResultEvent is yielded. Persist the tool pair atomically
-                            # from the event data directly, so we don't lose it on cancel
-                            # The last two gating conditions are a sanity check: Ensure the tool return is NOT available but the tool call IS
-                            tool_return_msg = ModelRequest(parts=[event.part])
-                            messages_to_persist = messages[new_message_idx:] + [tool_return_msg]
-                        elif (len(messages) > new_message_idx) and not isinstance(last_part_of_last_msg, ToolCallPart):
-                            messages_to_persist = messages[new_message_idx:]
 
-                        if messages_to_persist:
-                            total_tokens = await persist_messages(deps=deps, messages=messages_to_persist, toolsets=agent.toolsets)
-                            await deps.commit_changes_refresh_agent_record()
-                            new_message_idx += len(messages_to_persist)
-                            if total_tokens is not None:
-                                last_total_tokens_value = total_tokens
-
-                        if await _check_and_handle_cancel(agent_app_state, deps, agent.toolsets):
-                            return
-
-                        # TODO: cancellation is cooperative and only serviced between yielded
-                        # events. While we're parked in stream.__anext__() awaiting the model's
-                        # HTTP response (e.g. a provider that hangs before its first byte), no
-                        # events arrive, so a cancel request sits ignored until the next event —
-                        # bounded by the ModelSettings inter-chunk timeout (180s) but still
-                        # minutes. The user should be able to stop a hung request promptly.
-                        # (Candidates floated in discussion, not a decision: racing
-                        # __anext__() against the cancel event, or true task cancellation.)
-
-                        # Mid-turn compaction check (after cancel — cancel supersedes compaction).
-                        # Only fire at clean message boundaries: after a tool returns or at natural turn end.
-                        if isinstance(event, (ToolResultEvent, AgentRunResultEvent)) and is_compaction_needed(last_total_tokens_value, deps.config):
-                            await compact(deps)
-
-                            if not isinstance(event, AgentRunResultEvent):
-                                # agent wasn't finished, restart them with a fresh run.
-                                user_prompt = COMPACTION_RESUME_NOTICE
-                                interrupted_by_compaction = True
-                                break
-            except RuntimeError as e:
-                if isinstance(e.__cause__, httpx.ConnectError):
-                    raise MCPConnError(
-                        "At least 1 attached MCP server is unreachable — check status of attached MCP servers."
-                    ) from e
-                raise
+    except RuntimeError as e:
+        if isinstance(e.__cause__, httpx.ConnectError):
+            raise MCPConnError(
+                "At least 1 attached MCP server is unreachable — check status of attached MCP servers."
+                ) from e
+            raise
