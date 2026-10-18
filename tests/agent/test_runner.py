@@ -47,7 +47,8 @@ from agent.timestamping import add_timestamp_prefix
 from agent.types import AgentAppState, MCPConnError, AgentDeps
 from api.fastapi_deps import get_agent_and_deps
 from conftest import make_mock_agent, _make_mock_session, local_dummy_tool, assert_ModelMessage_list_eq
-from db.models import AgentRecord
+from db.models import AgentRecord, MemoryBlockRecord
+from agent.tools import TOOL_REGISTRY
 
 # Stamp assertions compare against add_timestamp_prefix built at assert time —
 # freeze the clock so runner-stamp and expected-stamp can't straddle a second.
@@ -1392,7 +1393,6 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
     @pytest.fixture
     async def agent_with_block(self, session, agent_record):
         """Create a memory block for the test agent to edit."""
-        from db.models import MemoryBlockRecord
         block = MemoryBlockRecord(
             agent_id=agent_record.id,
             label="notes",
@@ -1455,9 +1455,6 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         This is the baseline test — single calls should always work. If this fails
         after agent.iter refactor, the persist mechanics broke something fundamental.
         """
-        from agent.tools import TOOL_REGISTRY
-        from agent.types import AgentDeps
-        
         stream_fn = self._make_single_tool_stream(tool_name, tool_args)
         agent = Agent(
             FunctionModel(stream_function=stream_fn),
@@ -1516,9 +1513,6 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         
         Will pass after session factory refactor.
         """
-        from agent.tools import TOOL_REGISTRY
-        from agent.types import AgentDeps
-        
         stream_fn = self._make_parallel_tool_stream(tool_name, args_1, args_2)
         agent = Agent(
             FunctionModel(stream_function=stream_fn),
