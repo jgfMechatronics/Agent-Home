@@ -47,7 +47,8 @@ from agent.timestamping import add_timestamp_prefix
 from agent.types import AgentAppState, MCPConnError, AgentDeps
 from api.fastapi_deps import get_agent_and_deps
 from conftest import make_mock_agent, _make_mock_session, local_dummy_tool, assert_ModelMessage_list_eq
-from db.models import AgentRecord
+from db.models import AgentRecord, MemoryBlockRecord
+from agent.tools import TOOL_REGISTRY
 
 # Stamp assertions compare against add_timestamp_prefix built at assert time —
 # freeze the clock so runner-stamp and expected-stamp can't straddle a second.
@@ -1370,3 +1371,128 @@ class TestMCPConnectionError(_BaseRouteTest):
         with pytest.raises(MCPConnError, match="MCP server is unreachable"):
             async for _ in run_stateful_agent(self._test_agent, agent_deps, AgentAppState(), "hello"):
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Sequential tool execution tests (parallel tool call handling)
+# ---------------------------------------------------------------------------
+
+class TestMemoryToolsThroughRunner(_BaseRouteTest):
+    """Test memory tools executing through run_stateful_agent.
+    
+    These tests verify that memory tools work correctly when run through our
+    full runner infrastructure, including persist_messages. This matters because:
+    1. agent.iter refactor will change persist mechanics
+    2. Session sharing between runner and tools can cause races
+    
+    Parametrized for:
+    - All memory tools (memory_insert, memory_replace, memory_read)
+    - Single vs parallel tool calls (parallel currently skipped due to session race)
+    """
+    
+    @pytest.fixture
+    async def agent_with_block(self, session, agent_record):
+        """Create a memory block for the test agent to edit."""
+        block = MemoryBlockRecord(
+            agent_id=agent_record.id,
+            label="notes",
+            description="Test block",
+            content="initial content\nline two\nline three",
+            char_limit=10000,
+            position=0,
+        )
+        session.add(block)
+        await session.flush()
+        return block
+    
+    def _make_tool_stream(self, tool_name: str, args_list: list[dict]):
+        """Factory for FunctionModel stream that emits N tool calls.
+        
+        Args:
+            tool_name: Name of the tool to call
+            args_list: List of arg dicts — length determines single (1) vs parallel (2+)
+        """
+        async def stream_fn(messages: list, info: AgentInfo):
+            if len(messages) == 1:
+                yield DeltaToolCalls({
+                    i: DeltaToolCall(
+                        name=tool_name,
+                        json_args=json.dumps(args),
+                        tool_call_id=f"call-{i}",
+                    )
+                    for i, args in enumerate(args_list)
+                })
+            else:
+                yield FunctionModelTestAgent.COMPLETION_TEXT
+        return stream_fn
+    
+    # Skip reason for parallel tests — session race until factory refactor
+    PARALLEL_SKIP = pytest.mark.skip(reason=(
+        "KNOWN ISSUE: Parallel tool calls race with run_stateful_agent's persist_messages. "
+        "Root cause: tools run as asyncio tasks; pydantic-ai starts tool B while we're "
+        "handling tool A's event (doing persist_messages on shared session). "
+        "FIX PENDING: Session factory refactor. WORKAROUND: parallel_tool_calls=False. "
+        "When refactor lands, REMOVE THIS SKIP."
+    ))
+    
+    # Common arg patterns for parametrization
+    _LABEL = "notes"
+    _INSERT_ARGS = {"label": _LABEL, "content": "inserted text", "after": "<end>"}
+    _REPLACE_ARGS = {"label": _LABEL, "old_string": "line two", "new_string": "replaced line"}
+    _READ_ARGS = {"label": _LABEL}
+    
+    @pytest.mark.parametrize("tool_name,args_list,expected_contents", [
+        # Single calls (baseline — must always work)
+        ("memory_insert", [_INSERT_ARGS], ["inserted text"]),
+        ("memory_replace", [_REPLACE_ARGS], ["replaced line"]),
+        ("memory_read", [_READ_ARGS], []),  # read-only, no content assertion
+        # Parallel calls (skipped — session race)
+        pytest.param(
+            "memory_insert",
+            [{"label": _LABEL, "content": "first insert", "after": "<end>"},
+             {"label": _LABEL, "content": "second insert", "after": "<end>"}],
+            ["first insert", "second insert"],
+            marks=PARALLEL_SKIP,
+        ),
+        pytest.param(
+            "memory_replace",
+            [{"label": _LABEL, "old_string": "line two", "new_string": "replaced A"},
+             {"label": _LABEL, "old_string": "line three", "new_string": "replaced B"}],
+            ["replaced A", "replaced B"],
+            marks=PARALLEL_SKIP,
+        ),
+    ])
+    async def test_memory_tool_through_runner(
+        self, session, agent_record, agent_with_block, tool_name, args_list, expected_contents
+    ):
+        """Memory tools execute correctly through run_stateful_agent.
+        
+        Single-call tests are the baseline — if these fail after agent.iter refactor,
+        the persist mechanics broke something fundamental.
+        
+        Parallel-call tests are skipped due to session sharing race (Oct 2026).
+        Will pass after session factory refactor.
+        """
+        stream_fn = self._make_tool_stream(tool_name, args_list)
+        agent = Agent(
+            FunctionModel(stream_function=stream_fn),
+            tools=[TOOL_REGISTRY[tool_name]],
+        )
+        
+        deps = AgentDeps(session=session, agent_record=agent_record)
+        
+        events = []
+        async for event in run_stateful_agent(agent, deps, AgentAppState(), f"call {tool_name}"):
+            events.append(event)
+        
+        # Verify correct number of tool results
+        tool_results = [e for e in events if isinstance(e, FunctionToolResultEvent)]
+        assert len(tool_results) == len(args_list), \
+            f"Expected {len(args_list)} tool result(s), got {len(tool_results)}"
+        
+        # Verify all expected content mutations happened
+        if expected_contents:
+            await session.refresh(agent_with_block)
+            for expected in expected_contents:
+                assert expected in agent_with_block.content, \
+                    f"Expected '{expected}' in block content after {tool_name}"

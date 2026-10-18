@@ -69,10 +69,16 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     # run length: thinking deltas and content tokens stream continuously, resetting the
     # clock, so 180s of silence means a genuine hang, not a slow run (e.g. an OpenRouter
     # provider that accepted the request and never sends a byte).
+    #
+    # parallel_tool_calls=False: When model requests multiple tool calls in one response,
+    # execute them sequentially. Required because run_stateful_agent's persist_messages
+    # shares a session with tool execution — parallel tool tasks race on the session.
+    # Safe to remove after session factory refactor.
     settings = ModelSettings(
         thinking=config.thinking_mode,
         max_tokens=36864,
         timeout=180,
+        parallel_tool_calls=False,
     )
 
     if isinstance(m, AnthropicModel):
