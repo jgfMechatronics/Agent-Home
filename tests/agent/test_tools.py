@@ -165,14 +165,14 @@ class TestToolRegistry:
         # memory_replace and memory_insert are wrapped in Tool for sequential execution
         assert TOOL_REGISTRY["memory_replace"].function is memory_replace
         assert TOOL_REGISTRY["memory_insert"].function is memory_insert
-        # memory_read is read-only, safe to run in parallel
-        assert TOOL_REGISTRY["memory_read"] is memory_read
+        assert TOOL_REGISTRY["memory_read"].function is memory_read
 
 
-    def test_db_mutating_tools_are_sequential(self):
-        """DB-mutating tools have sequential=True to prevent session race conditions."""
+    def test_db_tools_are_sequential(self):
+        """DB tools have sequential=True to prevent session race conditions."""
         assert TOOL_REGISTRY["memory_replace"].sequential is True
         assert TOOL_REGISTRY["memory_insert"].sequential is True
+        assert TOOL_REGISTRY["memory_read"].sequential is True
         assert TOOL_REGISTRY["send_message"].sequential is True
 
 

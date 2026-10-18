@@ -1370,3 +1370,92 @@ class TestMCPConnectionError(_BaseRouteTest):
         with pytest.raises(MCPConnError, match="MCP server is unreachable"):
             async for _ in run_stateful_agent(self._test_agent, agent_deps, AgentAppState(), "hello"):
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Sequential tool execution tests (parallel tool call handling)
+# ---------------------------------------------------------------------------
+
+class TestSequentialToolExecution(_BaseRouteTest):
+    """Verify sequential=True tools don't race when model issues parallel calls.
+    
+    When pydantic-ai executes parallel tool calls, it runs them in separate asyncio
+    tasks. Our DB-mutating tools share a SQLAlchemy session via ctx.deps, which can
+    race (IllegalStateChangeError, InvalidRequestError) if tools run concurrently.
+    
+    We wrap DB-mutating tools with Tool(..., sequential=True) to serialize execution.
+    This test verifies the fix works at the run_stateful_agent layer.
+    """
+    
+    # Tool call IDs for the parallel calls
+    CALL_ID_1 = "parallel-insert-1"
+    CALL_ID_2 = "parallel-insert-2"
+    
+    @pytest.fixture
+    async def agent_with_block(self, session, agent_record):
+        """Create a memory block for the test agent to edit."""
+        from db.models import MemoryBlockRecord
+        block = MemoryBlockRecord(
+            agent_id=agent_record.id,
+            label="notes",
+            description="Test block",
+            content="initial content",
+            char_limit=10000,
+            position=0,
+        )
+        session.add(block)
+        await session.flush()
+        return block
+    
+    async def _parallel_insert_stream(self, messages: list, info: AgentInfo):
+        """FunctionModel stream that emits two parallel memory_insert calls."""
+        import json
+        if len(messages) == 1:  # First invocation: emit parallel tool calls
+            yield DeltaToolCalls({
+                0: DeltaToolCall(
+                    name="memory_insert",
+                    json_args=json.dumps({"label": "notes", "content": "first insert", "after": "<end>"}),
+                    tool_call_id=self.CALL_ID_1,
+                ),
+                1: DeltaToolCall(
+                    name="memory_insert",
+                    json_args=json.dumps({"label": "notes", "content": "second insert", "after": "<end>"}),
+                    tool_call_id=self.CALL_ID_2,
+                ),
+            })
+        else:  # Second invocation (after tool returns): emit completion
+            yield FunctionModelTestAgent.COMPLETION_TEXT
+    
+    async def test_parallel_memory_inserts_complete_without_race(
+        self, session, agent_record, agent_with_block
+    ):
+        """Two parallel memory_insert calls should execute sequentially, not race.
+        
+        Prior to the sequential=True fix, this test would fail with:
+        - IllegalStateChangeError: Method 'commit()' can't be called here
+        - InvalidRequestError: This session is in 'prepared' state
+        """
+        from agent.tools import TOOL_REGISTRY
+        from agent.types import AgentDeps
+        
+        # Build agent with our actual memory_insert tool (wrapped with sequential=True)
+        agent = Agent(
+            FunctionModel(stream_function=self._parallel_insert_stream),
+            tools=[TOOL_REGISTRY["memory_insert"]],
+        )
+        
+        deps = AgentDeps(session=session, agent_record=agent_record)
+        
+        # This should complete without raising session race errors
+        events = []
+        async for event in run_stateful_agent(agent, deps, AgentAppState(), "do two inserts"):
+            events.append(event)
+        
+        # Verify we got tool results for both calls
+        tool_results = [e for e in events if isinstance(e, FunctionToolResultEvent)]
+        assert len(tool_results) == 2, f"Expected 2 tool results, got {len(tool_results)}"
+        
+        # Verify both inserts actually happened
+        await session.refresh(agent_with_block)
+        assert "first insert" in agent_with_block.content
+        assert "second insert" in agent_with_block.content
