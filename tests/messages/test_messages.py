@@ -742,5 +742,3 @@ class TestSystemAlertFormatting:
 
     def test_not_just_any_xml(self):
         assert not is_system_alert("<garbage> manure </garbage>")
-
-
