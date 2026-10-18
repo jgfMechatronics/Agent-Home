@@ -241,10 +241,10 @@ class TestReconstructContextIntegration:
 
     async def _run_and_reconstruct(
         self, prompt: str, test_model: TestModel
-    ) -> tuple[ReconstructedContext, list[ToolDefinition], list[MessageRecord]]:
+    ) -> tuple[ReconstructedContext, list[MessageRecord]]:
         """Run agent turn and reconstruct context from last message.
 
-        Returns (reconstructed_context, expected_tool_definitions, expected_messages) for verification.
+        Returns (reconstructed_context, expected_messages) for verification.
         """
         agent_app_state_reg: dict[str, AgentAppState] = {}
 
@@ -257,32 +257,23 @@ class TestReconstructContextIntegration:
         # Get all persisted messages as ground truth
         expected_messages = await load_messages(self.session, self.agent_record.id)
 
-        # Get expected tool definitions from the snapshot stored during the run.
-        # This is the ground truth: what was actually persisted by persist_messages.
-        latest_snapshot = (await self.session.execute(
-            select(ToolDefinitionSnapshot).order_by(ToolDefinitionSnapshot.created_at.desc()).limit(1)
-        )).scalar_one()
-        expected_tool_definitions = [ToolDefinition(**d) for d in json.loads(latest_snapshot.content)]
-
         last_msg_id = expected_messages[-1].id
         reconstructed = await reconstruct_context(self.session, last_msg_id)
-        return reconstructed, expected_tool_definitions, expected_messages
+        return reconstructed, expected_messages
 
     def _assert_standard_result(
         self,
         result: ReconstructedContext,
-        expected_tool_definitions: list[ToolDefinition],
         expected_messages: list[MessageRecord],
     ):
         """Common assertions for integration tests."""
         assert EXPECTED_COMPILED_SYS_PROMPT == result.system_prompt
         assert result.agent_id == self.agent_record.id
-        # Verify tool definitions match ground truth from the live agent.
-        # read_tool_result is auto-injected by ToolOutputLimits capability on every agent,
-        # so the snapshot always contains configured tools + read_tool_result.
-        assert {td.name for td in expected_tool_definitions} == set(ALL_TOOL_NAMES) | {"read_tool_result"}, \
-            "Sanity: snapshot must contain exactly configured tools + capability-injected read_tool_result"
-        assert result.tool_definitions == expected_tool_definitions
+        # Verify tool definitions — read_tool_result is auto-injected by ToolOutputLimits
+        # on every agent, so the snapshot always contains configured tools + read_tool_result.
+        # Exact content (descriptions, schemas) is covered by TestContextReconstruction unit tests.
+        assert {td.name for td in result.tool_definitions} == set(ALL_TOOL_NAMES) | {"read_tool_result"}, \
+            "Snapshot must contain exactly configured tools + capability-injected read_tool_result"
         # Verify agent config matches
         assert result.agent_config == INTEGRATION_AGENT_CONFIG
         # Verify reconstructed messages match persisted messages
@@ -291,17 +282,17 @@ class TestReconstructContextIntegration:
     @pytest.mark.parametrize("call_tools,min_messages", [([], 1), (["duckduckgo_search"], 3)], ids=["text_only", "with_tool"])
     async def test_round_trip(self, call_tools: list, min_messages: int):
         """Round-trip: run agent, reconstruct context, verify structure."""
-        result, expected_tools, expected_msgs = await self._run_and_reconstruct(
+        result, expected_msgs = await self._run_and_reconstruct(
             "Hello", TestModel(custom_output_text="Hi!", call_tools=call_tools)
         )
-        self._assert_standard_result(result, expected_tools, expected_msgs)
+        self._assert_standard_result(result, expected_msgs)
         assert len(deserialize_messages(result.messages)) >= min_messages
 
     async def test_context_grows_across_runs(self):
         """Second run includes first run's messages; context_window_start unchanged."""
         model = TestModel(custom_output_text="Response", call_tools=[])
-        first, first_tools, first_msgs = await self._run_and_reconstruct("First", model)
-        second, second_tools, second_msgs = await self._run_and_reconstruct("Second", model)
+        first, first_msgs = await self._run_and_reconstruct("First", model)
+        second, second_msgs = await self._run_and_reconstruct("Second", model)
 
         # Verify message identity via full list comparison
         assert first.messages + [first.target_message] == first_msgs
@@ -311,15 +302,14 @@ class TestReconstructContextIntegration:
         assert len(second.messages) > len(first.messages)
         assert second.messages[0].id == first.messages[0].id  # Same context window start
         assert second.system_prompt == first.system_prompt
-        assert first.tool_definitions == first_tools
-        assert second.tool_definitions == second_tools
+        assert first.tool_definitions == second.tool_definitions  # Same agent config → same tools
 
     async def test_mutated_config_snapshot_dedup(self):
         """After config mutation, old messages keep original snapshot, new get updated."""
         model = TestModel(custom_output_text="Response", call_tools=[])
 
         # First run with original config
-        first, first_expected_tools, first_msgs = await self._run_and_reconstruct("First", model)
+        first, first_msgs = await self._run_and_reconstruct("First", model)
 
         # Mutate config
         new_instructions = "MUTATED personality."
@@ -333,15 +323,14 @@ class TestReconstructContextIntegration:
         await self.session.refresh(self.agent_record)
 
         # Second run with mutated config
-        second, second_expected_tools, second_msgs = await self._run_and_reconstruct("Second", model)
+        second, second_msgs = await self._run_and_reconstruct("Second", model)
 
         # First run's snapshot unchanged
-        self._assert_standard_result(first, first_expected_tools, first_msgs)
+        self._assert_standard_result(first, first_msgs)
 
         # Second run has mutated snapshot
         assert new_instructions in second.system_prompt
         assert INTEGRATION_SYSTEM_INSTRUCTIONS not in second.system_prompt
-        assert second.tool_definitions == second_expected_tools
         # memory_replace is the only configured tool; read_tool_result is auto-injected by capability
         assert {td.name for td in second.tool_definitions} == {"memory_replace", "read_tool_result"}
         # Verify agent config changed for second run
