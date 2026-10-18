@@ -1405,57 +1405,69 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         await session.flush()
         return block
     
-    def _make_single_tool_stream(self, tool_name: str, tool_args: dict):
-        """Factory for FunctionModel stream that emits a single tool call."""
-        import json
-        async def stream_fn(messages: list, info: AgentInfo):
-            if len(messages) == 1:
-                yield DeltaToolCalls({
-                    0: DeltaToolCall(
-                        name=tool_name,
-                        json_args=json.dumps(tool_args),
-                        tool_call_id="single-call-1",
-                    ),
-                })
-            else:
-                yield FunctionModelTestAgent.COMPLETION_TEXT
-        return stream_fn
-    
-    def _make_parallel_tool_stream(self, tool_name: str, tool_args_1: dict, tool_args_2: dict):
-        """Factory for FunctionModel stream that emits two parallel tool calls."""
-        import json
-        async def stream_fn(messages: list, info: AgentInfo):
-            if len(messages) == 1:
-                yield DeltaToolCalls({
-                    0: DeltaToolCall(
-                        name=tool_name,
-                        json_args=json.dumps(tool_args_1),
-                        tool_call_id="parallel-call-1",
-                    ),
-                    1: DeltaToolCall(
-                        name=tool_name,
-                        json_args=json.dumps(tool_args_2),
-                        tool_call_id="parallel-call-2",
-                    ),
-                })
-            else:
-                yield FunctionModelTestAgent.COMPLETION_TEXT
-        return stream_fn
-    
-    @pytest.mark.parametrize("tool_name,tool_args,expected_in_content", [
-        ("memory_insert", {"label": "notes", "content": "inserted text", "after": "<end>"}, "inserted text"),
-        ("memory_replace", {"label": "notes", "old_string": "line two", "new_string": "replaced line"}, "replaced line"),
-        ("memory_read", {"label": "notes"}, None),  # memory_read doesn't modify content
-    ])
-    async def test_single_memory_tool_through_runner(
-        self, session, agent_record, agent_with_block, tool_name, tool_args, expected_in_content
-    ):
-        """Single memory tool call executes correctly through run_stateful_agent.
+    def _make_tool_stream(self, tool_name: str, args_list: list[dict]):
+        """Factory for FunctionModel stream that emits N tool calls.
         
-        This is the baseline test — single calls should always work. If this fails
-        after agent.iter refactor, the persist mechanics broke something fundamental.
+        Args:
+            tool_name: Name of the tool to call
+            args_list: List of arg dicts — length determines single (1) vs parallel (2+)
         """
-        stream_fn = self._make_single_tool_stream(tool_name, tool_args)
+        async def stream_fn(messages: list, info: AgentInfo):
+            if len(messages) == 1:
+                yield DeltaToolCalls({
+                    i: DeltaToolCall(
+                        name=tool_name,
+                        json_args=json.dumps(args),
+                        tool_call_id=f"call-{i}",
+                    )
+                    for i, args in enumerate(args_list)
+                })
+            else:
+                yield FunctionModelTestAgent.COMPLETION_TEXT
+        return stream_fn
+    
+    # Skip reason for parallel tests — session race until factory refactor
+    PARALLEL_SKIP = pytest.mark.skip(reason=(
+        "KNOWN ISSUE: Parallel tool calls race with run_stateful_agent's persist_messages. "
+        "Root cause: tools run as asyncio tasks; pydantic-ai starts tool B while we're "
+        "handling tool A's event (doing persist_messages on shared session). "
+        "FIX PENDING: Session factory refactor. WORKAROUND: parallel_tool_calls=False. "
+        "When refactor lands, REMOVE THIS SKIP."
+    ))
+    
+    @pytest.mark.parametrize("tool_name,args_list,expected_contents", [
+        # Single calls (baseline — must always work)
+        ("memory_insert", [{"label": "notes", "content": "inserted text", "after": "<end>"}], ["inserted text"]),
+        ("memory_replace", [{"label": "notes", "old_string": "line two", "new_string": "replaced line"}], ["replaced line"]),
+        ("memory_read", [{"label": "notes"}], []),  # read-only, no content assertion
+        # Parallel calls (skipped — session race)
+        pytest.param(
+            "memory_insert",
+            [{"label": "notes", "content": "first insert", "after": "<end>"},
+             {"label": "notes", "content": "second insert", "after": "<end>"}],
+            ["first insert", "second insert"],
+            marks=PARALLEL_SKIP,
+        ),
+        pytest.param(
+            "memory_replace",
+            [{"label": "notes", "old_string": "line two", "new_string": "replaced A"},
+             {"label": "notes", "old_string": "line three", "new_string": "replaced B"}],
+            ["replaced A", "replaced B"],
+            marks=PARALLEL_SKIP,
+        ),
+    ])
+    async def test_memory_tool_through_runner(
+        self, session, agent_record, agent_with_block, tool_name, args_list, expected_contents
+    ):
+        """Memory tools execute correctly through run_stateful_agent.
+        
+        Single-call tests are the baseline — if these fail after agent.iter refactor,
+        the persist mechanics broke something fundamental.
+        
+        Parallel-call tests are skipped due to session sharing race (Oct 2026).
+        Will pass after session factory refactor.
+        """
+        stream_fn = self._make_tool_stream(tool_name, args_list)
         agent = Agent(
             FunctionModel(stream_function=stream_fn),
             tools=[TOOL_REGISTRY[tool_name]],
@@ -1467,69 +1479,14 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         async for event in run_stateful_agent(agent, deps, AgentAppState(), f"call {tool_name}"):
             events.append(event)
         
-        # Verify we got one tool result
+        # Verify correct number of tool results
         tool_results = [e for e in events if isinstance(e, FunctionToolResultEvent)]
-        assert len(tool_results) == 1, f"Expected 1 tool result, got {len(tool_results)}"
+        assert len(tool_results) == len(args_list), \
+            f"Expected {len(args_list)} tool result(s), got {len(tool_results)}"
         
-        # Verify mutation happened (for tools that modify content)
-        if expected_in_content:
+        # Verify all expected content mutations happened
+        if expected_contents:
             await session.refresh(agent_with_block)
-            assert expected_in_content in agent_with_block.content, \
-                f"Expected '{expected_in_content}' in block content after {tool_name}"
-    
-    @pytest.mark.parametrize("tool_name,args_1,args_2,expected_1,expected_2", [
-        pytest.param(
-            "memory_insert",
-            {"label": "notes", "content": "first insert", "after": "<end>"},
-            {"label": "notes", "content": "second insert", "after": "<end>"},
-            "first insert",
-            "second insert",
-            marks=pytest.mark.skip(reason=(
-                "KNOWN ISSUE: Parallel tool calls race with run_stateful_agent's persist_messages. "
-                "Root cause: tools run as asyncio tasks; pydantic-ai starts tool B while we're "
-                "handling tool A's event (doing persist_messages on shared session). "
-                "FIX PENDING: Session factory refactor. WORKAROUND: parallel_tool_calls=False. "
-                "When refactor lands, REMOVE THIS SKIP."
-            )),
-        ),
-        pytest.param(
-            "memory_replace",
-            {"label": "notes", "old_string": "line two", "new_string": "replaced A"},
-            {"label": "notes", "old_string": "line three", "new_string": "replaced B"},
-            "replaced A",
-            "replaced B",
-            marks=pytest.mark.skip(reason="Same session race as memory_insert parallel"),
-        ),
-    ])
-    async def test_parallel_memory_tools_through_runner(
-        self, session, agent_record, agent_with_block, tool_name, args_1, args_2, expected_1, expected_2
-    ):
-        """Parallel memory tool calls should execute without racing.
-        
-        KNOWN ISSUE (Oct 2026): Fails due to session sharing architecture.
-        The race is NOT pydantic-ai's fault — sequential=True works correctly.
-        run_stateful_agent does persist_messages on the same session while
-        iterating events, and pydantic-ai starts the next tool task mid-persist.
-        
-        Will pass after session factory refactor.
-        """
-        stream_fn = self._make_parallel_tool_stream(tool_name, args_1, args_2)
-        agent = Agent(
-            FunctionModel(stream_function=stream_fn),
-            tools=[TOOL_REGISTRY[tool_name]],
-        )
-        
-        deps = AgentDeps(session=session, agent_record=agent_record)
-        
-        events = []
-        async for event in run_stateful_agent(agent, deps, AgentAppState(), f"call {tool_name} twice"):
-            events.append(event)
-        
-        # Verify we got two tool results
-        tool_results = [e for e in events if isinstance(e, FunctionToolResultEvent)]
-        assert len(tool_results) == 2, f"Expected 2 tool results, got {len(tool_results)}"
-        
-        # Verify both mutations happened
-        await session.refresh(agent_with_block)
-        assert expected_1 in agent_with_block.content
-        assert expected_2 in agent_with_block.content
+            for expected in expected_contents:
+                assert expected in agent_with_block.content, \
+                    f"Expected '{expected}' in block content after {tool_name}"
