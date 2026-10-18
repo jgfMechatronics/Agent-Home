@@ -1435,23 +1435,29 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         "When refactor lands, REMOVE THIS SKIP."
     ))
     
+    # Common arg patterns for parametrization
+    _LABEL = "notes"
+    _INSERT_ARGS = {"label": _LABEL, "content": "inserted text", "after": "<end>"}
+    _REPLACE_ARGS = {"label": _LABEL, "old_string": "line two", "new_string": "replaced line"}
+    _READ_ARGS = {"label": _LABEL}
+    
     @pytest.mark.parametrize("tool_name,args_list,expected_contents", [
         # Single calls (baseline — must always work)
-        ("memory_insert", [{"label": "notes", "content": "inserted text", "after": "<end>"}], ["inserted text"]),
-        ("memory_replace", [{"label": "notes", "old_string": "line two", "new_string": "replaced line"}], ["replaced line"]),
-        ("memory_read", [{"label": "notes"}], []),  # read-only, no content assertion
+        ("memory_insert", [_INSERT_ARGS], ["inserted text"]),
+        ("memory_replace", [_REPLACE_ARGS], ["replaced line"]),
+        ("memory_read", [_READ_ARGS], []),  # read-only, no content assertion
         # Parallel calls (skipped — session race)
         pytest.param(
             "memory_insert",
-            [{"label": "notes", "content": "first insert", "after": "<end>"},
-             {"label": "notes", "content": "second insert", "after": "<end>"}],
+            [{"label": _LABEL, "content": "first insert", "after": "<end>"},
+             {"label": _LABEL, "content": "second insert", "after": "<end>"}],
             ["first insert", "second insert"],
             marks=PARALLEL_SKIP,
         ),
         pytest.param(
             "memory_replace",
-            [{"label": "notes", "old_string": "line two", "new_string": "replaced A"},
-             {"label": "notes", "old_string": "line three", "new_string": "replaced B"}],
+            [{"label": _LABEL, "old_string": "line two", "new_string": "replaced A"},
+             {"label": _LABEL, "old_string": "line three", "new_string": "replaced B"}],
             ["replaced A", "replaced B"],
             marks=PARALLEL_SKIP,
         ),
