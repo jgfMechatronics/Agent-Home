@@ -1377,6 +1377,12 @@ class TestMCPConnectionError(_BaseRouteTest):
 # Sequential tool execution tests (parallel tool call handling)
 # ---------------------------------------------------------------------------
 
+# Constants for TestMemoryToolsThroughRunner — single source of truth for fixture content and test params
+_BLOCK_CONTENT = "initial content\nline two\nline three"
+_LINE_TWO = "line two"
+_LINE_THREE = "line three"
+
+
 class TestMemoryToolsThroughRunner(_BaseRouteTest):
     """Test memory tools executing through run_stateful_agent.
     
@@ -1397,7 +1403,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
             agent_id=agent_record.id,
             label="notes",
             description="Test block",
-            content="initial content\nline two\nline three",
+            content=_BLOCK_CONTENT,
             char_limit=10000,
             position=0,
         )
@@ -1438,7 +1444,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
     @pytest.mark.parametrize("tool_name,args_list,expected_contents", [
         # Single calls (baseline — must always work)
         ("memory_insert", [{"label": "notes", "content": "inserted text", "after": "<end>"}], ["inserted text"]),
-        ("memory_replace", [{"label": "notes", "old_string": "line two", "new_string": "replaced line"}], ["replaced line"]),
+        ("memory_replace", [{"label": "notes", "old_string": _LINE_TWO, "new_string": "replaced line"}], ["replaced line"]),
         ("memory_read", [{"label": "notes"}], []),  # read-only, no content assertion
         # Parallel calls (skipped — session race)
         pytest.param(
@@ -1450,8 +1456,8 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         ),
         pytest.param(
             "memory_replace",
-            [{"label": "notes", "old_string": "line two", "new_string": "replaced A"},
-             {"label": "notes", "old_string": "line three", "new_string": "replaced B"}],
+            [{"label": "notes", "old_string": _LINE_TWO, "new_string": "replaced A"},
+             {"label": "notes", "old_string": _LINE_THREE, "new_string": "replaced B"}],
             ["replaced A", "replaced B"],
             marks=PARALLEL_SKIP,
         ),
