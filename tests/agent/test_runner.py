@@ -37,7 +37,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.toolsets.function import FunctionToolset
+
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 # Local
@@ -1319,20 +1319,6 @@ class TestMCPTools(_BaseRouteTest):
     def tool_call_agent(self, in_process_mcp_toolset):
         """Agent that calls the MCP tool then completes."""
         return self._build_agent(self._tool_call_stream, in_process_mcp_toolset)
-
-    async def test_toolsets_reach_persist_messages(self, agent_deps, completion_agent):
-        """Both FunctionToolset and MCPToolset must be present in every persist_messages call."""
-        async for _ in run_stateful_agent(completion_agent, agent_deps, AgentAppState(), "hello"):
-            pass
-
-        assert self.mock_persist_messages.called, "persist_messages must be called at least once"
-        for call in self.mock_persist_messages.call_args_list:
-            toolsets = call.kwargs["toolsets"]
-            function_toolsets = [ts for ts in toolsets if isinstance(ts, FunctionToolset)]
-            mcp_toolsets = [ts for ts in toolsets if isinstance(ts, MCPToolset)]
-            assert len(function_toolsets) == 1, "Expected exactly one FunctionToolset"
-            assert len(mcp_toolsets) == 1, "Expected exactly one MCPToolset"
-            assert len(toolsets) == 2, "Expected exactly two toolsets total"
 
     async def test_mcp_tool_call_returns_expected_result(self, agent_deps, tool_call_agent):
         """MCP tool can be called and returns expected result through the runner."""

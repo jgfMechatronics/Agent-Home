@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory
 from agent.runner import run_stateful_agent
-from messages.messages import _extract_tool_definitions
 from agent.tools import TOOL_REGISTRY
 from agent.types import AgentAppState, AgentConfig, AgentDeps
 from db.models import (
@@ -251,14 +250,19 @@ class TestReconstructContextIntegration:
 
         factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
         async with factory.build_agent_and_deps() as (pydantic_agent, deps):
-            # Capture expected tool definitions from the live agent (ground truth)
-            expected_tool_definitions = await _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
             with pydantic_agent.override(model=test_model):
                 async for _ in run_stateful_agent(pydantic_agent, deps, agent_app_state_reg[self.agent_record.id], prompt):
                     pass
 
         # Get all persisted messages as ground truth
         expected_messages = await load_messages(self.session, self.agent_record.id)
+
+        # Get expected tool definitions from the snapshot stored during the run.
+        # This is the ground truth: what was actually persisted by persist_messages.
+        latest_snapshot = (await self.session.execute(
+            select(ToolDefinitionSnapshot).order_by(ToolDefinitionSnapshot.created_at.desc()).limit(1)
+        )).scalar_one()
+        expected_tool_definitions = [ToolDefinition(**d) for d in json.loads(latest_snapshot.content)]
 
         last_msg_id = expected_messages[-1].id
         reconstructed = await reconstruct_context(self.session, last_msg_id)

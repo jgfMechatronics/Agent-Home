@@ -4,15 +4,12 @@ Tests for messages/messages.py — persist_messages, load_messages, deserialize_
 import json
 import logging
 import time
-from collections.abc import Sequence
 
 import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from pydantic_ai import Agent
-from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, WrapperToolset
-from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -32,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig
 from db.models import AgentConfigSnapshot, AgentRecord, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
-from messages.messages import _extract_tool_definitions, deserialize_messages, load_messages, persist_messages, format_system_alert, is_system_alert
+from messages.messages import deserialize_messages, load_messages, persist_messages, format_system_alert, is_system_alert
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
 from conftest import (
@@ -51,21 +48,6 @@ from agent.types import AgentDeps
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _make_function_toolset():
-    """Return a real FunctionToolset with one dummy tool.
-
-    Called at module load time for use in parametrize — Agent construction and
-    tool registration are synchronous so this is safe outside an event loop.
-    """
-    _agent = Agent("test")
-
-    @_agent.tool
-    async def dummy_tool(ctx, x: str) -> str:  # pragma: no cover
-        return x
-
-    return _agent.toolsets
-
 
 SAMPLE_TOOL_SCHEMAS = [
     ToolDefinition(
@@ -136,16 +118,16 @@ class DBTestBase:
         self.agent = agent_record
         self.deps = agent_deps
 
-    async def _persist(self, messages: list[ModelMessage], toolsets: Sequence[AbstractToolset] | None = None, *, deps: AgentDeps | None = None) -> int | None:
-        """Persist messages with real toolset extraction. Defaults to no toolsets."""
+    async def _persist(self, messages: list[ModelMessage], tool_definitions: list[ToolDefinition] | None = None, *, deps: AgentDeps | None = None) -> int | None:
+        """Persist messages. Defaults to no tool definitions."""
         return await persist_messages(
             deps if deps is not None else self.deps,
             messages,
-            toolsets if toolsets is not None else [],
+            tool_definitions if tool_definitions is not None else [],
         )
 
-    async def _persist_and_fetch(self, messages: list[ModelMessage], toolsets: Sequence[AbstractToolset] | None = None) -> list[MessageRecord]:
-        await self._persist(messages, toolsets)
+    async def _persist_and_fetch(self, messages: list[ModelMessage], tool_definitions: list[ToolDefinition] | None = None) -> list[MessageRecord]:
+        await self._persist(messages, tool_definitions)
         return await fetch_all_records(self.session, self.agent.id)
 
 
@@ -369,19 +351,12 @@ class TestPersistMessages(DBTestBase):
         restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
         assert restored == [call_response, return_request]
 
-    @pytest.mark.parametrize("toolsets", [
-        pytest.param([], id="no_tools"),
-        pytest.param(_make_function_toolset(), id="with_function_toolset"),
-    ])
-    async def test_serialization_failure_injects_error_response(self, caplog, toolsets):
+    async def test_serialization_failure_injects_error_response(self, caplog):
         """
         If dump_json raises for a message, an error ModelResponse is stored in place of
         the bad message, remaining messages continue to be persisted, and a summary warning
         is appended at the end of the chain so the model/user can't miss it.
 
-        Parametrized over empty and non-empty toolsets: the non-empty case is a regression
-        guard for a bug where _persist_error_warnings received tool_schemas (list[ToolDefinition])
-        instead of toolsets, causing AttributeError on ts.label in _extract_tool_definitions.
         TODO: It would be nice to have an explicit error designator for model messages or responses.
         Possibly we should add a subtype to ModelRecord for stuff like easy tracking of "Tool Call", "Tool Return", "Error"
         """
@@ -399,7 +374,7 @@ class TestPersistMessages(DBTestBase):
             return original_dump(messages_arg)
 
         with patch.object(ModelMessagesTypeAdapter, "dump_json", side_effect=controlled_dump):
-            await self._persist([good, bad, good2], toolsets=toolsets)
+            await self._persist([good, bad, good2])
 
         records = await fetch_all_records(self.session, self.agent.id)
         assert len(records) == 4  # good, positional error, good2, summary warning
@@ -437,12 +412,11 @@ class TestPersistMessagesSnapshots(DBTestBase):
 
     async def _persist(self, messages: list[ModelMessage], tool_schemas: list[ToolDefinition] | None = None, *, deps: AgentDeps | None = None) -> int | None:
         schemas = tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS
-        with patch("messages.messages._extract_tool_definitions", AsyncMock(return_value=schemas)):
-            return await persist_messages(
-                deps if deps is not None else self.deps,
-                messages,
-                [],
-            )
+        return await persist_messages(
+            deps if deps is not None else self.deps,
+            messages,
+            schemas,
+        )
 
     async def _persist_and_fetch(self, messages: list[ModelMessage], tool_schemas: list[ToolDefinition] | None = None) -> list[MessageRecord]:
         await self._persist(messages, tool_schemas)
@@ -770,98 +744,3 @@ class TestSystemAlertFormatting:
         assert not is_system_alert("<garbage> manure </garbage>")
 
 
-# ---------------------------------------------------------------------------
-# TestExtractToolDefinitions
-# ---------------------------------------------------------------------------
-
-_EXPECTED_MCP_SCHEMA = ToolDefinition(
-    name="mcp_read_file",
-    description="Read a file from disk.",
-    parameters_json_schema={
-        "additionalProperties": False,
-        "properties": {"path": {"type": "string"}},
-        "required": ["path"],
-        "type": "object",
-    },
-)
-
-_EXPECTED_LOCAL_SCHEMA = ToolDefinition(
-    name="local_dummy_tool",
-    description="A local function tool used in MCP integration tests.",
-    parameters_json_schema={
-        "additionalProperties": False,
-        "properties": {"text": {"type": "string"}},
-        "required": ["text"],
-        "type": "object",
-    },
-    return_schema={"type": "string"},
-)
-
-
-# Module-level toolset instances for parametrize — both are in-process (no HTTP, no server lifecycle).
-# in_process_mcp_toolset_factory() wraps a FastMCP instance directly, so it's safe to call at import time.
-_LOCAL_FS: FunctionToolset = next(
-    ts for ts in Agent("test", tools=[local_dummy_tool]).toolsets if isinstance(ts, FunctionToolset)
-)
-_MCP_TS = in_process_mcp_toolset_factory()
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("toolsets,expected_schemas", [
-    # Base cases: plain FunctionToolset and MCPToolset
-    pytest.param([_LOCAL_FS], [_EXPECTED_LOCAL_SCHEMA], id="function_toolset"),
-    pytest.param([_MCP_TS], [_EXPECTED_MCP_SCHEMA], id="mcp_toolset"),
-    # Combination: multiple toolsets at the top level
-    pytest.param([_LOCAL_FS, _MCP_TS], [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA], id="function_and_mcp"),
-    # Wrapper: pydantic-ai capabilities wrap each toolset in CapabilityOwnedToolset (a WrapperToolset subclass)
-    pytest.param([WrapperToolset(wrapped=_LOCAL_FS)], [_EXPECTED_LOCAL_SCHEMA], id="wrapper_function"),
-    pytest.param([WrapperToolset(wrapped=_MCP_TS)], [_EXPECTED_MCP_SCHEMA], id="wrapper_mcp"),
-    # Combined + both types: post-capability toolset shape with mixed content
-    pytest.param(
-        [CombinedToolset(toolsets=[_LOCAL_FS, _MCP_TS])],
-        [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA],
-        id="combined_function_and_mcp",
-    ),
-    # Deep nesting: wrapper around a combined set (exercises full recursion path)
-    pytest.param(
-        [WrapperToolset(wrapped=CombinedToolset(toolsets=[_LOCAL_FS, _MCP_TS]))],
-        [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA],
-        id="wrapper_then_combined_function_and_mcp",
-    ),
-    # Mixed: wrapped toolset followed by a bare toolset in the same list
-    pytest.param(
-        [WrapperToolset(wrapped=_LOCAL_FS), _MCP_TS],
-        [_EXPECTED_LOCAL_SCHEMA, _EXPECTED_MCP_SCHEMA],
-        id="wrapped_then_bare",
-    ),
-])
-async def test_extract_tool_definitions(toolsets, expected_schemas):
-    """_extract_tool_definitions extracts correct ToolDefinitions across all toolset shapes.
-
-    Covers plain FunctionToolset/MCPToolset, combinations of both, and wrapper/combined
-    nesting as produced by pydantic-ai's capability system (CapabilityOwnedToolset extends
-    WrapperToolset). Asserts exact schema content — name, description, parameter schema.
-    """
-    schemas = await _extract_tool_definitions(toolsets, "test-agent")
-
-    assert sorted(schemas, key=lambda s: s.name) == sorted(expected_schemas, key=lambda s: s.name)
-
-
-@pytest.mark.asyncio
-async def test_extract_tool_definitions_logs_error_for_unknown_toolset(caplog):
-    """Unknown toolset type falls through to the error branch — extraction completes
-    but logs an error and skips that toolset's tools."""
-    class _UnknownToolset(AbstractToolset):
-        @property
-        def id(self): return None
-        @property
-        def label(self): return "unknown"
-        async def get_tools(self, ctx): return {}  # pragma: no cover
-        async def call_tool(self, *a, **kw): pass  # pragma: no cover
-        def apply(self, visitor): pass  # pragma: no cover
-        def visit_and_replace(self, visitor): return self  # pragma: no cover
-
-    with caplog.at_level(logging.ERROR, logger="messages.messages"):
-        schemas = await _extract_tool_definitions([_UnknownToolset()], "test-agent")
-
-    assert schemas == []
-    assert "unsupported toolset type" in caplog.text
