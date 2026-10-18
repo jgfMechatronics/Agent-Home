@@ -37,7 +37,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.mcp import MCPToolset
-
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 # Local
