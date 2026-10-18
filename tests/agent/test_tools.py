@@ -15,7 +15,6 @@ from agent.tools import (
     memory_read,
     memory_replace,
 )
-from prototype.iac.send_message import send_message
 from agent.types import AgentDeps
 from conftest import SAMPLE_AGENT_CONFIG, mock_run_context
 from db.models import AgentRecord, MemoryBlockRecord
@@ -162,27 +161,17 @@ class TestToolRegistry:
         assert "memory_replace" in TOOL_REGISTRY
         assert "memory_insert" in TOOL_REGISTRY
         assert "memory_read" in TOOL_REGISTRY
-        # memory_replace and memory_insert are wrapped in Tool for sequential execution
-        assert TOOL_REGISTRY["memory_replace"].function is memory_replace
-        assert TOOL_REGISTRY["memory_insert"].function is memory_insert
-        assert TOOL_REGISTRY["memory_read"].function is memory_read
-
-
-    def test_db_tools_are_sequential(self):
-        """DB tools have sequential=True to prevent session race conditions."""
-        assert TOOL_REGISTRY["memory_replace"].sequential is True
-        assert TOOL_REGISTRY["memory_insert"].sequential is True
-        assert TOOL_REGISTRY["memory_read"].sequential is True
-        assert TOOL_REGISTRY["send_message"].sequential is True
+        assert TOOL_REGISTRY["memory_replace"] is memory_replace
+        assert TOOL_REGISTRY["memory_insert"] is memory_insert
+        assert TOOL_REGISTRY["memory_read"] is memory_read
 
 
     def test_get_tools_returns_callables_for_valid_names(self):
         """get_tools_for_agent returns list of callables for valid tool names."""
         tools = get_tools_for_agent(["memory_replace", "memory_insert"])
         assert len(tools) == 2
-        # Tools are now Tool wrappers, check by function identity
-        assert any(getattr(t, 'function', t) is memory_replace for t in tools)
-        assert any(getattr(t, 'function', t) is memory_insert for t in tools)
+        assert memory_replace in tools
+        assert memory_insert in tools
 
 
     def test_get_tools_raises_keyerror_for_unknown(self):
