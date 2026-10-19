@@ -120,8 +120,8 @@ async def run_stateful_agent(agent: Agent,
     message_history = deserialize_messages(records)        
 
     try:
-        async with agent.iter(user_prompt=user_prompt, 
-                              deps=deps, 
+        async with agent.iter(user_prompt=user_prompt,
+                              deps=deps,
                               message_history=message_history,
                               usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT)) as run:
             
