@@ -247,4 +247,3 @@ class AgentFactory:
                 yield (agent, deps)
             finally:
                 self._agent_app_state.cancellation_token = None
-

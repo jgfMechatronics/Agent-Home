@@ -33,6 +33,7 @@ class RunStartedEvent:
 @dataclass(frozen=True)
 class RunCompletedEvent:
     """Emitted after all pydantic-ai events in a run."""
+    pass
 
 
 @dataclass(frozen=True)
