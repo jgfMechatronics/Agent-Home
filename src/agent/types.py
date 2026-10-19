@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Literal, get_args, get_origin
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
-from pydantic_ai import DeferredToolRequests
+from pydantic_ai import CancellationToken, DeferredToolRequests
 from pydantic_ai.models import parse_model_id
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.settings import ThinkingLevel
@@ -61,12 +61,12 @@ def validate_model_name(model_name: str) -> str:
 class AgentAppState:
     """Per-agent app-scoped state, held for the application lifetime.
 
-    Created lazily on first run per agent. Both fields are permanent — the lock
-    serializes concurrent requests, and the cancel_requested signals an in-flight
-    run to stop.
+    The lock serializes concurrent requests. cancellation_token is set by
+    AgentFactory.build_agent_and_deps() at run start and cleared at run end;
+    None means no run is active.
     """
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    cancel_requested: asyncio.Event = field(default_factory=asyncio.Event)
+    cancellation_token: CancellationToken | None = None
 
 
 # --- Domain Exceptions ---

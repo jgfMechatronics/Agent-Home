@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import AsyncIterator
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, CancellationToken
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models import infer_model
@@ -214,13 +214,6 @@ class AgentFactory:
             deps = AgentDeps(self._session, agent_record)
             yield deps
         finally:
-            # Clear cancel_requested on exit to prevent a stale signal (e.g. a cancel that arrived
-            # during teardown) from leaking into the next run. Tradeoff: if a second client is waiting
-            # on the lock and sent a cancel for their queued run, that cancel is silently lost here.
-            # Acceptable for now — our "queue" is just lock waiters with no ordering guarantees and no
-            # run attribution. When we add a real queue, cancels should be associated with a specific
-            # run so this ambiguity goes away.
-            self._agent_app_state.cancel_requested.clear()
             self._agent_app_state.lock.release()
 
 
@@ -235,19 +228,23 @@ class AgentFactory:
         it does, it doesn't null out the resources actually associated with the lock!!!! Oops.
         """
         async with self.build_deps() as deps:
-            model_settings = _build_model_settings(deps.config)
-            toolsets = _construct_toolsets(deps.config.toolset_names)
-            
-            agent = Agent(deps.config.model_name,
-                          instructions=get_system_prompt,
-                          deps_type=AgentDeps,
-                          name=deps.name,
-                          tools=get_tools_for_agent(deps.config.tool_names),
-                          toolsets=toolsets,
-                          retries=deps.config.retries,
-                          output_type=AgentOutput,
-                          model_settings=model_settings,
-                          capabilities=_build_capabilities())
-            
-            yield (agent, deps)
+            self._agent_app_state.cancellation_token = CancellationToken()
+            try:
+                model_settings = _build_model_settings(deps.config)
+                toolsets = _construct_toolsets(deps.config.toolset_names)
+
+                agent = Agent(deps.config.model_name,
+                              instructions=get_system_prompt,
+                              deps_type=AgentDeps,
+                              name=deps.name,
+                              tools=get_tools_for_agent(deps.config.tool_names),
+                              toolsets=toolsets,
+                              retries=deps.config.retries,
+                              output_type=AgentOutput,
+                              model_settings=model_settings,
+                              capabilities=_build_capabilities())
+
+                yield (agent, deps)
+            finally:
+                self._agent_app_state.cancellation_token = None
 

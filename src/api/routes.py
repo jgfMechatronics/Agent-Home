@@ -396,15 +396,14 @@ async def cancel_agent_run(
     """
     Cancel an active agent run.
 
-    Sets the cancel_requested for the given agent if a run is currently active.
+    Calls cancel() on the run's CancellationToken if a run is currently active.
     Returns 202 if the cancel signal was sent, 409 if no run is active.
-
-    Redundant cancels (event already set) succeed and return 202.
     """
     agent_app_state = agent_app_state_reg.get(agent_id)
-    if agent_app_state is None or not agent_app_state.lock.locked():
+    token = agent_app_state.cancellation_token if agent_app_state is not None else None
+    if token is None:
         raise HTTPException(status_code=409, detail=f"Agent {agent_id!r} has no active run")
-    agent_app_state.cancel_requested.set() # If there was a previous unserviced cancellation request, no harm in setting again
+    token.cancel()
 
 
 @router.get("/{agent_id}/messages")

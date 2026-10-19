@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, AsyncGenerator, AsyncIterator
 
 from starlette.requests import Request
 
+from pydantic_ai.exceptions import RunCancelled
+
 from agent.runner import run_stateful_agent
 from agent.types import MCPConnError
 
@@ -157,6 +159,8 @@ async def run_agent_with_broadcast(
         async for event in run_stateful_agent(agent, deps, agent_app_state, user_prompt):
             hub.broadcast(agent_id, event)
             yield event
+    except RunCancelled:
+        status = "cancelled"
     except MCPConnError as e:
         status = "error"
         hub.broadcast(agent_id, RunErrorEvent(message=f"\n\n{e}"))
@@ -166,6 +170,4 @@ async def run_agent_with_broadcast(
         hub.broadcast(agent_id, RunErrorEvent.from_exception(e))
         raise
     finally:
-        if agent_app_state.cancel_requested.is_set():
-            status = "cancelled"
         hub.broadcast(agent_id, RunCompletedEvent(status=status))

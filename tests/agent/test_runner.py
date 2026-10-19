@@ -472,7 +472,6 @@ class FunctionModelTestAgent:
         async def _make_agent_and_deps():
             async with agent_app_state.lock:
                 yield self._agent, AgentDeps(session=mock_session, agent_record=agent_record)
-                agent_app_state.cancel_requested.clear()
 
         app.dependency_overrides[get_agent_and_deps] = _make_agent_and_deps
         try:

@@ -13,6 +13,8 @@ from agent.broadcast_streaming import (
     RunErrorEvent,
     run_agent_with_broadcast,
 )
+from pydantic_ai.exceptions import RunCancelled
+
 from agent.types import MCPConnError
 from db.models import AgentRecord
 
@@ -111,9 +113,7 @@ class TestRunAgentWithBroadcast:
 
     @pytest.fixture
     def mock_state(self):
-        state = Mock()
-        state.cancel_requested = asyncio.Event()
-        return state
+        return Mock()
 
     @pytest.fixture
     def hub(self):
@@ -182,12 +182,12 @@ class TestRunAgentWithBroadcast:
         ]
 
     async def test_cancelled_status(self, mock_deps, mock_state, hub):
-        """If cancel_requested is set, status is 'cancelled'."""
+        """RunCancelled raised by runner produces status 'cancelled'."""
         mock_event = Mock()
 
         async def mock_runner(agent, deps, state, prompt):
             yield mock_event
-            mock_state.cancel_requested.set()
+            raise RunCancelled("cancelled by user")
 
         with patch("agent.broadcast_streaming.run_stateful_agent", mock_runner):
             async for _ in run_agent_with_broadcast(

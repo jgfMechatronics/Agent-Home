@@ -20,7 +20,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 import pytest_asyncio
 from pytest_mock import MockerFixture
-from pydantic_ai import Agent
+from pydantic_ai import Agent, CancellationToken
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     ModelRequest,
@@ -124,9 +124,8 @@ def test_get_or_create_agent_app_state_returns_same_agent_app_state_for_same_id(
     assert slot1 is slot2
     assert isinstance(slot1, AgentAppState)
     assert isinstance(slot1.lock, asyncio.Lock)
-    assert isinstance(slot1.cancel_requested, asyncio.Event)
     assert not slot1.lock.locked()
-    assert not slot1.cancel_requested.is_set()
+    assert slot1.cancellation_token is None
 
 
 def test_get_or_create_agent_app_state_returns_different_agent_app_state_reg_for_different_ids(agent_app_state_reg: dict):
@@ -177,8 +176,8 @@ async def test_build_deps_creates_acquires_and_releases_lock(
     assert not lock.locked()
 
 
-class TestBuildDepsLockAndCancelBehavior:
-    """Verifies lock acquire/release (via spy) and cancel_requested clearing on teardown.
+class TestBuildDepsLockBehavior:
+    """Verifies lock acquire/release (via spy) on teardown.
 
     Spy slot is pre-populated before factory construction so _get_or_create_agent_app_state
     returns it as self._agent_app_state. Tests cover both normal and exception exit paths.
@@ -194,39 +193,32 @@ class TestBuildDepsLockAndCancelBehavior:
     ):
         self.lock = create_spied_lock(agent_record.id, agent_app_state_reg, mocker)
         self.factory = AgentFactory(agent_record.id, agent_app_state_reg, session)
-        self.cancel_requested = agent_app_state_reg[agent_record.id].cancel_requested
 
     @pytest.mark.asyncio
-    async def test_normal_exit_releases_lock_and_clears_cancel(self):
-        """build_deps should release the lock and clear a pending cancel on normal exit."""
-        self.cancel_requested.set()
-
+    async def test_normal_exit_releases_lock(self):
+        """build_deps should release the lock on normal exit."""
         async with self.factory.build_deps():
             assert self.lock.locked()
 
         assert_lock_acquired_and_released(self.lock)
-        assert not self.cancel_requested.is_set()
 
     @pytest.mark.asyncio
-    async def test_exception_exit_releases_lock_and_clears_cancel(self):
-        """build_deps should release the lock and clear a pending cancel even if an exception is raised."""
-        self.cancel_requested.set()
-
+    async def test_exception_exit_releases_lock(self):
+        """build_deps should release the lock even if an exception is raised."""
         with pytest.raises(RuntimeError):
             async with self.factory.build_deps():
                 raise RuntimeError("Intentional test error")
 
         assert_lock_acquired_and_released(self.lock)
-        assert not self.cancel_requested.is_set()
 
 
 @pytest.mark.asyncio
-async def test_build_deps_raises_releases_lock_and_clears_cancel_on_fetch_failure(
+async def test_build_deps_raises_releases_lock_on_fetch_failure(
     agent_app_state_reg: dict,
     session: AsyncSession,
     mocker: MockerFixture,
 ):
-    """build_deps should raise for unknown agent_id AND release lock and clear cancel on failure.
+    """build_deps should raise for unknown agent_id AND release lock on failure.
 
     Design decision: lock-then-fetch. The lock must be acquired BEFORE the DB fetch
     to prevent concurrent runs from seeing stale state. This means if the fetch fails,
@@ -236,15 +228,11 @@ async def test_build_deps_raises_releases_lock_and_clears_cancel_on_fetch_failur
     lock = create_spied_lock(NONEXISTENT_AGENT_ID, agent_app_state_reg, mocker)
     factory = AgentFactory(NONEXISTENT_AGENT_ID, agent_app_state_reg, session)
 
-    cancel_requested = agent_app_state_reg[NONEXISTENT_AGENT_ID].cancel_requested
-    cancel_requested.set()
-
     with pytest.raises(AgentNotFoundError):
         async with factory.build_deps() as deps:
             pass
 
     assert_lock_acquired_and_released(lock)
-    assert not cancel_requested.is_set()
 
 
 # --- build_deps concurrency tests ---
@@ -383,6 +371,26 @@ class TestBuildAgentAndDeps:
             assert self.agent_app_state_reg[self.agent_record.id].lock.locked()
 
         assert not self.agent_app_state_reg[self.agent_record.id].lock.locked()
+
+    async def test_cancellation_token_set_during_run_and_cleared_after(self):
+        """build_agent_and_deps should mint a CancellationToken on enter and None it on exit."""
+        app_state = self.agent_app_state_reg[self.agent_record.id]
+        assert app_state.cancellation_token is None
+
+        async with self.factory.build_agent_and_deps():
+            assert isinstance(app_state.cancellation_token, CancellationToken)
+
+        assert app_state.cancellation_token is None
+
+    async def test_cancellation_token_cleared_on_exception(self):
+        """build_agent_and_deps should None the token even if an exception is raised inside."""
+        app_state = self.agent_app_state_reg[self.agent_record.id]
+
+        with pytest.raises(RuntimeError):
+            async with self.factory.build_agent_and_deps():
+                raise RuntimeError("Intentional test error")
+
+        assert app_state.cancellation_token is None
 
     async def test_uses_correct_model(self):
         """Constructed agent should use the model from agent_config.model_name."""
