@@ -316,6 +316,35 @@ async def memory_read(
 
 
 # =============================================================================
+# Web Fetch Wrapper (plain text for pageable spills)
+# =============================================================================
+
+# The underlying tool returns WebFetchResult — we extract just the content
+_underlying_web_fetch = web_fetch_tool()
+
+
+async def web_fetch(ctx: RunContext[AgentDeps], url: str) -> str:  # noqa: ARG001
+    """Fetches the content of a web page at the given URL and returns it as markdown or binary content.
+
+    Returns plain text with a metadata header, preserving newlines from the original
+    content. This makes spilled results pageable via read_tool_result's line-based
+    pagination (unlike the structured WebFetchResult which escapes newlines in JSON).
+    """
+    # Call the underlying tool — it returns WebFetchResult (a TypedDict)
+    # The underlying tool doesn't use ctx, it only takes url
+    result = await _underlying_web_fetch.function(url)
+
+    # Format as plain text with metadata header
+    # The header is minimal to not waste tokens, content newlines are preserved
+    header = f"URL: {result['url']}"
+    if result["title"]:
+        header += f"\nTitle: {result['title']}"
+    header += "\n---\n"
+
+    return header + result["content"]
+
+
+# =============================================================================
 # Tool Registry
 # =============================================================================
 
@@ -324,7 +353,7 @@ TOOL_REGISTRY: dict[str, Callable | Tool[AgentDeps]] = {
     "memory_insert": memory_insert,
     "memory_read": memory_read,
     "duckduckgo_search": duckduckgo_search_tool(max_results=5),
-    "web_fetch": web_fetch_tool(),
+    "web_fetch": web_fetch,
     "send_message": send_message,
 }
 
