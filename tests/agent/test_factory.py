@@ -33,7 +33,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
-from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate
+from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate, indented_json
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
@@ -658,6 +658,10 @@ class TestBuildCapabilities:
         assert band.over == TOOL_OUTPUT_SPILL_THRESHOLD_CHARS
         assert isinstance(band.action, Spill)
         assert isinstance(band.action.then, Truncate)
+
+        # indented_json serializer ensures structured tool returns spill with newlines,
+        # making read_tool_result line-based pagination work correctly
+        assert tol.serializer is indented_json
 
 
 @pytest.mark.asyncio

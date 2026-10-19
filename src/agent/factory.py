@@ -23,7 +23,14 @@ from pydantic_ai.models import infer_model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate
+from pydantic_ai_harness.tool_output_limits import (
+    Band,
+    LocalFileStore,
+    Spill,
+    ToolOutputLimits,
+    Truncate,
+    indented_json,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
@@ -168,6 +175,7 @@ def _build_capabilities() -> list[AgentCapability[AgentDeps]]:
         ToolOutputLimits(
             bands=[Band(over=TOOL_OUTPUT_SPILL_THRESHOLD_CHARS, action=Spill(then=Truncate()))],
             store=LocalFileStore(cleanup_after=TOOL_OUTPUT_SPILL_CLEANUP_AFTER),
+            serializer=indented_json,
         ),
     ]
 
