@@ -10,7 +10,7 @@ import logging
 from collections.abc import Sequence
 from typing import AsyncGenerator, TYPE_CHECKING
 
-from pydantic_ai import Agent, AgentRunResultEvent, capture_run_messages
+from pydantic_ai import Agent, AgentRunResultEvent, RunCancelled
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -41,13 +41,11 @@ COMPACTION_RESUME_NOTICE = format_system_alert("Compaction complete, resuming ru
                                                "No action is required on your part, you can continue where you left off.", tags_on_newline=True)
 
 
-async def _check_and_handle_cancel(
-    agent_app_state: AgentAppState,
+async def _handle_run_cancellation(
+    canceled_e: RunCancelled,
     deps: AgentDeps,
     toolsets: "Sequence[AbstractToolset]",
-) -> bool:
-    if not agent_app_state.cancel_requested.is_set():
-        return False
+):
     cancel_notice = ModelRequest(parts=[UserPromptPart(
         content=format_system_alert("Turn cancelled by user.")
     )])
@@ -90,31 +88,34 @@ async def run_stateful_agent(agent: Agent,
         async with agent.iter(user_prompt=user_prompt,
                               deps=deps,
                               message_history=message_history,
+                              cancellation_token=agent_app_state.cancellation_token,
                               usage_limits=UsageLimits(request_limit=_REQUEST_LIMIT)) as run:
-            
-            persisted_msgs_cursor = 0
-            
-            async for node in run:
-                # persist messages if required. TODO: break into fcn?
-                msgs_to_persist = run.new_messages()[persisted_msgs_cursor:]
-                # Avoid passing a tool call part into persit without return. Only need to check last part of last msg.
-                # If there's a lone call somewhere else, the history is degenerate and repair_messages() call in persist_messages() will clean up
-                if msgs_to_persist and (not isinstance(msgs_to_persist[-1].parts[-1], ToolCallPart)):
-                    tool_defs = run.ctx.deps.tool_manager.tool_defs
-                    await persist_messages(deps, msgs_to_persist, tool_defs)
+            try:            
+                persisted_msgs_cursor = 0
+                
+                async for node in run:
+                    # persist messages if required. TODO: break into fcn?
+                    msgs_to_persist = run.new_messages()[persisted_msgs_cursor:]
+                    # Avoid passing a tool call part into persit without return. Only need to check last part of last msg.
+                    # If there's a lone call somewhere else, the history is degenerate and repair_messages() call in persist_messages() will clean up
+                    if msgs_to_persist and (not isinstance(msgs_to_persist[-1].parts[-1], ToolCallPart)):
+                        tool_defs = run.ctx.deps.tool_manager.tool_defs
+                        await persist_messages(deps, msgs_to_persist, tool_defs)
+                        await deps.commit_changes_refresh_agent_record() # TODO: Why don't we just commit inside persist
+                        persisted_msgs_cursor += len(msgs_to_persist)
 
-                if Agent.is_model_request_node(node):
-                    async with node.stream(run.ctx) as event_stream:
-                        async for event in event_stream:
-                            yield event
-                            # Probably want to service cancel here rather than node boundaries, would be the most reponsive. 
-                            # Except then we have some funny gating on cancellation: Only serviced during model request node. Might need to service in multiple spots (*gasp*)
-
-
-
+                    if Agent.is_model_request_node(node):
+                        async with node.stream(run.ctx) as event_stream:
+                            async for event in event_stream:
+                                yield event
+            except RunCancelled as canceled_e:
+                tool_defs = run.ctx.deps.tool_manager.tool_defs
+                _handle_run_cancellation(canceled_e, tool_defs)
+                # No need to propagate, expected exc we handled internally
+                return
     except RuntimeError as e:
         if isinstance(e.__cause__, httpx.ConnectError):
             raise MCPConnError(
                 "At least 1 attached MCP server is unreachable — check status of attached MCP servers."
                 ) from e
-            raise
+        raise
