@@ -64,7 +64,7 @@ ALL_EVENTS = [
     pytest.param(FinalResultEvent(tool_name=None, tool_call_id=None), "FinalResultEvent", id="FinalResultEvent"),
     pytest.param(AgentRunResultEvent(result=Mock()), "AgentRunResultEvent", id="AgentRunResultEvent"),
     pytest.param(RunStartedEvent(prompt="hello"), "RunStartedEvent", id="RunStartedEvent"),
-    pytest.param(RunCompletedEvent(status="success"), "RunCompletedEvent", id="RunCompletedEvent"),
+    pytest.param(RunCompletedEvent(), "RunCompletedEvent", id="RunCompletedEvent"),
     pytest.param(RunErrorEvent(message="boom"), "Error", id="RunErrorEvent"),
 ]
 
@@ -81,7 +81,7 @@ PASSTHROUGH_EVENTS = [
     pytest.param(PartStartEvent(index=0, part=THINKING_PART), id="PartStartEvent_thinking"),
     pytest.param(PartDeltaEvent(index=0, delta=THINKING_DELTA), id="PartDeltaEvent_thinking"),
     pytest.param(RunStartedEvent(prompt="hello"), id="RunStartedEvent"),
-    pytest.param(RunCompletedEvent(status="success"), id="RunCompletedEvent"),
+    pytest.param(RunCompletedEvent(), id="RunCompletedEvent"),
 ]
 
 

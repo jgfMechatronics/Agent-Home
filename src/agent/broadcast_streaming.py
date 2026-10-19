@@ -11,8 +11,6 @@ from typing import TYPE_CHECKING, AsyncGenerator, AsyncIterator
 
 from starlette.requests import Request
 
-from pydantic_ai.exceptions import RunCancelled
-
 from agent.runner import run_stateful_agent
 from agent.types import MCPConnError
 
@@ -35,16 +33,15 @@ class RunStartedEvent:
 @dataclass(frozen=True)
 class RunCompletedEvent:
     """Emitted after all pydantic-ai events in a run."""
-    status: str  # "success" | "cancelled" | "error"
 
 
 @dataclass(frozen=True)
 class RunErrorEvent:
     """Emitted when an agent run fails with an unhandled exception.
 
-    Broadcast before RunCompletedEvent(status='error') so subscribers see the
-    error details before the terminal signal. Mirrors the Error SSE emitted by
-    the handle_message route for direct (non-background) runs.
+    Broadcast before RunCompletedEvent so subscribers see the error details
+    before the terminal signal. Mirrors the Error SSE emitted by the
+    handle_message route for direct (non-background) runs.
     """
     message: str
 
@@ -141,33 +138,24 @@ async def run_agent_with_broadcast(
     hub: BroadcastHub,
 ) -> AsyncGenerator[object, None]:
     """Wrap run_stateful_agent with broadcast logic.
-    
+
     Broadcasts RunStartedEvent before the run, all pydantic-ai events during,
     and RunCompletedEvent after. Yields events through so caller can also
-    consume them (e.g., for SSE response).
-    
-    Status in RunCompletedEvent:
-    - "success" if run completes normally
-    - "cancelled" if cancel_requested was set
-    - "error" if an exception occurred (re-raised after broadcasting)
+    consume them (e.g., for SSE response). Exceptions (including MCPConnError)
+    are broadcast as RunErrorEvent then re-raised.
     """
 
     agent_id = deps.agent_id
     hub.broadcast(agent_id, RunStartedEvent(prompt=user_prompt))
-    status = "success"
     try:
         async for event in run_stateful_agent(agent, deps, agent_app_state, user_prompt):
             hub.broadcast(agent_id, event)
             yield event
-    except RunCancelled:
-        status = "cancelled"
     except MCPConnError as e:
-        status = "error"
         hub.broadcast(agent_id, RunErrorEvent(message=f"\n\n{e}"))
         raise
     except Exception as e:
-        status = "error"
         hub.broadcast(agent_id, RunErrorEvent.from_exception(e))
         raise
     finally:
-        hub.broadcast(agent_id, RunCompletedEvent(status=status))
+        hub.broadcast(agent_id, RunCompletedEvent())

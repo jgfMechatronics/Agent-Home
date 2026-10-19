@@ -13,8 +13,6 @@ from agent.broadcast_streaming import (
     RunErrorEvent,
     run_agent_with_broadcast,
 )
-from pydantic_ai.exceptions import RunCancelled
-
 from agent.types import MCPConnError
 from db.models import AgentRecord
 
@@ -72,7 +70,7 @@ class TestBroadcastHub:
         Tests both termination mechanisms: client disconnect and server shutdown.
         """
         # Events to broadcast for each agent
-        events_a = [RunStartedEvent(prompt="a1"), RunCompletedEvent(status="success")]
+        events_a = [RunStartedEvent(prompt="a1"), RunCompletedEvent()]
         events_b = [RunStartedEvent(prompt="b1"), RunStartedEvent(prompt="b2")]
 
         # Create mock requests (one for a, two for b)
@@ -119,8 +117,8 @@ class TestRunAgentWithBroadcast:
     def hub(self):
         return Mock()
 
-    async def test_success_status(self, mock_deps, mock_state, hub):
-        """Normal run broadcasts started, events, and completed(success)."""
+    async def test_normal_run_broadcasts_started_events_and_completed(self, mock_deps, mock_state, hub):
+        """Normal run broadcasts RunStartedEvent, all events, then RunCompletedEvent."""
         mock_events = [Mock(name="event1"), Mock(name="event2")]
 
         async def mock_runner(agent, deps, state, prompt):
@@ -137,11 +135,11 @@ class TestRunAgentWithBroadcast:
             (("test-agent", RunStartedEvent(prompt="test prompt")),),
             (("test-agent", mock_events[0]),),
             (("test-agent", mock_events[1]),),
-            (("test-agent", RunCompletedEvent(status="success")),),
+            (("test-agent", RunCompletedEvent()),),
         ]
 
-    async def test_error_status(self, mock_deps, mock_state, hub):
-        """Exception broadcasts completed(error) and re-raises."""
+    async def test_exception_broadcasts_error_event_and_reraises(self, mock_deps, mock_state, hub):
+        """Unexpected exception broadcasts RunErrorEvent then RunCompletedEvent, and re-raises."""
         mock_event = Mock()
 
         async def mock_runner(agent, deps, state, prompt):
@@ -159,7 +157,7 @@ class TestRunAgentWithBroadcast:
             (("test-agent", RunStartedEvent(prompt="test prompt")),),
             (("test-agent", mock_event),),
             (("test-agent", RunErrorEvent(message="\n\nUnexpected internal server error: 'ValueError: test error'")),),
-            (("test-agent", RunCompletedEvent(status="error")),),
+            (("test-agent", RunCompletedEvent()),),
         ]
 
     async def test_mcp_conn_error_broadcasts_clean_message(self, mock_deps, mock_state, hub):
@@ -178,27 +176,7 @@ class TestRunAgentWithBroadcast:
         assert hub.broadcast.call_args_list == [
             (("test-agent", RunStartedEvent(prompt="test prompt")),),
             (("test-agent", RunErrorEvent(message="\n\nAt least 1 attached MCP server is unreachable")),),
-            (("test-agent", RunCompletedEvent(status="error")),),
-        ]
-
-    async def test_cancelled_status(self, mock_deps, mock_state, hub):
-        """RunCancelled raised by runner produces status 'cancelled'."""
-        mock_event = Mock()
-
-        async def mock_runner(agent, deps, state, prompt):
-            yield mock_event
-            raise RunCancelled("cancelled by user")
-
-        with patch("agent.broadcast_streaming.run_stateful_agent", mock_runner):
-            async for _ in run_agent_with_broadcast(
-                Mock(), mock_deps, mock_state, "test prompt", hub
-            ):
-                pass
-
-        assert hub.broadcast.call_args_list == [
-            (("test-agent", RunStartedEvent(prompt="test prompt")),),
-            (("test-agent", mock_event),),
-            (("test-agent", RunCompletedEvent(status="cancelled")),),
+            (("test-agent", RunCompletedEvent()),),
         ]
 
 
