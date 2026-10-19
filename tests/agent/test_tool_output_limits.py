@@ -43,6 +43,11 @@ pytestmark = pytest.mark.usefixtures("frozen_stamp_clock")
 # --- Payload fixtures ---
 
 PAYLOAD_MARKER = "the needle in the haystack"
+_PAYLOAD_FILLER = "x" * 60
+_PAYLOAD_LINE_TEMPLATE = f"line {{i:05d}}: {_PAYLOAD_FILLER}"
+_PAYLOAD_LINE_COUNT = 3 * TOOL_OUTPUT_SPILL_THRESHOLD_CHARS // len(_PAYLOAD_LINE_TEMPLATE.format(i=0)) + 1
+# Request ~2/3 of lines — enough to include the midpoint marker, but clearly partial
+PARTIAL_READ_LIMIT = int(_PAYLOAD_LINE_COUNT * 2 / 3)
 
 
 def _payload() -> str:
@@ -51,11 +56,8 @@ def _payload() -> str:
     The needle sits at the midpoint so it falls in the omitted section of the
     head/tail preview — if it ever shows up in history, the spill didn't happen.
     """
-    filler = "x" * 60
-    line = f"line {{i:05d}}: {filler}"
-    line_count = 3 * TOOL_OUTPUT_SPILL_THRESHOLD_CHARS // len(line.format(i=0)) + 1
-    lines = [line.format(i=i) for i in range(line_count)]
-    needle_idx = line_count // 2
+    lines = [_PAYLOAD_LINE_TEMPLATE.format(i=i) for i in range(_PAYLOAD_LINE_COUNT)]
+    needle_idx = _PAYLOAD_LINE_COUNT // 2
     lines[needle_idx] = f"line {needle_idx:05d}: {PAYLOAD_MARKER}"
     payload = "\n".join(lines)
     assert len(payload) > TOOL_OUTPUT_SPILL_THRESHOLD_CHARS
@@ -245,7 +247,7 @@ class TestReadback:
             spill = _find_tool_return(messages, BIG_TOOL_NAME)
             handle = _extract_handle(str(spill.content))
             args = json.dumps({
-                "handle": handle, "offset": 0, "limit": 600,
+                "handle": handle, "offset": 0, "limit": PARTIAL_READ_LIMIT,
                 "from_end": False, "pattern": None,
             })
             return ModelResponse(parts=[ToolCallPart(
@@ -259,3 +261,8 @@ class TestReadback:
 
         readback = _find_tool_return(result.all_messages(), READ_TOOL_NAME)
         assert PAYLOAD_MARKER in str(readback.content)
+
+        # Verify pagination actually limited the result
+        # (+2 for timestamp line + handle header line)
+        readback_lines = str(readback.content).splitlines()
+        assert len(readback_lines) <= PARTIAL_READ_LIMIT + 2, "pagination should limit result"
