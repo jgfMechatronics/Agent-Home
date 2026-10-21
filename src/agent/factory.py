@@ -91,17 +91,12 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
             anthropic_cache_messages=True,
         )
     elif isinstance(m, OpenRouterModel):
-        # Routing preferences for OpenRouter-served models:
-        # - quantizations: fp8 matches Z.AI's native serving quant — avoids fp4 routes
-        #   with observable quality loss on our workload
-        # - sort: price — cheapest qualifying provider; also opts out of Auto Exacto
-        #   (provider reordering per tool-calling request), which would bust prompt
-        #   caches mid-conversation. With price sort, sticky routing holds.
-        # - data_collection: deny — no provider-side training on our data
+        # sort by price opts out of auto exacto which breaks sticky routing.
+        # TODO: OR providers game the cost sort and will often try to win on uncached input price (sort col)
+        # and take profit on the cache price. Need to impl custom sort by effective price or something.
         settings = OpenRouterModelSettings(
             **settings,
             openrouter_provider={
-                "quantizations": ["fp8"],
                 "sort": "price",
                 "data_collection": "deny",
             },
