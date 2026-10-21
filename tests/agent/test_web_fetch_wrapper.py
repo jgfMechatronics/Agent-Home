@@ -38,44 +38,38 @@ class TestWebFetchWrapper:
 
     async def test_text_result_format(self, mock_ctx):
         """Wrapper returns plain text with header, preserving content newlines."""
+        content = "First paragraph.\n\nSecond paragraph."
         result, _ = await _call_with_mock_result(
             mock_ctx,
-            _mock_result("https://example.com/page", "Example Page", "First paragraph.\n\nSecond paragraph."),
+            _mock_result("https://example.com/page", "Example Page", content),
         )
 
-        # Plain text format, not JSON
-        assert not result.startswith("{")
-        assert "URL: https://example.com/page" in result
-        assert "Title: Example Page" in result
-        assert "---" in result
-        # Content newlines preserved as actual newlines, not escaped
-        assert "First paragraph.\n\nSecond paragraph." in result
-        assert "\\n" not in result
+        # Build expected output piece by piece
+        expected = "URL: https://example.com/page\n"  # URL line
+        expected += "Title: Example Page\n"  # Title line (present when non-empty)
+        expected += "---\n"  # Separator
+        expected += content  # Content with preserved newlines
+        assert result == expected
 
-    @pytest.mark.parametrize("title,should_appear", [
-        ("", False),
-        ("My Page Title", True),
+    @pytest.mark.parametrize("title,expected_output", [
+        ("", "URL: https://example.com\n---\nx"),  # No title line when empty
+        ("My Page Title", "URL: https://example.com\nTitle: My Page Title\n---\nx"),  # Title line when present
     ])
-    async def test_title_inclusion(self, mock_ctx, title, should_appear):
+    async def test_title_inclusion(self, mock_ctx, title, expected_output):
         """Title line included only when title is non-empty."""
         result, _ = await _call_with_mock_result(mock_ctx, _mock_result(title=title))
-
-        if should_appear:
-            assert f"Title: {title}" in result
-        else:
-            assert "Title:" not in result
-        # URL always present regardless of title
-        assert "URL: https://example.com" in result
+        assert result == expected_output
 
     async def test_line_count_matches_content(self, mock_ctx):
         """Output line count reflects actual content lines for pagination."""
-        content = "\n".join(f"Line {i}" for i in range(10))
+        content_lines = [f"Line {i}" for i in range(10)]
+        content = "\n".join(content_lines)
         result, _ = await _call_with_mock_result(mock_ctx, _mock_result(title="Test", content=content))
 
         # Header: URL, Title, ---, then 10 content lines = 13 total
-        assert len(result.split("\n")) == 13
-        assert "Line 0" in result
-        assert "Line 9" in result
+        expected = "URL: https://example.com\nTitle: Test\n---\n" + content
+        assert result == expected
+        assert len(result.split("\n")) == 13  # Verify line count assumption
 
     async def test_passes_url_to_underlying_tool(self, mock_ctx):
         """URL is passed through to the underlying web_fetch_tool."""
