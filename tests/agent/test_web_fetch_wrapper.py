@@ -20,6 +20,11 @@ def mock_ctx():
     return ctx
 
 
+def _mock_result(url="https://example.com", title="", content="x"):
+    """Build a WebFetchResult-shaped dict."""
+    return {"url": url, "title": title, "content": content}
+
+
 async def _call_with_mock_result(mock_ctx, mock_result, url="https://example.com"):
     """Call web_fetch with a mocked underlying tool return."""
     with patch.object(_underlying_web_fetch, "function", new_callable=AsyncMock) as mock_fn:
@@ -33,12 +38,10 @@ class TestWebFetchWrapper:
 
     async def test_text_result_format(self, mock_ctx):
         """Wrapper returns plain text with header, preserving content newlines."""
-        mock_result = {
-            "url": "https://example.com/page",
-            "title": "Example Page",
-            "content": "First paragraph.\n\nSecond paragraph.",
-        }
-        result, _ = await _call_with_mock_result(mock_ctx, mock_result)
+        result, _ = await _call_with_mock_result(
+            mock_ctx,
+            _mock_result("https://example.com/page", "Example Page", "First paragraph.\n\nSecond paragraph."),
+        )
 
         # Plain text format, not JSON
         assert not result.startswith("{")
@@ -55,8 +58,7 @@ class TestWebFetchWrapper:
     ])
     async def test_title_inclusion(self, mock_ctx, title, should_appear):
         """Title line included only when title is non-empty."""
-        mock_result = {"url": "https://example.com", "title": title, "content": "x"}
-        result, _ = await _call_with_mock_result(mock_ctx, mock_result)
+        result, _ = await _call_with_mock_result(mock_ctx, _mock_result(title=title))
 
         if should_appear:
             assert f"Title: {title}" in result
@@ -67,13 +69,8 @@ class TestWebFetchWrapper:
 
     async def test_line_count_matches_content(self, mock_ctx):
         """Output line count reflects actual content lines for pagination."""
-        content_lines = [f"Line {i}" for i in range(10)]
-        mock_result = {
-            "url": "https://example.com",
-            "title": "Test",
-            "content": "\n".join(content_lines),
-        }
-        result, _ = await _call_with_mock_result(mock_ctx, mock_result)
+        content = "\n".join(f"Line {i}" for i in range(10))
+        result, _ = await _call_with_mock_result(mock_ctx, _mock_result(title="Test", content=content))
 
         # Header: URL, Title, ---, then 10 content lines = 13 total
         assert len(result.split("\n")) == 13
@@ -82,8 +79,7 @@ class TestWebFetchWrapper:
 
     async def test_passes_url_to_underlying_tool(self, mock_ctx):
         """URL is passed through to the underlying web_fetch_tool."""
-        mock_result = {"url": "https://test.com", "title": "", "content": "x"}
-        _, mock_fn = await _call_with_mock_result(mock_ctx, mock_result, "https://test.com")
+        _, mock_fn = await _call_with_mock_result(mock_ctx, _mock_result("https://test.com"), "https://test.com")
 
         mock_fn.assert_called_once_with("https://test.com")
 
@@ -92,6 +88,5 @@ class TestWebFetchWrapper:
         mock_binary = BinaryContent(data=b"fake image data", media_type="image/png")
         result, _ = await _call_with_mock_result(mock_ctx, mock_binary, "https://example.com/image.png")
 
+        # Identity check — same object returned unchanged
         assert result is mock_binary
-        assert result.data == b"fake image data"
-        assert result.media_type == "image/png"
