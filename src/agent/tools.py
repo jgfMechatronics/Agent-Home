@@ -10,7 +10,7 @@ from typing import Callable
 
 from pydantic_ai import RunContext
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
-from pydantic_ai.common_tools.web_fetch import web_fetch_tool
+from pydantic_ai.common_tools.web_fetch import web_fetch_tool, BinaryContent
 from pydantic_ai.tools import Tool
 from pydantic_ai.exceptions import ModelRetry
 
@@ -323,18 +323,24 @@ async def memory_read(
 _underlying_web_fetch = web_fetch_tool()
 
 
-async def web_fetch(ctx: RunContext[AgentDeps], url: str) -> str:  # noqa: ARG001
-    """Fetches the content of a web page at the given URL and returns it as markdown or binary content.
+async def web_fetch(ctx: RunContext[AgentDeps], url: str) -> str | BinaryContent:  # noqa: ARG001
+    """Fetches the content of a web page at the given URL and returns it as markdown.
 
-    Returns plain text with a metadata header, preserving newlines from the original
-    content. This makes spilled results pageable via read_tool_result's line-based
-    pagination (unlike the structured WebFetchResult which escapes newlines in JSON).
+    For text/HTML content: returns plain text with a metadata header, preserving
+    newlines from the original content. This makes spilled results pageable via
+    read_tool_result's line-based pagination.
+
+    For binary content (images, PDFs, audio): returns the BinaryContent object
+    unchanged for pydantic-ai's native handling.
     """
-    # Call the underlying tool — it returns WebFetchResult (a TypedDict)
-    # The underlying tool doesn't use ctx, it only takes url
+    # Call the underlying tool — returns WebFetchResult (TypedDict) or BinaryContent
     result = await _underlying_web_fetch.function(url)
 
-    # Format as plain text with metadata header
+    # BinaryContent passes through unchanged for pydantic-ai's native handling
+    if isinstance(result, BinaryContent):
+        return result
+
+    # Format text content as plain text with metadata header
     # The header is minimal to not waste tokens, content newlines are preserved
     header = f"URL: {result['url']}"
     if result["title"]:

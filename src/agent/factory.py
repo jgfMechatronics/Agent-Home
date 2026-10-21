@@ -85,6 +85,8 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
         thinking=config.thinking_mode,
         max_tokens=36864,
         timeout=180,
+        # NOTE: If we re-enable parallel tool calls, need to be sure any persist gating handles them appropriately
+        # and passes the list to persist at the right time.
         parallel_tool_calls=False,
     )
 

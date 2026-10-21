@@ -2,9 +2,12 @@
 
 The wrapper converts WebFetchResult (structured JSON) to plain text with preserved
 newlines, making spilled content pageable via read_tool_result's line-based pagination.
+BinaryContent (images, PDFs, audio) passes through unchanged.
 """
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from pydantic_ai.common_tools.web_fetch import BinaryContent
 
 from agent.tools import web_fetch, _underlying_web_fetch
 
@@ -118,3 +121,17 @@ class TestWebFetchWrapper:
 
         # Underlying tool only takes url, not ctx
         mock_fn.assert_called_once_with("https://test.com")
+
+    async def test_binary_content_passes_through_unchanged(self, mock_ctx):
+        """BinaryContent (images, PDFs, audio) passes through unchanged."""
+        mock_binary = BinaryContent(data=b"fake image data", media_type="image/png")
+
+        with patch.object(_underlying_web_fetch, "function", new_callable=AsyncMock) as mock_fn:
+            mock_fn.return_value = mock_binary
+            result = await web_fetch(mock_ctx, "https://example.com/image.png")
+
+        # Should return the exact same BinaryContent object
+        assert result is mock_binary
+        assert isinstance(result, BinaryContent)
+        assert result.data == b"fake image data"
+        assert result.media_type == "image/png"
