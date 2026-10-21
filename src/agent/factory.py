@@ -74,6 +74,8 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     # execute them sequentially. Required because run_stateful_agent's persist_messages
     # shares a session with tool execution — parallel tool tasks race on the session.
     # Safe to remove after session factory refactor.
+    # ALSO: consider agentic compaction (deferred tools) before flipping this — behavior
+    # of co-emitted compact + function tool calls in the same response is unverified.
     settings = ModelSettings(
         thinking=config.thinking_mode,
         max_tokens=36864,
