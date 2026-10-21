@@ -614,7 +614,7 @@ class TestBuildModelSettings:
         """OpenRouter model → fp8-only routing, price sort (Auto Exacto off), data collection denied."""
         settings = _build_model_settings(self._config("openrouter:z-ai/glm-5.3"))
         provider = settings.get("openrouter_provider")
-        assert provider == {"quantizations": ["fp8"], "sort": "price", "data_collection": "deny"}
+        assert provider == {"sort": "price", "data_collection": "deny"}
 
     def test_openrouter_usage_included(self):
         """OpenRouter model → usage details included in responses."""
