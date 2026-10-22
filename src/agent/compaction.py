@@ -61,11 +61,11 @@ def is_compaction_needed(total_tokens: int | None, config: AgentConfig) -> bool:
 
 async def compact(deps: AgentDeps) -> bool:
     """Advance context_window_start to reduce context size.
-    
+
     Derives total_tokens from the last ModelResponse in context (where we store cumulative usage from pydantic AI),
     estimates system prompt tokens from character count,
     and advances the pointer to retain the target fraction of current message tokens.
-    
+
     Guarantees:
     - Never evicts the most recent 4 messages
     - No-op if 4 or fewer messages in context
@@ -74,10 +74,11 @@ async def compact(deps: AgentDeps) -> bool:
     - Tool call/return pairs are kept atomic (never split across the boundary)
     - Calls compile_system_prompt after advancing pointer
     """
-    
-    messages = await load_messages(
-        deps.session, deps.agent_id, start_seq_id=deps.context_window_start
-    )
+
+    async with deps.read_scope() as session:
+        messages = await load_messages(
+            session, deps.agent_id, start_seq_id=deps.context_window_start
+        )
 
     # small context guard/avoid div by 0
     if len(messages) <= MIN_MESSAGES_AFTER_COMPACTION:
@@ -121,10 +122,11 @@ async def compact(deps: AgentDeps) -> bool:
     if n_msg_to_keep >= len(messages):
         return False
 
-    deps.context_window_start = messages[-n_msg_to_keep].seq_id
-    deps.compaction_warning_fired = False  # Reset for next compaction cycle
-    await compile_system_prompt(deps)
-    await deps.commit_changes_refresh_agent_record()
+    new_start = messages[-n_msg_to_keep].seq_id
+    async with deps.write_scope() as session:
+        deps.context_window_start = new_start
+        deps.compaction_warning_fired = False  # Reset for next compaction cycle
+        await compile_system_prompt(deps, session)
     return True
 
 
@@ -137,13 +139,14 @@ async def clear_context(deps: AgentDeps) -> bool:
 
     Returns True if the pointer was advanced, False if there was nothing to clear.
     """
-    result = await deps.session.execute(
-        select(func.max(MessageRecord.seq_id)).where(MessageRecord.agent_id == deps.agent_id)
-    )
+    async with deps.read_scope() as session:
+        result = await session.execute(
+            select(func.max(MessageRecord.seq_id)).where(MessageRecord.agent_id == deps.agent_id)
+        )
     max_seq_id = result.scalar()
     if max_seq_id is not None and ((max_seq_id + 1) > deps.context_window_start):
-        deps.context_window_start = max_seq_id + 1
-        deps.compaction_warning_fired = False
-        await deps.commit_changes_refresh_agent_record()
+        async with deps.write_scope():
+            deps.context_window_start = max_seq_id + 1
+            deps.compaction_warning_fired = False
         return True
     return False

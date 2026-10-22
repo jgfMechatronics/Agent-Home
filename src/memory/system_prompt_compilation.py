@@ -11,6 +11,7 @@ from agent.types import AgentDeps
 from db.models import MemoryBlockRecord
 from memory.block_crud import get_blocks
 from pydantic_ai import RunContext
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _format_block(block: MemoryBlockRecord) -> str:
@@ -28,18 +29,21 @@ def _format_block(block: MemoryBlockRecord) -> str:
     )
 
 
-async def compile_system_prompt(deps: AgentDeps) -> None:
+async def compile_system_prompt(deps: AgentDeps, session: AsyncSession) -> None:
     """
     Assemble memory blocks into compiled_system_prompt.
-    
+
     - Fetches all blocks for deps.agent_id, ordered by position
     - Formats each block as XML with label, description, metadata, content
     - Prepends system_instructions wrapped in XML
     - Stores result in agent.compiled_system_prompt
     - Updates agent.sys_prompt_compiled_at
+
+    Caller must be inside a write_scope — sets record fields and reads blocks
+    via the provided session.
     """
     # Load blocks in position order
-    blocks = await get_blocks(deps.session, deps.agent_id)
+    blocks = await get_blocks(session, deps.agent_id)
 
     # Build prompt: system_instructions first, then blocks
     parts = [f"<system_instructions>\n{deps.system_instructions}\n</system_instructions>"]
@@ -50,8 +54,6 @@ async def compile_system_prompt(deps: AgentDeps) -> None:
     # Store result
     deps.compiled_system_prompt = "\n".join(parts)
     deps.sys_prompt_compiled_at = datetime.now(UTC)
-
-    await deps.session.flush()
 
 
 async def get_system_prompt(ctx_or_deps : RunContext[AgentDeps] | AgentDeps) -> str:

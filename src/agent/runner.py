@@ -84,8 +84,8 @@ async def _check_and_handle_cancel(
     cancel_notice = ModelRequest(parts=[UserPromptPart(
         content=format_system_alert("Turn cancelled by user.")
     )])
-    await persist_messages(deps=deps, messages=[cancel_notice], toolsets=toolsets)
-    await deps.commit_changes_refresh_agent_record()
+    async with deps.write_scope() as session:
+        await persist_messages(deps, session, [cancel_notice], toolsets)
     return True
 
 
@@ -120,7 +120,8 @@ async def run_stateful_agent(agent: Agent,
     while interrupted_by_compaction:
         interrupted_by_compaction = False
         
-        records = await load_messages(deps.session, deps.agent_id, start_seq_id=deps.context_window_start)
+        async with deps.read_scope() as session:
+            records = await load_messages(session, deps.agent_id, start_seq_id=deps.context_window_start)
         message_history = deserialize_messages(records)
         
         # pydantic-ai merges adjacent same-type messages, which shifts indices in the captured messages list
@@ -156,8 +157,8 @@ async def run_stateful_agent(agent: Agent,
                             messages_to_persist = messages[new_message_idx:]
 
                         if messages_to_persist:
-                            total_tokens = await persist_messages(deps=deps, messages=messages_to_persist, toolsets=agent.toolsets)
-                            await deps.commit_changes_refresh_agent_record()
+                            async with deps.write_scope() as session:
+                                total_tokens = await persist_messages(deps, session, messages_to_persist, agent.toolsets)
                             new_message_idx += len(messages_to_persist)
                             if total_tokens is not None:
                                 last_total_tokens_value = total_tokens
