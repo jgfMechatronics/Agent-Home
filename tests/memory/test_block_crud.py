@@ -79,15 +79,15 @@ async def multi_tenant_agents_with_core_memory(session: AsyncSession):
 
 
 @pytest_asyncio.fixture
-async def multi_tenant_with_deps(session: AsyncSession, multi_tenant_agents_with_core_memory: dict):
+async def multi_tenant_with_deps(session: AsyncSession, test_engine, multi_tenant_agents_with_core_memory: dict):
     """
     Extends multi_tenant fixture with AgentDeps for both agents.
     
     For testing that write operations respect agent_id boundaries.
     """
     data = multi_tenant_agents_with_core_memory
-    deps_a = AgentDeps(session=session, agent_record=data["agent_a"])
-    deps_b = AgentDeps(session=session, agent_record=data["agent_b"])
+    deps_a = AgentDeps(test_engine, test_engine, data["agent_a"], bypass_factory_guard=True)
+    deps_b = AgentDeps(test_engine, test_engine, data["agent_b"], bypass_factory_guard=True)
     return {**data, "deps_a": deps_a, "deps_b": deps_b}
 
 

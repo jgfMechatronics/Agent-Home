@@ -170,7 +170,7 @@ class TestRunCleanupFlowIntegration:
     """
     
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session, app, agent_with_blocks):
+    async def setup(self, session, test_engine, app, agent_with_blocks):
         """Set up test with agent_with_blocks fixture plus skill block."""
         self.agent = agent_with_blocks["agent"]
         self.agent_id = self.agent.id
@@ -182,7 +182,7 @@ class TestRunCleanupFlowIntegration:
         # Add skill block for cleanup flow
         self.skill_label = "active-skill"
         self.skill_content = "Original skill content"
-        deps = AgentDeps(session=session, agent_record=self.agent)
+        deps = AgentDeps(test_engine, test_engine, self.agent, bypass_factory_guard=True)
         await create_block(deps, BlockSettings(label=self.skill_label), self.skill_content)
         await session.commit()
         

@@ -45,8 +45,9 @@ from agent.factory import (
     TOOL_OUTPUT_SPILL_THRESHOLD_CHARS,
     _build_capabilities,
     _build_model_settings,
+    get_or_create_agent_app_state,
 )
-from agent.deps import AgentDeps
+from agent.deps import AgentDeps, build_deps
 from agent.types import (
     THINKING_EFFORT_LEVELS,
     AgentAppState,
@@ -108,9 +109,15 @@ def agent_app_state_reg() -> dict[str, AgentAppState]:
 
 
 @pytest.fixture
-def agent_factory(agent_record: AgentRecord, agent_app_state_reg: dict, session: AsyncSession) -> AgentFactory:
-    """Per-agent, per-request AgentFactory with agent_id, agent_app_state_reg, and session bound."""
-    return AgentFactory(agent_record.id, agent_app_state_reg, session)
+def agent_factory(agent_record: AgentRecord, agent_app_state_reg: dict, test_engine) -> AgentFactory:
+    """Per-agent, per-request AgentFactory with agent_id, agent_app_state_reg, and engines bound."""
+    return AgentFactory(agent_record.id, agent_app_state_reg, test_engine, test_engine)
+
+
+@pytest.fixture
+def agent_app_state(agent_record: AgentRecord, agent_app_state_reg: dict) -> AgentAppState:
+    """Get or create the AgentAppState for the test agent."""
+    return get_or_create_agent_app_state(agent_app_state_reg, agent_record.id)
 
 
 # --- AgentFactory._get_or_create_agent_app_state tests ---
@@ -119,8 +126,8 @@ def agent_factory(agent_record: AgentRecord, agent_app_state_reg: dict, session:
 def test_get_or_create_agent_app_state_returns_same_agent_app_state_for_same_id(agent_app_state_reg: dict):
     """_get_or_create_agent_app_state should return the same AgentAppState for the same agent_id."""
     # testing static method so no need to use the fixture which gives an object
-    slot1 = AgentFactory._get_or_create_agent_app_state(agent_app_state_reg, "agent-123")
-    slot2 = AgentFactory._get_or_create_agent_app_state(agent_app_state_reg, "agent-123")
+    slot1 = get_or_create_agent_app_state(agent_app_state_reg, "agent-123")
+    slot2 = get_or_create_agent_app_state(agent_app_state_reg, "agent-123")
 
     assert slot1 is slot2
     assert isinstance(slot1, AgentAppState)
@@ -132,8 +139,8 @@ def test_get_or_create_agent_app_state_returns_same_agent_app_state_for_same_id(
 
 def test_get_or_create_agent_app_state_returns_different_agent_app_state_reg_for_different_ids(agent_app_state_reg: dict):
     """_get_or_create_agent_app_state should return different AgentAppState instances for different agent_ids."""
-    slot_a = AgentFactory._get_or_create_agent_app_state(agent_app_state_reg, "agent-aaa")
-    slot_b = AgentFactory._get_or_create_agent_app_state(agent_app_state_reg, "agent-bbb")
+    slot_a = get_or_create_agent_app_state(agent_app_state_reg, "agent-aaa")
+    slot_b = get_or_create_agent_app_state(agent_app_state_reg, "agent-bbb")
 
     assert slot_a is not slot_b
     assert isinstance(slot_a, AgentAppState)
@@ -144,34 +151,29 @@ def test_get_or_create_agent_app_state_returns_different_agent_app_state_reg_for
 
 @pytest.mark.asyncio
 async def test_build_deps_yields_deps_with_expected_fields(
-    agent_factory: AgentFactory,
     agent_record: AgentRecord,
+    agent_app_state: AgentAppState,
+    test_engine,
 ):
-    """build_deps should yield AgentDeps with agent_id, session, and config populated."""
-    async with agent_factory.build_deps() as deps:
+    """build_deps should yield AgentDeps with agent_id and config populated."""
+    async with build_deps(agent_record.id, agent_app_state, test_engine, test_engine) as deps:
         assert isinstance(deps, AgentDeps)
         assert deps.agent_id == agent_record.id
-        assert deps.session is agent_factory._session
         assert deps.config == agent_record.agent_config
         assert deps.name == agent_record.name
 
 
 @pytest.mark.asyncio
 async def test_build_deps_creates_acquires_and_releases_lock(
-    agent_factory: AgentFactory,
     agent_record: AgentRecord,
-    agent_app_state_reg: dict,
+    agent_app_state: AgentAppState,
+    test_engine,
 ):
-    """build_deps should acquire lock before yield, release after exit.
-
-    agent_app_state for particular agent is created at AgentFactory construction, so the "creates" part of this test is really
-    testing the AgentFactory constructor
-    """
-    assert agent_record.id in agent_app_state_reg
-    lock = agent_app_state_reg[agent_record.id].lock
+    """build_deps should acquire lock before yield, release after exit."""
+    lock = agent_app_state.lock
     assert not lock.locked()
 
-    async with agent_factory.build_deps() as deps:
+    async with build_deps(agent_record.id, agent_app_state, test_engine, test_engine) as deps:
         assert lock.locked()
 
     # After exiting, lock should be released
@@ -181,8 +183,8 @@ async def test_build_deps_creates_acquires_and_releases_lock(
 class TestBuildDepsLockAndCancelBehavior:
     """Verifies lock acquire/release (via spy) and cancel_requested clearing on teardown.
 
-    Spy slot is pre-populated before factory construction so _get_or_create_agent_app_state
-    returns it as self._agent_app_state. Tests cover both normal and exception exit paths.
+    Spy slot is pre-populated in the registry before build_deps is called.
+    Tests cover both normal and exception exit paths.
     """
 
     @pytest.fixture(autouse=True)
@@ -190,19 +192,21 @@ class TestBuildDepsLockAndCancelBehavior:
         self,
         agent_record: AgentRecord,
         agent_app_state_reg: dict[str, AgentAppState],
-        session: AsyncSession,
+        test_engine,
         mocker: MockerFixture,
     ):
         self.lock = create_spied_lock(agent_record.id, agent_app_state_reg, mocker)
-        self.factory = AgentFactory(agent_record.id, agent_app_state_reg, session)
-        self.cancel_requested = agent_app_state_reg[agent_record.id].cancel_requested
+        self.agent_app_state = agent_app_state_reg[agent_record.id]
+        self.cancel_requested = self.agent_app_state.cancel_requested
+        self.agent_id = agent_record.id
+        self.test_engine = test_engine
 
     @pytest.mark.asyncio
     async def test_normal_exit_releases_lock_and_clears_cancel(self):
         """build_deps should release the lock and clear a pending cancel on normal exit."""
         self.cancel_requested.set()
 
-        async with self.factory.build_deps():
+        async with build_deps(self.agent_id, self.agent_app_state, self.test_engine, self.test_engine):
             assert self.lock.locked()
 
         assert_lock_acquired_and_released(self.lock)
@@ -214,7 +218,7 @@ class TestBuildDepsLockAndCancelBehavior:
         self.cancel_requested.set()
 
         with pytest.raises(RuntimeError):
-            async with self.factory.build_deps():
+            async with build_deps(self.agent_id, self.agent_app_state, self.test_engine, self.test_engine):
                 raise RuntimeError("Intentional test error")
 
         assert_lock_acquired_and_released(self.lock)
@@ -224,7 +228,7 @@ class TestBuildDepsLockAndCancelBehavior:
 @pytest.mark.asyncio
 async def test_build_deps_raises_releases_lock_and_clears_cancel_on_fetch_failure(
     agent_app_state_reg: dict,
-    session: AsyncSession,
+    test_engine,
     mocker: MockerFixture,
 ):
     """build_deps should raise for unknown agent_id AND release lock and clear cancel on failure.
@@ -235,13 +239,13 @@ async def test_build_deps_raises_releases_lock_and_clears_cancel_on_fetch_failur
     Uses NONEXISTENT_AGENT_ID (no agent_record fixture) — kept standalone for that reason.
     """
     lock = create_spied_lock(NONEXISTENT_AGENT_ID, agent_app_state_reg, mocker)
-    factory = AgentFactory(NONEXISTENT_AGENT_ID, agent_app_state_reg, session)
+    app_state = agent_app_state_reg[NONEXISTENT_AGENT_ID]
 
-    cancel_requested = agent_app_state_reg[NONEXISTENT_AGENT_ID].cancel_requested
+    cancel_requested = app_state.cancel_requested
     cancel_requested.set()
 
     with pytest.raises(AgentNotFoundError):
-        async with factory.build_deps() as deps:
+        async with build_deps(NONEXISTENT_AGENT_ID, app_state, test_engine, test_engine) as deps:
             pass
 
     assert_lock_acquired_and_released(lock)
@@ -252,25 +256,26 @@ async def test_build_deps_raises_releases_lock_and_clears_cancel_on_fetch_failur
 
 @pytest.mark.asyncio
 async def test_build_deps_concurrent_same_agent_blocks(
-    agent_factory: AgentFactory,
     agent_record: AgentRecord,
+    agent_app_state: AgentAppState,
+    test_engine,
 ):
     """Second concurrent call on same agent_id should block until first exits."""
     execution_order = []
-    
+
     async def first_caller():
-        async with agent_factory.build_deps():
+        async with build_deps(agent_record.id, agent_app_state, test_engine, test_engine):
             execution_order.append("first_entered")
             await asyncio.sleep(0.05)  # Hold lock briefly
             execution_order.append("first_exiting")
 
     async def second_caller():
         await asyncio.sleep(0.01)  # Ensure first_caller enters first
-        async with agent_factory.build_deps():
+        async with build_deps(agent_record.id, agent_app_state, test_engine, test_engine):
             execution_order.append("second_entered")
-    
+
     await asyncio.gather(first_caller(), second_caller())
-    
+
     # Second should only enter after first exits
     assert execution_order == ["first_entered", "first_exiting", "second_entered"]
 
@@ -279,10 +284,10 @@ async def test_build_deps_concurrent_same_agent_blocks(
 async def test_build_deps_concurrent_different_agents_no_block(
     agent_app_state_reg: dict,
     session: AsyncSession,
+    test_engine,
 ):
     """
     Concurrent calls on different agent_ids should not block each other.
-    Each agent gets its own factory (matching real usage — distinct factories per request).
     """
     # Create two agents for this test
     agent_a = AgentRecord(
@@ -296,30 +301,31 @@ async def test_build_deps_concurrent_different_agents_no_block(
         system_instructions="Agent B",
     )
     session.add_all([agent_a, agent_b])
-    await session.flush()
+    await session.commit()
+    await session.refresh(agent_a)
+    await session.refresh(agent_b)
 
-    factory_a = AgentFactory(agent_a.id, agent_app_state_reg, session)
-    factory_b = AgentFactory(agent_b.id, agent_app_state_reg, session)
+    app_state_a = get_or_create_agent_app_state(agent_app_state_reg, agent_a.id)
+    app_state_b = get_or_create_agent_app_state(agent_app_state_reg, agent_b.id)
 
     execution_order = []
 
     async def caller_a():
-        async with factory_a.build_deps():
+        async with build_deps(agent_a.id, app_state_a, test_engine, test_engine):
             execution_order.append("a_entered")
             await asyncio.sleep(0.05)
             execution_order.append("a_exiting")
 
     async def caller_b():
         await asyncio.sleep(0.01)  # Small delay so A enters first
-        async with factory_b.build_deps():
+        async with build_deps(agent_b.id, app_state_b, test_engine, test_engine):
             execution_order.append("b_entered")
             await asyncio.sleep(0.01)
             execution_order.append("b_exiting")
 
     await asyncio.gather(caller_a(), caller_b())
-    
+
     # B should enter while A is still holding its lock (different agents, no blocking)
-    # Expected: a_entered, b_entered, b_exiting, a_exiting
     assert execution_order.index("b_entered") < execution_order.index("a_exiting")
 
 
@@ -329,20 +335,20 @@ async def test_build_deps_concurrent_different_agents_no_block(
     (1.0,  0.8, 2.5),   # roughly a second
 ])
 async def test_build_deps_timeout_raises_agent_locked_error(
-    agent_factory: AgentFactory,
-    agent_app_state_reg: dict,
+    agent_app_state: AgentAppState,
     agent_record: AgentRecord,
+    test_engine,
     timeout: float,
     min_elapsed: float,
     max_elapsed: float,
 ):
     """build_deps raises AgentLockedError after approximately the requested timeout."""
     # Hold the lock so the second acquire times out
-    await agent_app_state_reg[agent_record.id].lock.acquire()
+    await agent_app_state.lock.acquire()
 
     start = time.monotonic()
     with pytest.raises(AgentLockedError):
-        async with agent_factory.build_deps(timeout=timeout):
+        async with build_deps(agent_record.id, agent_app_state, test_engine, test_engine, timeout=timeout):
             pass  # should not reach here
     elapsed = time.monotonic() - start
 
@@ -761,12 +767,12 @@ class TestToolsetConditionalAttachment:
     @pytest.mark.asyncio
     async def test_empty_toolset_names_no_mcp_instantiation(
         self,
-        session: AsyncSession,
+        test_engine,
         agent_record_no_toolsets: AgentRecord,
         agent_app_state_reg: dict,
     ):
         """When toolset_names is empty, MCPToolset should not be instantiated."""
-        factory = AgentFactory(agent_record_no_toolsets.id, agent_app_state_reg, session)
+        factory = AgentFactory(agent_record_no_toolsets.id, agent_app_state_reg, test_engine, test_engine)
         
         async with factory.build_agent_and_deps() as (agent, deps):
             self.mock_mcp.assert_not_called()
@@ -775,12 +781,12 @@ class TestToolsetConditionalAttachment:
     @pytest.mark.asyncio
     async def test_mcp_in_toolset_names_triggers_instantiation(
         self,
-        session: AsyncSession,
+        test_engine,
         agent_record_with_mcp: AgentRecord,
         agent_app_state_reg: dict,
     ):
         """When toolset_names includes 'mcp_filesystem', MCPToolset should be instantiated."""
-        factory = AgentFactory(agent_record_with_mcp.id, agent_app_state_reg, session)
+        factory = AgentFactory(agent_record_with_mcp.id, agent_app_state_reg, test_engine, test_engine)
         
         async with factory.build_agent_and_deps() as (agent, deps):
             self.mock_mcp.assert_called_once_with("http://host.docker.internal:8080/mcp")

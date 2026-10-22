@@ -311,7 +311,7 @@ class TestReconstructContextIntegration:
         assert first.tool_definitions == first_tools
         assert second.tool_definitions == second_tools
 
-    async def test_mutated_config_snapshot_dedup(self):
+    async def test_mutated_config_snapshot_dedup(self, test_engine):
         """After config mutation, old messages keep original snapshot, new get updated."""
         model = TestModel(custom_output_text="Response", call_tools=[])
 
@@ -325,7 +325,7 @@ class TestReconstructContextIntegration:
         )
         self.agent_record.system_instructions = new_instructions
         self.agent_record.agent_config = mutated_config
-        await compile_system_prompt(AgentDeps(self.session, self.agent_record))
+        await compile_system_prompt(AgentDeps(test_engine, test_engine, self.agent_record, bypass_factory_guard=True))
         await self.session.commit()
         await self.session.refresh(self.agent_record)
 

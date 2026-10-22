@@ -29,6 +29,7 @@ DEFAULT_BLOCK_CHAR_LIM = 100
 
 async def _make_agent_with_block(
     session: AsyncSession,
+    test_engine,
     content: str,
     char_limit: int = DEFAULT_BLOCK_CHAR_LIM,
     agent_name: str = "test-agent",
@@ -56,14 +57,14 @@ async def _make_agent_with_block(
     session.add(block)
     await session.flush()
     
-    deps = AgentDeps(session=session, agent_record=agent)
+    deps = AgentDeps(test_engine, test_engine, agent, bypass_factory_guard=True)
     ctx = mock_run_context(deps)
     
     return {"agent": agent, "block": block, "deps": deps, "ctx": ctx}
 
 
 @pytest_asyncio.fixture
-async def agent_with_editable_block(session: AsyncSession):
+async def agent_with_editable_block(session: AsyncSession, test_engine):
     """Agent with a single block used for all tool editing tests.
 
     Content is designed to satisfy multiple test requirements simultaneously:
@@ -76,6 +77,7 @@ async def agent_with_editable_block(session: AsyncSession):
     """
     return await _make_agent_with_block(
         session,
+        test_engine,
         content="foo one.\nfoo two.\nfoo three.",
         char_limit=DEFAULT_BLOCK_CHAR_LIM,
     )
@@ -302,12 +304,12 @@ class TestMemoryToolsShared(UsesEditableBlock):
         ),
     ])
     async def test_returns_snippet_on_success(
-        self, session: AsyncSession, tool_fn, tool_args, expected_new_content, edit_start_idx, new_text
+        self, session: AsyncSession, test_engine, tool_fn, tool_args, expected_new_content, edit_start_idx, new_text
     ):
         """Tool returns snippet matching _compute_snippet output."""
         # Use 10-line content so snippeting actually happens
         agent_data = await _make_agent_with_block(
-            session, content=ALPHABET_CONTENT, char_limit=500, agent_name="snippet-test-agent"
+            session, test_engine, content=ALPHABET_CONTENT, char_limit=500, agent_name="snippet-test-agent"
         )
         ctx = agent_data["ctx"]
         block = agent_data["block"]
@@ -412,14 +414,14 @@ class TestMemoryToolsShared(UsesEditableBlock):
             await tool_fn(self.ctx, label=self.block.label, **zero_occurrence_args)
 
 
-    async def test_cannot_edit_other_agents_block(self, session: AsyncSession):
+    async def test_cannot_edit_other_agents_block(self, session: AsyncSession, test_engine):
         """Tool edits are scoped to the calling agent — can't affect other agents' blocks."""
         # Create two agents, both with a block labeled "notes"
         agent_a = await _make_agent_with_block(
-            session, content="Agent A: Line one.", agent_name="agent-a"
+            session, test_engine, content="Agent A: Line one.", agent_name="agent-a"
         )
         agent_b = await _make_agent_with_block(
-            session, content="Agent B: Line one.", agent_name="agent-b"
+            session, test_engine, content="Agent B: Line one.", agent_name="agent-b"
         )
 
         # Agent A edits their "notes" block
@@ -648,8 +650,8 @@ class TestMemoryRead:
     CONTENT = "\n".join("ABCDEFGHIJ")
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession):
-        made = await _make_agent_with_block(session, content=self.CONTENT, char_limit=1000)
+    async def setup(self, session: AsyncSession, test_engine):
+        made = await _make_agent_with_block(session, test_engine, content=self.CONTENT, char_limit=1000)
         self.ctx = made["ctx"]
         self.block = made["block"]
 

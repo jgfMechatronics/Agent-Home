@@ -22,9 +22,9 @@ from memory.system_prompt_compilation import compile_system_prompt, get_system_p
 # Note: agent_with_blocks comes from conftest.py
 
 @pytest_asyncio.fixture
-async def agent_with_blocks_and_deps(session: AsyncSession, agent_with_blocks: dict):
+async def agent_with_blocks_and_deps(session: AsyncSession, test_engine, agent_with_blocks: dict):
     """Extends agent_with_blocks with AgentDeps for write operations."""
-    return {**agent_with_blocks, "deps": AgentDeps(session=session, agent_record=agent_with_blocks["agent"])}
+    return {**agent_with_blocks, "deps": AgentDeps(test_engine, test_engine, agent_with_blocks["agent"], bypass_factory_guard=True)}
 
 
 @pytest_asyncio.fixture
@@ -34,7 +34,7 @@ async def agent_no_blocks_with_deps(agent_deps: AgentDeps, agent_record: AgentRe
 
 
 @pytest_asyncio.fixture
-async def agent_with_precompiled_prompt(session: AsyncSession):
+async def agent_with_precompiled_prompt(session: AsyncSession, test_engine):
     """Agent with a pre-populated compiled_system_prompt for get_system_prompt tests."""
     agent = AgentRecord(
         name="precompiled-agent",
@@ -45,7 +45,7 @@ async def agent_with_precompiled_prompt(session: AsyncSession):
     )
     session.add(agent)
     await session.flush()
-    return {"agent": agent, "deps": AgentDeps(session=session, agent_record=agent)}
+    return {"agent": agent, "deps": AgentDeps(test_engine, test_engine, agent, bypass_factory_guard=True)}
 
 
 # --- Helper ---
@@ -243,7 +243,7 @@ async def test_compile_updates_sys_prompt_compiled_at(agent_with_blocks_and_deps
     assert before < agent.sys_prompt_compiled_at < after
 
 
-async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession):
+async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession, test_engine):
     """Compilation should only include blocks belonging to the target agent."""
     agent_a = AgentRecord(
         name="agent-a",
@@ -269,8 +269,8 @@ async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession
     session.add_all([block_a, block_b])
     await session.flush()
 
-    deps_a = AgentDeps(session=session, agent_record=agent_a)
-    await compile_system_prompt(deps_a)
+    deps_a = AgentDeps(test_engine, test_engine, agent_a, bypass_factory_guard=True)
+    await compile_system_prompt(deps_a, session)
     compiled_a = agent_a.compiled_system_prompt
 
     assert "A's secret content" in compiled_a
@@ -312,7 +312,7 @@ class TestGetSystemPrompt:
 
 # --- get_system_prompt standalone tests (different fixtures) ---
 
-async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession):
+async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession, test_engine):
     """get_system_prompt should return empty string when compiled_system_prompt is empty/unset."""
     agent = AgentRecord(
         name="null-prompt-agent",
@@ -323,7 +323,7 @@ async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession
     await session.flush()
     assert agent.compiled_system_prompt == ""  # model defaults to ''
 
-    ctx = mock_run_context(AgentDeps(session=session, agent_record=agent))
+    ctx = mock_run_context(AgentDeps(test_engine, test_engine, agent, bypass_factory_guard=True))
     result = await get_system_prompt(ctx)
     assert result == ""
 

@@ -270,9 +270,9 @@ async def session(test_engine):
 @pytest_asyncio.fixture
 async def agent_record(session: AsyncSession) -> AgentRecord:
     """
-    A persisted, detached AgentRecord for use in tests that require an existing agent.
-    Detached so that write_scope's session.add() can re-attach it cleanly.
-    The underlying session can be used by dependents by separately requesting that fixture.
+    A persisted, committed, detached AgentRecord for use in tests.
+    Committed so build_deps (which creates its own session) can find it.
+    Refreshed before expunge so attribute reads work on the detached record.
     """
     agent = AgentRecord(
         name="test-agent",
@@ -280,7 +280,8 @@ async def agent_record(session: AsyncSession) -> AgentRecord:
         system_instructions="You are a test agent.",
     )
     session.add(agent)
-    await session.flush()
+    await session.commit()
+    await session.refresh(agent)
     session.expunge(agent)
     return agent
 
