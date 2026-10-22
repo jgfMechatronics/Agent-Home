@@ -9,7 +9,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import create_agent_record, get_agent_record, get_agent_record_by_name, replace_agent_config, replace_system_instructions
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 from conftest import SAMPLE_AGENT_CONFIG
 from messages.messages import load_messages
 

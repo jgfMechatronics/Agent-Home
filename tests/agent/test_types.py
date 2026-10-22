@@ -11,7 +11,8 @@ import pytest
 from conftest import SAMPLE_AGENT_CONFIG_DATA
 from pydantic import ValidationError
 
-from agent.types import THINKING_EFFORT_LEVELS, AgentConfig, AgentDeps, validate_model_name
+from agent.deps import AgentDeps
+from agent.types import THINKING_EFFORT_LEVELS, AgentConfig, validate_model_name
 
 
 def test_validate_model_name_works_without_api_keys(monkeypatch):

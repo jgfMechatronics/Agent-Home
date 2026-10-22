@@ -22,11 +22,12 @@ from db.connection import _configure_sqlite_conn
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from agent.types import AgentConfig, AgentDeps
+from agent.deps import AgentDeps
+from agent.types import AgentConfig
 from agent.broadcast_streaming import BroadcastHub
 from pydantic import ConfigDict
 from api.app import _create_app
-from api.fastapi_deps import get_session_dep
+from api.fastapi_deps import get_ro_session_dep
 from db.models import (
     AgentConfigSnapshot,
     AgentRecord,
@@ -169,9 +170,9 @@ async def seed_stub_snapshots(session: AsyncSession):
 
 
 @pytest_asyncio.fixture
-async def agent_deps(session: AsyncSession, agent_record: AgentRecord) -> AgentDeps:
-    """AgentDeps constructed directly from session + agent_record (bypasses factory/lock — valid in tests)."""
-    return AgentDeps(session=session, agent_record=agent_record)
+async def agent_deps(test_engine, agent_record: AgentRecord) -> AgentDeps:
+    """AgentDeps with test engine for both rw and ro (bypasses factory guard — valid in tests)."""
+    return AgentDeps(test_engine, test_engine, agent_record, bypass_factory_guard=True)
 
 
 # ---------------------------------------------------------------------------
@@ -242,9 +243,9 @@ def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
 
 
 @pytest_asyncio.fixture
-async def session():
-    """Fresh in-memory SQLite database per test. StaticPool ensures create_all and
-    the session share the same connection; engine disposal destroys the DB."""
+async def test_engine():
+    """Fresh in-memory SQLite engine per test. StaticPool ensures create_all and
+    sessions share the same connection; engine disposal destroys the DB."""
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         poolclass=StaticPool,
@@ -254,19 +255,24 @@ async def session():
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        
-        async with AsyncSession(engine) as async_session:
-            yield async_session
+        yield engine
     finally:
         await engine.dispose()
 
 
 @pytest_asyncio.fixture
+async def session(test_engine):
+    """Session bound to the test engine, for test setup and assertions."""
+    async with AsyncSession(test_engine) as async_session:
+        yield async_session
+
+
+@pytest_asyncio.fixture
 async def agent_record(session: AsyncSession) -> AgentRecord:
     """
-    A persisted AgentRecord for use in tests that require an existing agent.
-    The underlying session can be used by dependents by seperately requesting that fixture. Pytest will
-    cache it resulting in session pointing to the temp DB which contains the persisted agent
+    A persisted, detached AgentRecord for use in tests that require an existing agent.
+    Detached so that write_scope's session.add() can re-attach it cleanly.
+    The underlying session can be used by dependents by separately requesting that fixture.
     """
     agent = AgentRecord(
         name="test-agent",
@@ -275,6 +281,7 @@ async def agent_record(session: AsyncSession) -> AgentRecord:
     )
     session.add(agent)
     await session.flush()
+    session.expunge(agent)
     return agent
 
 
@@ -396,14 +403,14 @@ async def client(app: FastAPI) -> AsyncClient:
 def override_db_session(app: FastAPI, session: AsyncSession):
     """Ensure routes use the test session, not a separate DB connection.
 
-    Without this, routes call get_session_dep() -> new connection -> test data invisible.
+    Without this, routes call get_ro_session_dep() -> new connection -> test data invisible.
     """
     async def _get_test_session():
         yield session
 
-    app.dependency_overrides[get_session_dep] = _get_test_session
+    app.dependency_overrides[get_ro_session_dep] = _get_test_session
     yield
-    app.dependency_overrides.pop(get_session_dep)
+    app.dependency_overrides.pop(get_ro_session_dep)
 
 
 # ---------------------------------------------------------------------------

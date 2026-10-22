@@ -7,7 +7,8 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
-from agent.types import AgentDeps, BlockSettings
+from agent.deps import AgentDeps
+from agent.types import BlockSettings
 from memory.block_crud import create_block
 from utils.memory_cleanup import (
     ValidationError,

@@ -23,8 +23,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory
-from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError
-from api.fastapi_deps import get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_session_dep
+from agent.deps import AgentDeps
+from agent.types import AgentAppState, AgentLockedError, AgentNotFoundError
+from api.fastapi_deps import get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_ro_session_dep
 from tests.conftest import TEST_BASE_URL
 
 
@@ -67,7 +68,7 @@ async def _build_test_client(
     async def _override_session():
         yield session
 
-    app.dependency_overrides[get_session_dep] = _override_session
+    app.dependency_overrides[get_ro_session_dep] = _override_session
     app.dependency_overrides[get_agent_app_state_reg] = lambda: agent_app_state_reg
 
     async with AsyncClient(
@@ -269,7 +270,7 @@ class TestGetAgentAppStates:
 
 
 class TestGetSessionDep:
-    """get_session_dep: yields a session from get_session(app.state.engine), one per call."""
+    """get_ro_session_dep: yields a session from get_session(app.state.engine), one per call."""
 
     @pytest.fixture
     def mock_request(self) -> MagicMock:
@@ -289,19 +290,19 @@ class TestGetSessionDep:
             yield mock_session
 
         with patch("api.fastapi_deps.get_session", mock_get_session):
-            session = await get_session_dep(mock_request).__anext__()
+            session = await get_ro_session_dep(mock_request).__anext__()
 
         assert session is mock_session
         assert captured_engine is mock_request.app.state.engine
 
     async def test_new_session_per_call(self, mock_request: MagicMock):
-        """Each invocation of get_session_dep yields a distinct session object."""
+        """Each invocation of get_ro_session_dep yields a distinct session object."""
         @asynccontextmanager
         async def mock_get_session(engine):
             yield MagicMock(spec=AsyncSession)
 
         with patch("api.fastapi_deps.get_session", mock_get_session):
-            session1 = await get_session_dep(mock_request).__anext__()
-            session2 = await get_session_dep(mock_request).__anext__()
+            session1 = await get_ro_session_dep(mock_request).__anext__()
+            session2 = await get_ro_session_dep(mock_request).__anext__()
 
         assert session1 is not session2

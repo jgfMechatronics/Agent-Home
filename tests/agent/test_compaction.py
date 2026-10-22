@@ -17,7 +17,8 @@ from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart, Ret
 from messages.messages import deserialize_messages, load_messages, persist_messages
 
 from agent.compaction import clear_context, compact, is_compaction_needed
-from agent.types import AgentConfig, AgentDeps
+from agent.deps import AgentDeps
+from agent.types import AgentConfig
 from conftest import (
     SAMPLE_AGENT_CONFIG,
     make_alternating_messages,

@@ -27,7 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Local
 from agent.factory import LOCK_TIMEOUT_FAST
-from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings
+from agent.deps import AgentDeps
+from agent.types import AgentAppState, AgentConfig, BlockSettings
 from api.fastapi_deps import get_agent_deps
 from agent.crud import create_agent_record
 from conftest import SAMPLE_AGENT_CONFIG
