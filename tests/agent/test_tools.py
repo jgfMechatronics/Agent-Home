@@ -45,7 +45,7 @@ async def _make_agent_with_block(
     )
     session.add(agent)
     await session.flush()
-    
+
     block = MemoryBlockRecord(
         agent_id=agent.id,
         label="notes",
@@ -55,8 +55,11 @@ async def _make_agent_with_block(
         position=0,
     )
     session.add(block)
-    await session.flush()
-    
+    await session.commit()
+    await session.refresh(agent)
+    await session.refresh(block)
+    session.expunge(agent)  # Detach so write_scope's session.add() can re-attach
+
     deps = AgentDeps(test_engine, test_engine, agent, bypass_factory_guard=True)
     ctx = mock_run_context(deps)
     
@@ -237,7 +240,8 @@ class TestMemoryToolsShared(UsesEditableBlock):
             position=1,
         )
         session.add(other_block)
-        await session.flush()
+        await session.commit()
+        await session.refresh(self.block)  # Re-load after commit expired it
 
         await tool_fn(self.ctx, label=self.block.label, **valid_args)
 
@@ -424,6 +428,8 @@ class TestMemoryToolsShared(UsesEditableBlock):
         agent_b = await _make_agent_with_block(
             session, test_engine, content="Agent B: Line one.", agent_name="agent-b"
         )
+        # Second factory call's commit expired first call's objects — re-load
+        await session.refresh(agent_a["block"])
 
         # Agent A edits their "notes" block
         ctx_a = agent_a["ctx"]
@@ -655,6 +661,7 @@ class TestMemoryRead:
         made = await _make_agent_with_block(session, test_engine, content=self.CONTENT, char_limit=1000)
         self.ctx = made["ctx"]
         self.block = made["block"]
+        self.session = made["session"]
 
     async def _read(self, **kwargs) -> str:
         return await memory_read(self.ctx, label=self.block.label, **kwargs)
