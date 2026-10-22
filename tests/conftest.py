@@ -256,6 +256,12 @@ async def test_engine():
     url = f"sqlite+aiosqlite:///file:{db_name}?mode=memory&cache=shared&uri=true"
     engine = create_async_engine(url, poolclass=NullPool)
     event.listens_for(engine.sync_engine, "connect")(_configure_sqlite_conn)
+    # Shared-cache in-memory DBs use table-level locking (WAL unavailable).
+    # read_uncommitted prevents concurrent connections (test session vs write_scope)
+    # from blocking each other on open transactions.
+    event.listens_for(engine.sync_engine, "connect")(
+        lambda conn, _: conn.execute("PRAGMA read_uncommitted=ON")
+    )
 
     keeper = await engine.connect()
     try:
