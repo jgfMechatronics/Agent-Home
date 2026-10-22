@@ -293,3 +293,7 @@ async def test_agentdeps_holds_expected_fields(session, agent_deps, agent_record
     assert agent_deps.config is agent_record.agent_config
     assert agent_deps.name == agent_record.name
     assert agent_deps.system_instructions == agent_record.system_instructions
+
+
+def test_agentdeps_setters_all_require_write_scope():
+    pytest.fail(reason="TODO. Programatic sweep, not manually maintained list")
