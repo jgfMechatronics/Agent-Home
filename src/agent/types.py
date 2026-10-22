@@ -220,9 +220,6 @@ class AgentDeps:
         self._ro_engine = ro_engine
         self._agent_record = agent_record
 
-    def __repr__(self) -> str:
-        return f"AgentDeps(agent_id={self._agent_record.id!r}, name={self._agent_record.name!r})"
-
     def _require_write_scope(self) -> None:
         """Raise if the agent record is not attached to a session (i.e., not in a write_scope)."""
         if object_session(self._agent_record) is None:
