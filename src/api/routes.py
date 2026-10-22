@@ -32,7 +32,7 @@ from agent.crud import (
 from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
 from agent.broadcast_streaming import BroadcastHub, RunErrorEvent, run_agent_with_broadcast
-from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_broadcast_hub
+from api.fastapi_deps import get_ro_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_broadcast_hub
 from prototype.api.slash_commands import get_available_commands, is_slash_cmd, handle_slash_cmd
 from api.schemas import (
     AgentMetadataResponse,
@@ -195,7 +195,7 @@ async def recompile_system_prompt_route_handler(
 
 @router.get("")
 async def list_agents(
-    session: AsyncSession = Depends(get_session_dep),
+    session: AsyncSession = Depends(get_ro_session_dep),
 ) -> list[AgentMetadataResponse]:
     """Return all agents on the server."""
     records = await get_all_agents(session)
@@ -205,7 +205,7 @@ async def list_agents(
 @router.post("", status_code=201)
 async def create_agent(
     body: CreateAgentRequest,
-    session: AsyncSession = Depends(get_session_dep),
+    session: AsyncSession = Depends(get_ro_session_dep),
 ) -> AgentMetadataResponse:
     """Create a new agent and return its metadata.
 
@@ -234,7 +234,7 @@ async def create_agent(
 @router.get("/{agent_id}/system-instructions")
 async def get_system_instructions(
     agent_id: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: AsyncSession = Depends(get_ro_session_dep),
 ) -> SystemInstructionsResponse:
     """Return the system instructions for an existing agent."""
     record = await _get_agent_record_or_404(session, agent_id)
@@ -263,7 +263,7 @@ async def put_system_instructions(
 @router.get("/{agent_id}")
 async def get_agent_info(
     agent_id: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: AsyncSession = Depends(get_ro_session_dep),
 ) -> AgentMetadataResponse:
     """Return metadata for an existing agent."""
     record = await _get_agent_record_or_404(session, agent_id)
@@ -273,7 +273,7 @@ async def get_agent_info(
 @router.get("/by-name/{agent_name}")
 async def get_agent_info_by_name(
     agent_name: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: AsyncSession = Depends(get_ro_session_dep),
 ) -> AgentMetadataResponse:
     """Return metadata for an agent by name."""
     record = await _get_agent_record_by_name_or_404(session, agent_name)
@@ -283,7 +283,7 @@ async def get_agent_info_by_name(
 @router.get("/{agent_id}/config")
 async def get_config(
     agent_id: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: AsyncSession = Depends(get_ro_session_dep),
 ) -> AgentConfig:
     """Return the config for an existing agent."""
     record = await _get_agent_record_or_404(session, agent_id)
@@ -293,7 +293,7 @@ async def get_config(
 @router.get("/{agent_id}/memory/blocks")
 async def get_memory_blocks(
     agent_id: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: AsyncSession = Depends(get_ro_session_dep),
 ) -> CoreMemoryResponse:
     """Return core memory blocks for an agent."""
     blocks = await get_blocks(session, agent_id)
@@ -307,7 +307,7 @@ async def get_memory_blocks(
 async def get_memory_block(
     agent_id: str,
     label: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: AsyncSession = Depends(get_ro_session_dep),
 ) -> MemoryBlockResponse:
     """Return a single memory block by label."""
     block = await get_block(session, agent_id, label)
@@ -354,7 +354,7 @@ async def update_block_content(
 async def get_block_settings(
     agent_id: str,
     label: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: AsyncSession = Depends(get_ro_session_dep),
 ) -> BlockSettings:
     """Get settings/metadata for a memory block."""
     block = await get_block(session, agent_id, label)
@@ -411,7 +411,7 @@ async def cancel_agent_run(
 async def get_messages(
     agent_id: str,
     full: bool = False,
-    session: AsyncSession = Depends(get_session_dep),
+    session: AsyncSession = Depends(get_ro_session_dep),
 ) -> MessagesResponse:
     """
     Return conversation history. Use ?full=true for complete history.
