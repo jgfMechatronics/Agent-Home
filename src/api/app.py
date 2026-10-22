@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
     hub = BroadcastHub()
     try:
         await init_db(engine)
-        app.state.engine = engine
+        app.state.rw_engine = engine
         app.state.ro_engine = ro_engine
         app.state.broadcast_hub = hub
         configure_iac(app.state.agent_app_state_reg, hub)  # TODO: Remove with IAC redesign
