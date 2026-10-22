@@ -56,6 +56,7 @@ async def _persist_messages_load_records(
 
 async def _make_agent_with_messages(
     session: AsyncSession,
+    test_engine,
     message_count: int,
     *,
     config: AgentConfig | None = None,
@@ -81,7 +82,7 @@ async def _make_agent_with_messages(
     session.add(agent)
     await session.flush()
 
-    deps = AgentDeps(session=session, agent_record=agent)
+    deps = AgentDeps(test_engine, test_engine, agent, bypass_factory_guard=True)
     pydantic_msgs = make_alternating_messages(message_count)
     if total_tokens is not None:
         # Replace the last message (always a response for even counts) with one carrying usage data
@@ -130,6 +131,7 @@ class CompactTestBase:
     async def _setup(
         self,
         session: AsyncSession,
+        test_engine,
         *,
         limit: int,
         target: float,
@@ -143,7 +145,7 @@ class CompactTestBase:
         """
         config = _make_config(soft_compaction_limit=limit, compaction_target_fraction=target)
         data = await _make_agent_with_messages(
-            session, message_count=msg_count, config=config, system_prompt_chars=400,
+            session, test_engine, message_count=msg_count, config=config, system_prompt_chars=400,
             total_tokens=total_tokens,
         )
         self.agent = data["agent"]
@@ -156,8 +158,8 @@ class TestCompactCommon(CompactTestBase):
     MSG_COUNT = 10
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession):
-        await self._setup(session, limit=500, target=0.5, msg_count=self.MSG_COUNT, total_tokens=1100)
+    async def setup(self, session: AsyncSession, test_engine):
+        await self._setup(session, test_engine, limit=500, target=0.5, msg_count=self.MSG_COUNT, total_tokens=1100)
 
     async def test_advances_context_window_start(self, session: AsyncSession):
         """compact advances context_window_start pointer in DB."""
@@ -195,14 +197,14 @@ class TestCompactCommon(CompactTestBase):
 class TestCompactReturnValue(CompactTestBase):
     """compact() returns True when it advances the pointer, False when it's a no-op."""
 
-    async def test_returns_true_when_compaction_occurs(self, session: AsyncSession):
-        await self._setup(session, limit=500, target=0.5, msg_count=10, total_tokens=1100)
+    async def test_returns_true_when_compaction_occurs(self, session: AsyncSession, test_engine):
+        await self._setup(session, test_engine, limit=500, target=0.5, msg_count=10, total_tokens=1100)
         result = await compact(self.deps)
         assert result is True
 
-    async def test_returns_false_when_context_too_small(self, session: AsyncSession):
+    async def test_returns_false_when_context_too_small(self, session: AsyncSession, test_engine):
         """MIN_MESSAGES_AFTER_COMPACTION guard prevents compaction; compact returns False."""
-        await self._setup(session, limit=100, target=0.5, msg_count=2, total_tokens=1100)
+        await self._setup(session, test_engine, limit=100, target=0.5, msg_count=2, total_tokens=1100)
         result = await compact(self.deps)
         assert result is False
 
@@ -210,9 +212,9 @@ class TestCompactReturnValue(CompactTestBase):
 class TestCompactEdgeCases(CompactTestBase):
     """Tests for edge cases requiring per-test bespoke setup params"""
 
-    async def test_minimum_history_guard_preserves_recent_messages(self, session: AsyncSession):
+    async def test_minimum_history_guard_preserves_recent_messages(self, session: AsyncSession, test_engine):
         """compact never evicts the most recent 4 messages."""
-        await self._setup(session, limit=100, target=0.01, msg_count=10, total_tokens=5000)
+        await self._setup(session, test_engine, limit=100, target=0.01, msg_count=10, total_tokens=5000)
         
         await compact(self.deps)
         
@@ -220,9 +222,9 @@ class TestCompactEdgeCases(CompactTestBase):
         await session.refresh(self.messages[-4])
         assert self.agent.context_window_start <= self.messages[-4].seq_id
 
-    async def test_no_op_with_four_or_fewer_messages(self, session: AsyncSession):
+    async def test_no_op_with_four_or_fewer_messages(self, session: AsyncSession, test_engine):
         """compact is a no-op when agent has 4 or fewer messages in context."""
-        await self._setup(session, limit=100, target=0.1, msg_count=4, total_tokens=5000)
+        await self._setup(session, test_engine, limit=100, target=0.1, msg_count=4, total_tokens=5000)
         
         await compact(self.deps)
         
@@ -230,7 +232,7 @@ class TestCompactEdgeCases(CompactTestBase):
         # Should remain 0 — nothing to compact
         assert self.agent.context_window_start == 0
 
-    async def test_targets_percentage_of_message_tokens(self, session: AsyncSession):
+    async def test_targets_percentage_of_message_tokens(self, session: AsyncSession, test_engine):
         """compact retains compaction_target_fraction of current message tokens.
 
         Setup: 400 char prompt ≈ 100 sys_tokens, 20 messages, total_tokens=2100
@@ -240,7 +242,7 @@ class TestCompactEdgeCases(CompactTestBase):
         The soft_compaction_limit is deliberately set high (10000) to confirm the target
         is relative to message tokens, not the limit.
         """
-        await self._setup(session, limit=10000, target=0.5, msg_count=20, total_tokens=2100)
+        await self._setup(session, test_engine, limit=10000, target=0.5, msg_count=20, total_tokens=2100)
         
         await compact(self.deps)
         
@@ -275,10 +277,10 @@ class TestCompactEdgeCases(CompactTestBase):
 
         assert result is True  # found total_tokens on the response, compaction proceeded
 
-    async def test_raises_when_model_response_total_tokens_is_none(self, session: AsyncSession):
+    async def test_raises_when_model_response_total_tokens_is_none(self, session: AsyncSession, test_engine):
         """compact raises RuntimeError when the last ModelResponse has no usage data."""
         # make_response() without total_tokens produces a record with total_tokens=None in DB
-        await self._setup(session, limit=500, target=0.5, msg_count=10, total_tokens=None)
+        await self._setup(session, test_engine, limit=500, target=0.5, msg_count=10, total_tokens=None)
 
         with pytest.raises(RuntimeError, match="total_tokens=None"):
             await compact(self.deps)

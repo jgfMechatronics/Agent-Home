@@ -249,12 +249,14 @@ def test_agentconfig_rejects_extra_fields(valid_config_data: dict):
 
 # --- AgentDeps ---
 
-@pytest.mark.parametrize("missing_field", ["session", "agent_record"])
+@pytest.mark.parametrize("missing_field", ["rw_engine", "ro_engine", "agent_record"])
 def test_agentdeps_requires_field(missing_field: str):
     """AgentDeps should raise TypeError when a required constructor argument is missing."""
     all_fields = {
-        "session": object(),
+        "rw_engine": object(),
+        "ro_engine": object(),
         "agent_record": MagicMock(),
+        "bypass_factory_guard": True,
     }
     del all_fields[missing_field]
 
@@ -262,35 +264,15 @@ def test_agentdeps_requires_field(missing_field: str):
         AgentDeps(**all_fields)
 
 
-class TestAgentDepsCommitChangesRefreshAgentRecord:
-    """commit_changes_refresh_agent_record — commit+refresh ordering invariant."""
-
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        self.mock_record = MagicMock()
-        self.mock_session = AsyncMock()
-        self.deps = AgentDeps(session=self.mock_session, agent_record=self.mock_record)
-
-    async def test_commits_then_refreshes(self):
-        """Refresh must follow commit — refreshing first would reload stale data."""
-        await self.deps.commit_changes_refresh_agent_record()
-
-        assert self.mock_session.mock_calls == [call.commit(), call.refresh(self.mock_record)]
-
-    async def test_refresh_not_called_when_commit_raises(self):
-        """A failed commit leaves the DB unchanged — refresh must not be called."""
-        self.mock_session.commit.side_effect = RuntimeError("DB connection lost")
-
-        with pytest.raises(RuntimeError, match="DB connection lost"):
-            await self.deps.commit_changes_refresh_agent_record()
-
-        self.mock_session.refresh.assert_not_called()
+def test_agentdeps_factory_guard_blocks_direct_construction():
+    """AgentDeps must be constructed via build_deps or with explicit bypass."""
+    with pytest.raises(RuntimeError, match="must be constructed via build_deps"):
+        AgentDeps(object(), object(), MagicMock())
 
 
-async def test_agentdeps_holds_expected_fields(session, agent_deps, agent_record):
+async def test_agentdeps_holds_expected_fields(agent_deps, agent_record):
     """AgentDeps properties should delegate to the underlying AgentRecord."""
     assert agent_deps.agent_id == agent_record.id
-    assert agent_deps.session is session
     assert agent_deps.config is agent_record.agent_config
     assert agent_deps.name == agent_record.name
     assert agent_deps.system_instructions == agent_record.system_instructions

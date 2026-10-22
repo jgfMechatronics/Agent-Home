@@ -266,7 +266,7 @@ class TestPersistMessages(DBTestBase):
         restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
         assert restored == [response_with_call, request_with_response]
 
-    async def test_records_isolated_per_agent(self):
+    async def test_records_isolated_per_agent(self, test_engine):
         """
         Messages persisted for one agent must not affect another agent's records.
         Also verifies that new messages for a given agent do not affect that agent's old msgs.
@@ -278,7 +278,7 @@ class TestPersistMessages(DBTestBase):
         )
         self.session.add(other_agent)
         await self.session.flush()
-        other_deps = AgentDeps(session=self.session, agent_record=other_agent)
+        other_deps = AgentDeps(test_engine, test_engine, other_agent, bypass_factory_guard=True)
 
         expected_other_msg = make_request("other msg")
         my_first_expected_msg = make_request("my msg")
@@ -592,7 +592,7 @@ class TestLoadMessages(DBTestBase):
         seq_ids = [r.seq_id for r in records]
         assert seq_ids == sorted(seq_ids)
 
-    async def test_returns_only_records_for_given_agent(self):
+    async def test_returns_only_records_for_given_agent(self, test_engine):
         """Records from other agents must not appear in results."""
         other_agent = AgentRecord(
             name="other-agent",
@@ -601,7 +601,7 @@ class TestLoadMessages(DBTestBase):
         )
         self.session.add(other_agent)
         await self.session.flush()
-        other_deps = AgentDeps(session=self.session, agent_record=other_agent)
+        other_deps = AgentDeps(test_engine, test_engine, other_agent, bypass_factory_guard=True)
 
         await self._persist([make_request(), make_response()])
         await self._persist([make_request(), make_response()], deps=other_deps)

@@ -39,7 +39,7 @@ class TestSendMessage:
     """send_message tool: inter-agent communication."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession):
+    async def setup(self, session: AsyncSession, test_engine):
         """Create sender agent and optionally a target for delivery tests."""
         sender = AgentRecord(
             name="sender-agent",
@@ -50,7 +50,7 @@ class TestSendMessage:
         await session.flush()
         self.sender = sender
         self.session = session
-        self.deps = AgentDeps(session=session, agent_record=sender)
+        self.deps = AgentDeps(test_engine, test_engine, sender, bypass_factory_guard=True)
         self.ctx = mock_run_context(self.deps)
         # Clear IAC module state before each test (some tests check unconfigured state)
         iac_module._agent_app_state_reg_IAC_ref = None

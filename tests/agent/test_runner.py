@@ -1464,7 +1464,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         ),
     ])
     async def test_memory_tool_through_runner(
-        self, session, agent_record, agent_with_block, tool_name, args_list, expected_contents
+        self, session, test_engine, agent_record, agent_with_block, tool_name, args_list, expected_contents
     ):
         """Memory tools execute correctly through run_stateful_agent.
         
@@ -1480,7 +1480,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
             tools=[TOOL_REGISTRY[tool_name]],
         )
         
-        deps = AgentDeps(session=session, agent_record=agent_record)
+        deps = AgentDeps(test_engine, test_engine, agent_record, bypass_factory_guard=True)
         
         events = []
         async for event in run_stateful_agent(agent, deps, AgentAppState(), f"call {tool_name}"):

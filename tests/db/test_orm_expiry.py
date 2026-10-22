@@ -54,17 +54,18 @@ async def async_session():
 
 
 @pytest_asyncio.fixture
-async def deps_with_mutable_data(async_session: AsyncSession) -> AgentDeps:
+async def deps_with_mutable_data(test_engine) -> AgentDeps:
     """AgentRecord with compiled_system_prompt set, so we have a mutable field to read."""
-    agent = AgentRecord(
-        name="test-agent",
-        agent_config=SAMPLE_CONFIG,
-        system_instructions="Be helpful.",
-        compiled_system_prompt="<system>Be helpful.</system>",
-    )
-    async_session.add(agent)
-    await async_session.flush()
-    return AgentDeps(session=async_session, agent_record=agent)
+    async with AsyncSession(test_engine) as async_session:
+        agent = AgentRecord(
+            name="test-agent",
+            agent_config=SAMPLE_CONFIG,
+            system_instructions="Be helpful.",
+            compiled_system_prompt="<system>Be helpful.</system>",
+        )
+        async_session.add(agent)
+        await async_session.flush()
+        return AgentDeps(test_engine, test_engine, agent, bypass_factory_guard=True)
 
 
 async def test_mutable_property_after_commit(deps_with_mutable_data: AgentDeps, async_session: AsyncSession):
