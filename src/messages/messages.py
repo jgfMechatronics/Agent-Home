@@ -31,7 +31,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.connection import ReadOnlySession
 
-from agent.types import AgentConfig, AgentDeps
+from agent.deps import AgentDeps
+from agent.types import AgentConfig
 from db.models import AgentConfigSnapshot, BaseSnapshot, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
 
 if TYPE_CHECKING:

@@ -15,7 +15,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 
 from agent.crud import get_all_agents
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 
 if TYPE_CHECKING:
     from agent.types import AgentAppState

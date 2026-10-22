@@ -20,7 +20,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ToolCallPart, ToolReturn
 from pydantic_ai.tools import ToolDefinition
 
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 
 if TYPE_CHECKING:
     from pydantic_ai.tools import ValidatedToolArgs

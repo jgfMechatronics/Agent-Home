@@ -22,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.connection import ReadOnlySession
 
-from agent.types import AgentDeps, BlockSettings
+from agent.deps import AgentDeps
+from agent.types import BlockSettings
 from db.models import MemoryBlockRecord
 
 

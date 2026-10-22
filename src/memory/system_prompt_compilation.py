@@ -7,7 +7,7 @@ TODO: More instances of accessing db directly rather than going through the agen
 """
 from datetime import datetime, UTC
 
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 from db.models import MemoryBlockRecord
 from memory.block_crud import get_blocks
 from pydantic_ai import RunContext

@@ -7,7 +7,8 @@ import logging
 
 from sqlalchemy import func, select
 
-from agent.types import AgentConfig, AgentDeps
+from agent.deps import AgentDeps
+from agent.types import AgentConfig
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import deserialize_messages, load_messages
 from db.models import MessageRecord

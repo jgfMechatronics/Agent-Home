@@ -23,7 +23,8 @@ from pydantic_ai.messages import (
 )
 from agent.compaction import compact, is_compaction_needed
 from agent.timestamping import add_timestamp_prefix
-from agent.types import AgentAppState, AgentDeps, AgentOutput, MCPConnError
+from agent.deps import AgentDeps
+from agent.types import AgentAppState, AgentOutput, MCPConnError
 from messages.messages import deserialize_messages, format_system_alert, load_messages, persist_messages
 
 if TYPE_CHECKING:
