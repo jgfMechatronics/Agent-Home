@@ -211,22 +211,28 @@ async def create_agent(
 
     This route directly accesses rw_engine because it's a write route that can't
     take deps — the agent doesn't exist yet, so there's no lock to acquire and no
-    deps to construct. create_agent_record manages its own session internally
-    and compiles the system prompt in the same transaction.
+    deps to construct. The route manages the session and composes create_agent_record
+    + compile_system_prompt in a single transaction, so the agent is fully
+    initialized at commit time.
 
     TODO: I was able to get an invalid model name through to the DB. Errored out when trying to do a model request but did persist
     (update: pretty sure this is fixed now)
     """
-    try:
-        record = await create_agent_record(
-            request.app.state.rw_engine, request.app.state.ro_engine,
-            body.name, body.system_instructions, body.config,
-        )
-    except IntegrityError as e:
-        if "UNIQUE constraint failed: agent.name" in str(e.orig):
-            # SQLite-specific string check. This is brittle but worst case user just gets a less helpful but still helpful error msg
-            raise HTTPException(status_code=409, detail=f"Agent name already in use: {body.name!r}")
-        raise
+    async with AsyncSession(request.app.state.rw_engine) as session:
+        try:
+            record = await create_agent_record(session, body.name, body.system_instructions, body.config)
+            # Temporary deps for compile_system_prompt — no lock needed (agent is brand new).
+            # Record is session-attached, so property setter guards pass naturally.
+            deps = AgentDeps(request.app.state.rw_engine, request.app.state.ro_engine, record)
+            await compile_system_prompt(deps)
+            await session.commit()
+            await session.refresh(record)
+            session.expunge(record)
+        except IntegrityError as e:
+            if "UNIQUE constraint failed: agent.name" in str(e.orig):
+                # SQLite-specific string check. This is brittle but worst case user just gets a less helpful but still helpful error msg
+                raise HTTPException(status_code=409, detail=f"Agent name already in use: {body.name!r}")
+            raise
     return AgentMetadataResponse.from_record(record)
 
 

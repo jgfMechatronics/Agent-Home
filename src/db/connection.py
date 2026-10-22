@@ -1,11 +1,16 @@
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, NewType
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from db.models import Base
+
+ReadOnlySession = NewType("ReadOnlySession", AsyncSession)
+"""Type alias for sessions bound to a read-only engine. Type-level only — communicates
+intent in function signatures and lets type checkers catch passing a rw session where
+read-only is expected. Yielded by AgentDeps.read_scope() and get_session()."""
 
 _DB_BUSY_TIMEOUT_MS = 7000
 
@@ -40,7 +45,7 @@ async def init_db(engine: AsyncEngine) -> None:
 
 
 @asynccontextmanager
-async def get_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
+async def get_session(engine: AsyncEngine) -> AsyncIterator[ReadOnlySession]:
     """Yield a read-only session. No commit/rollback — callers must not write.
 
     Raises ValueError if the engine is not read-only (mode=ro).
@@ -50,6 +55,6 @@ async def get_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
         raise ValueError("get_session requires a read-only engine (mode=ro)")
     session = AsyncSession(engine)
     try:
-        yield session
+        yield ReadOnlySession(session)
     finally:
         await session.close()

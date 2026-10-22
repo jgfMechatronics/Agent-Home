@@ -18,6 +18,8 @@ from pydantic_ai.settings import ThinkingLevel
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import object_session
 
+from db.connection import ReadOnlySession
+
 
 # Union of valid agent run outputs. Single source of truth: the factory derives its
 # runtime output_type list from this alias (get_args), so annotations and Agent
@@ -251,13 +253,13 @@ class AgentDeps:
                 session.expunge(self._agent_record)
 
     @asynccontextmanager
-    async def read_scope(self) -> AsyncIterator[AsyncSession]:
+    async def read_scope(self) -> AsyncIterator[ReadOnlySession]:
         """Yield a read-only session for DB reads (blocks, messages, etc.).
 
         Not needed for record property reads — the detached record is always readable.
         """
         async with AsyncSession(self._ro_engine) as session:
-            yield session
+            yield ReadOnlySession(session)
 
     @property
     def agent_id(self) -> str:
