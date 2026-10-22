@@ -88,7 +88,7 @@ async def multi_tenant_with_deps(session: AsyncSession, test_engine, multi_tenan
     data = multi_tenant_agents_with_core_memory
     deps_a = AgentDeps(test_engine, test_engine, data["agent_a"], bypass_factory_guard=True)
     deps_b = AgentDeps(test_engine, test_engine, data["agent_b"], bypass_factory_guard=True)
-    return {**data, "deps_a": deps_a, "deps_b": deps_b}
+    return {**data, "deps_a": deps_a, "deps_b": deps_b, "session": session}
 
 
 # --- Shared read operation tests ---
@@ -166,7 +166,7 @@ async def test_update_block_modifies_content_and_updated_at(multi_tenant_with_de
 
     assert result.content == new_content
     assert result.updated_at > original_updated_at
-    assert (await get_block(deps.session, deps.agent_id, persona.label)) == result # sanity check
+    assert (await get_block(multi_tenant_with_deps["session"], deps.agent_id, persona.label)) == result # sanity check
 
 
 async def test_update_block_enforces_char_limit(multi_tenant_with_deps: dict):
@@ -204,6 +204,7 @@ class TestUpdateBlockSettings:
         self.deps = multi_tenant_with_deps["deps_a"]
         self.blocks = multi_tenant_with_deps["blocks_a"]
         self.target = self.blocks[0]  # persona at position 0
+        self.session = multi_tenant_with_deps["session"]
     
     async def test_modifies_all_fields(self):
         """update_block_settings should update label, description, char_limit, and position."""
@@ -221,8 +222,8 @@ class TestUpdateBlockSettings:
         assert BlockSettings.from_record(result) == new_settings
         
         # Old label gone, new label exists with correct settings
-        assert await get_block(self.deps.session, self.deps.agent_id, original_label) is None
-        fetched = await get_block(self.deps.session, self.deps.agent_id, "persona_renamed")
+        assert await get_block(self.session, self.deps.agent_id, original_label) is None
+        fetched = await get_block(self.session, self.deps.agent_id, "persona_renamed")
         assert BlockSettings.from_record(fetched) == new_settings
 
     async def test_position_none_keeps_current(self):
@@ -242,7 +243,7 @@ class TestUpdateBlockSettings:
         assert BlockSettings.from_record(result) == expected
         
         # DB matches
-        fetched = await get_block(self.deps.session, self.deps.agent_id, self.target.label)
+        fetched = await get_block(self.session, self.deps.agent_id, self.target.label)
         assert BlockSettings.from_record(fetched) == expected
 
     async def test_duplicate_label_raises(self):
@@ -293,7 +294,7 @@ async def test_create_block_inserts_with_defaults(multi_tenant_with_deps: dict):
     assert result.agent_id == deps.agent_id
     
     # Verify it's actually in the database
-    fetched = await get_block(deps.session, deps.agent_id, "notes")
+    fetched = await get_block(multi_tenant_with_deps["session"], deps.agent_id, "notes")
     assert result == fetched
 
 
@@ -348,13 +349,13 @@ async def test_delete_block_removes_block(multi_tenant_with_deps: dict):
     deps = multi_tenant_with_deps["deps_a"]
     
     # Verify block exists before delete
-    before = await get_block(deps.session, deps.agent_id, "persona")
+    before = await get_block(multi_tenant_with_deps["session"], deps.agent_id, "persona")
     assert before is not None
     
     await delete_block(deps, "persona")
 
     # Verify block is gone
-    after = await get_block(deps.session, deps.agent_id, "persona")
+    after = await get_block(multi_tenant_with_deps["session"], deps.agent_id, "persona")
     assert after is None
 
 
@@ -384,7 +385,7 @@ async def test_reorder_blocks_assigns_positions_by_list_order(multi_tenant_with_
     await reorder_blocks(deps, intended_order)
 
     # Fetch fresh from DB to verify
-    blocks = await get_blocks(deps.session, deps.agent_id)
+    blocks = await get_blocks(multi_tenant_with_deps["session"], deps.agent_id)
     labels_in_order = [b.label for b in blocks]
     
     assert labels_in_order == intended_order
@@ -461,6 +462,6 @@ async def test_write_ops_commit_and_refresh(multi_tenant_with_deps, write_op, ca
         _ = result.content
 
     # No pending changes proves commit happened
-    assert not deps.session.new
-    assert not deps.session.dirty
-    assert not deps.session.deleted
+    assert not multi_tenant_with_deps["session"].new
+    assert not multi_tenant_with_deps["session"].dirty
+    assert not multi_tenant_with_deps["session"].deleted

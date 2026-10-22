@@ -24,7 +24,7 @@ from memory.system_prompt_compilation import compile_system_prompt, get_system_p
 @pytest_asyncio.fixture
 async def agent_with_blocks_and_deps(session: AsyncSession, test_engine, agent_with_blocks: dict):
     """Extends agent_with_blocks with AgentDeps for write operations."""
-    return {**agent_with_blocks, "deps": AgentDeps(test_engine, test_engine, agent_with_blocks["agent"], bypass_factory_guard=True)}
+    return {**agent_with_blocks, "deps": AgentDeps(test_engine, test_engine, agent_with_blocks["agent"], bypass_factory_guard=True), "session": session}
 
 
 @pytest_asyncio.fixture
@@ -76,6 +76,7 @@ class TestCompileSystemPrompt:
         self.deps = agent_with_blocks_and_deps["deps"]
         self.agent = agent_with_blocks_and_deps["agent"]
         self.blocks = agent_with_blocks_and_deps["blocks"]
+        self.session = agent_with_blocks_and_deps["session"]
         await compile_system_prompt(self.deps)
         self.compiled = self.agent.compiled_system_prompt
 
@@ -162,7 +163,7 @@ class TestCompileSystemPrompt:
     async def test_reflects_updated_blocks_on_recompile(self):
         """Recompiling after a block edit should produce output reflecting the new content."""
         self.blocks[0].content = "Updated persona content after first compile."
-        await self.deps.session.flush()
+        await self.session.flush()
 
         await compile_system_prompt(self.deps)
 
@@ -344,7 +345,7 @@ async def test_get_returns_stale_prompt_after_block_edit(agent_with_blocks_and_d
     # Modify a block directly (simulating what memory tools would do)
     blocks = agent_with_blocks_and_deps["blocks"]
     blocks[0].content = "COMPLETELY NEW CONTENT THAT SHOULD NOT APPEAR"
-    await deps.session.flush()
+    await agent_with_blocks_and_deps["session"].flush()
 
     # get_system_prompt should return the OLD compiled prompt
     result = await get_system_prompt(ctx)

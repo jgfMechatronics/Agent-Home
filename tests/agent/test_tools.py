@@ -60,7 +60,7 @@ async def _make_agent_with_block(
     deps = AgentDeps(test_engine, test_engine, agent, bypass_factory_guard=True)
     ctx = mock_run_context(deps)
     
-    return {"agent": agent, "block": block, "deps": deps, "ctx": ctx}
+    return {"agent": agent, "block": block, "deps": deps, "ctx": ctx, "session": session}
 
 
 @pytest_asyncio.fixture
@@ -95,6 +95,7 @@ class UsesEditableBlock:
         self.agent = agent_with_editable_block["agent"]
         self.ctx = agent_with_editable_block["ctx"]
         self.block = agent_with_editable_block["block"]
+        self.session = agent_with_editable_block["session"]
 
 
 # --- TestComputeSnippet ---
@@ -224,7 +225,7 @@ class TestMemoryToolsShared(UsesEditableBlock):
     ])
     async def test_updates_correct_block(self, tool_fn, valid_args, expected_content):
         """Tool updates the block content correctly and doesn't affect other blocks."""
-        session = self.ctx.deps.session
+        session = self.session
 
         # Add a second block to verify it's unaffected
         other_block = MemoryBlockRecord(
@@ -278,10 +279,10 @@ class TestMemoryToolsShared(UsesEditableBlock):
         await tool_fn(self.ctx, label=self.block.label, **valid_args)
 
         # Block should be flushed (not in session.new or session.dirty)
-        assert self.block not in self.ctx.deps.session.new
-        assert self.block not in self.ctx.deps.session.dirty
+        assert self.block not in self.session.new
+        assert self.block not in self.session.dirty
         # And content should have changed
-        await self.ctx.deps.session.refresh(self.block)
+        await self.session.refresh(self.block)
         assert self.block.content != original_content
 
 
@@ -455,7 +456,7 @@ class TestMemoryReplace(UsesEditableBlock):
         """memory_replace returns snippet containing the replaced text."""
         result = await memory_replace(self.ctx, label=self.block.label, old_string="foo two.", new_string="REPLACED.")
 
-        await self.ctx.deps.session.refresh(self.block)
+        await self.session.refresh(self.block)
         assert self.block.content == "foo one.\nREPLACED.\nfoo three."
         # Snippet should contain the new text
         assert "REPLACED." in result
@@ -468,7 +469,7 @@ class TestMemoryReplace(UsesEditableBlock):
             self.ctx, label=self.block.label, old_string="foo", new_string="SECOND", occurrence=2
         )
 
-        await self.ctx.deps.session.refresh(self.block)
+        await self.session.refresh(self.block)
         assert self.block.content == "foo one.\nSECOND two.\nfoo three."
 
 
@@ -479,7 +480,7 @@ class TestMemoryReplace(UsesEditableBlock):
             self.ctx, label=self.block.label, old_string="foo", new_string="X", occurrence=1
         )
 
-        await self.ctx.deps.session.refresh(self.block)
+        await self.session.refresh(self.block)
         # Only first "foo" replaced
         assert self.block.content == "X one.\nfoo two.\nfoo three."
 
@@ -489,7 +490,7 @@ class TestMemoryReplace(UsesEditableBlock):
         # Content: "foo one.\nfoo two.\nfoo three."
         await memory_replace(self.ctx, label=self.block.label, old_string="foo two.\n", new_string="")
 
-        await self.ctx.deps.session.refresh(self.block)
+        await self.session.refresh(self.block)
         assert self.block.content == "foo one.\nfoo three."
 
 
@@ -503,7 +504,7 @@ class TestMemoryInsert(UsesEditableBlock):
         """after='<start>' inserts content at the start of the block (line-boundary: content + newline)."""
         result = await memory_insert(self.ctx, label=self.block.label, content="PREPENDED", after="<start>")
 
-        await self.ctx.deps.session.refresh(self.block)
+        await self.session.refresh(self.block)
         assert self.block.content == "PREPENDED\nfoo one.\nfoo two.\nfoo three."
         # Snippet should contain the inserted text
         assert "PREPENDED" in result
@@ -513,7 +514,7 @@ class TestMemoryInsert(UsesEditableBlock):
         """after='<end>' inserts content at the end of the block (ensures newline termination)."""
         await memory_insert(self.ctx, label=self.block.label, content="\nAPPENDED", after="<end>")
 
-        await self.ctx.deps.session.refresh(self.block)
+        await self.session.refresh(self.block)
         assert self.block.content.endswith("\nAPPENDED\n")
         assert self.block.content == "foo one.\nfoo two.\nfoo three.\n\nAPPENDED\n"
 
@@ -538,7 +539,7 @@ class TestMemoryInsert(UsesEditableBlock):
         """after='anchor' inserts content after the line containing the anchor"""
         await memory_insert(self.ctx, label=self.block.label, content="[INSERTED]", after="foo two.")
 
-        await self.ctx.deps.session.refresh(self.block)
+        await self.session.refresh(self.block)
         assert self.block.content == "foo one.\nfoo two.\n[INSERTED]\nfoo three."
 
 
@@ -550,7 +551,7 @@ class TestMemoryInsert(UsesEditableBlock):
             self.ctx, label=self.block.label, content="[2]", after="foo", occurrence=2
         )
 
-        await self.ctx.deps.session.refresh(self.block)
+        await self.session.refresh(self.block)
         assert self.block.content == "foo one.\nfoo two.\n[2]\nfoo three."
 
 
@@ -558,7 +559,7 @@ class TestMemoryInsert(UsesEditableBlock):
         """Insert adds content without removing existing content."""
         await memory_insert(self.ctx, label=self.block.label, content="NEW", after="<end>")
 
-        await self.ctx.deps.session.refresh(self.block)
+        await self.session.refresh(self.block)
         # Original content should still be present
         assert "foo one." in self.block.content
         assert "foo two." in self.block.content
@@ -579,7 +580,7 @@ class TestMemoryInsertLineBoundary(UsesEditableBlock):
 
     async def _insert(self, content: str, after: str):
         await memory_insert(self.ctx, label=self.block.label, content=content, after=after)
-        await self.ctx.deps.session.refresh(self.block)
+        await self.session.refresh(self.block)
         return self.block.content
 
     @pytest.mark.parametrize(
@@ -625,7 +626,7 @@ class TestMemoryInsertLineBoundary(UsesEditableBlock):
         """Insertion lands at a line boundary per each scenario (block_content=None uses the fixture default)."""
         if block_content is not None:
             self.block.content = block_content
-            await self.ctx.deps.session.flush()
+            await self.session.flush()
 
         result = await self._insert(content=content, after=after)
 
@@ -674,7 +675,7 @@ class TestMemoryRead:
 
     async def test_empty_block_returns_empty_message(self):
         self.block.content = ""
-        await self.ctx.deps.session.flush()
+        await self.session.flush()
 
         result = await self._read()
 
@@ -698,7 +699,7 @@ class TestMemoryRead:
     async def test_trailing_newline_not_extra_line(self):
         """Convention: trailing newline does not create an extra line (matches lines_current metadata)."""
         self.block.content = "one\ntwo\n"
-        await self.ctx.deps.session.flush()
+        await self.session.flush()
 
         result = await self._read()
 

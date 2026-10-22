@@ -140,6 +140,7 @@ class DBTestBase:
         """Persist messages with real toolset extraction. Defaults to no toolsets."""
         return await persist_messages(
             deps if deps is not None else self.deps,
+            self.session,
             messages,
             toolsets if toolsets is not None else [],
         )
@@ -440,6 +441,7 @@ class TestPersistMessagesSnapshots(DBTestBase):
         with patch("messages.messages._extract_tool_definitions", AsyncMock(return_value=schemas)):
             return await persist_messages(
                 deps if deps is not None else self.deps,
+                self.session,
                 messages,
                 [],
             )
