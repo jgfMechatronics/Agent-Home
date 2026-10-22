@@ -29,6 +29,8 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.connection import ReadOnlySession
+
 from agent.types import AgentConfig, AgentDeps
 from db.models import AgentConfigSnapshot, BaseSnapshot, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
 
@@ -305,7 +307,7 @@ async def persist_messages(
 
 
 async def load_messages(
-    session: AsyncSession,
+    session: ReadOnlySession,
     agent_id: str,
     start_seq_id: int = 0,
     end_seq_id: int | None = None,
