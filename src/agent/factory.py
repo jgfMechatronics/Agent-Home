@@ -38,7 +38,7 @@ from agent.compaction_warner import CompactionWarner
 from agent.crud import get_agent_record
 from agent.parallel_tool_call_trimmer import ParallelToolCallTrimmer
 from agent.timestamping import ToolReturnTimestamper
-from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError, AgentOutput
+from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError, AgentOutput, _deps_token
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
 
@@ -234,7 +234,7 @@ class AgentFactory:
                     raise AgentNotFoundError(f"Agent {self._agent_id!r} not found")
                 session.expunge(agent_record)
 
-            deps = AgentDeps(self._rw_engine, self._ro_engine, agent_record)
+            deps = AgentDeps(self._rw_engine, self._ro_engine, agent_record, _token=_deps_token)
             yield deps
         finally:
             # Clear cancel_requested on exit to prevent a stale signal (e.g. a cancel that arrived

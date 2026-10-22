@@ -192,13 +192,20 @@ class BlockSettings(BaseModel):
         )
 
 
+_deps_token = object()
+"""Module-level sentinel proving AgentDeps was constructed via build_deps.
+Not importable by convention — only factory.py should use it."""
+
+
 class AgentDeps:
     """
     Dependency bundle for agent operations. Outside tests, should only be constructed by build_deps.
     This enforces the connection between AgentDeps and the lock that build_deps holds,
     making it so deps proves caller holds the per-agent lock.
-    TODO: consider having AgentDeps validate it came from build_deps, or associate the lock with AgentDeps
-    Best move here is probably have AgentDeps take the lock at construction or something and enforce locked. Unsure if it should live in deps (probably not to reduce unnecessary refs and access)
+
+    Construction is guarded: callers must either pass the private _deps_token (from
+    build_deps) or explicitly pass bypass_factory_guard=True (for bootstrap cases like
+    create_agent_record, and tests).
 
     _agent_record is private by convention — access via properties.
 
@@ -217,7 +224,21 @@ class AgentDeps:
     and verifies each one calls _require_write_scope (not a hardcoded list).
     """
 
-    def __init__(self, rw_engine: AsyncEngine, ro_engine: AsyncEngine, agent_record: "AgentRecord") -> None:
+    def __init__(
+        self,
+        rw_engine: AsyncEngine,
+        ro_engine: AsyncEngine,
+        agent_record: "AgentRecord",
+        *,
+        _token: object | None = None,
+        bypass_factory_guard: bool = False,
+    ) -> None:
+        if not bypass_factory_guard and _token is not _deps_token:
+            raise RuntimeError(
+                "AgentDeps must be constructed via build_deps. "
+                "If you have a legitimate reason to construct directly "
+                "(bootstrap, tests), pass bypass_factory_guard=True."
+            )
         self._rw_engine = rw_engine
         self._ro_engine = ro_engine
         self._agent_record = agent_record
