@@ -377,12 +377,16 @@ def _make_mock_session() -> Mock:
     return session
 
 
-@pytest.fixture
-def app() -> FastAPI:
-    """Fresh app instance per test — avoids state contamination."""
+@pytest_asyncio.fixture
+async def app(test_engine) -> FastAPI:
+    """Fresh app instance per test — avoids state contamination.
+
+    Sets rw_engine/ro_engine on app.state (normally done in lifespan, which doesn't run in tests).
+    """
     app = _create_app()
-    # Lifespan doesn't run in tests, so set up broadcast_hub manually
     app.state.broadcast_hub = BroadcastHub()
+    app.state.rw_engine = test_engine
+    app.state.ro_engine = test_engine
     return app
 
 
@@ -400,8 +404,8 @@ async def client(app: FastAPI) -> AsyncClient:
         yield c
 
 
-@pytest.fixture(autouse=True)
-def override_db_session(app: FastAPI, session: AsyncSession):
+@pytest_asyncio.fixture(autouse=True)
+async def override_db_session(app: FastAPI, session: AsyncSession):
     """Ensure routes use the test session, not a separate DB connection.
 
     Without this, routes call get_ro_session_dep() -> new connection -> test data invisible.
