@@ -172,7 +172,11 @@ async def test_update_block_modifies_content_and_updated_at(multi_tenant_with_de
 
     assert result.content == new_content
     assert result.updated_at > original_updated_at
-    assert (await get_block(multi_tenant_with_deps["session"], deps.agent_id, persona.label)) == result # sanity check
+    # Expire cached blocks so get_block hits the DB for fresh data
+    session = multi_tenant_with_deps["session"]
+    session.expire_all()
+    fetched = await get_block(session, deps.agent_id, "persona")
+    assert fetched.content == result.content  # sanity check: DB has the new content
 
 
 async def test_update_block_enforces_char_limit(multi_tenant_with_deps: dict):
@@ -230,6 +234,7 @@ class TestUpdateBlockSettings:
         assert BlockSettings.from_record(result) == new_settings
         
         # Old label gone, new label exists with correct settings
+        self.session.expire_all()  # Clear identity map cache for fresh reads
         assert await get_block(self.session, self.deps.agent_id, original_label) is None
         fetched = await get_block(self.session, self.deps.agent_id, "persona_renamed")
         assert BlockSettings.from_record(fetched) == new_settings
@@ -251,7 +256,9 @@ class TestUpdateBlockSettings:
         assert BlockSettings.from_record(result) == expected
         
         # DB matches
-        fetched = await get_block(self.session, self.deps.agent_id, self.target.label)
+        label = self.target.label
+        self.session.expire_all()
+        fetched = await get_block(self.session, self.deps.agent_id, label)
         assert BlockSettings.from_record(fetched) == expected
 
     async def test_duplicate_label_raises(self):
@@ -302,8 +309,11 @@ async def test_create_block_inserts_with_defaults(multi_tenant_with_deps: dict):
     assert result.agent_id == deps.agent_id
     
     # Verify it's actually in the database
-    fetched = await get_block(multi_tenant_with_deps["session"], deps.agent_id, "notes")
-    assert result == fetched
+    session = multi_tenant_with_deps["session"]
+    session.expire_all()
+    fetched = await get_block(session, deps.agent_id, "notes")
+    assert fetched.content == result.content
+    assert fetched.label == result.label
 
 
 async def test_create_block_with_duplicate_label_raises(multi_tenant_with_deps: dict):
@@ -393,7 +403,9 @@ async def test_reorder_blocks_assigns_positions_by_list_order(multi_tenant_with_
     await reorder_blocks(deps, intended_order)
 
     # Fetch fresh from DB to verify
-    blocks = await get_blocks(multi_tenant_with_deps["session"], deps.agent_id)
+    session = multi_tenant_with_deps["session"]
+    session.expire_all()
+    blocks = await get_blocks(session, deps.agent_id)
     labels_in_order = [b.label for b in blocks]
     
     assert labels_in_order == intended_order
@@ -429,7 +441,7 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     deps_b = data["deps_b"]
     
     # Snapshot Agent B's state before we modify Agent A
-    b_blocks_before = await get_blocks(deps_b.session, deps_b.agent_id)
+    b_blocks_before = await get_blocks(data["session"], deps_b.agent_id)
     b_snapshot_before = [(b.label, b.content, b.position) for b in b_blocks_before]
     
     # Perform all write operations on Agent A
@@ -438,12 +450,8 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     await create_block(deps_a, BlockSettings(label="new_block"), content="New for A")
     await delete_block(deps_a, "system")  # Agent A has system block
     await reorder_blocks(deps_a, ["human_renamed", "persona", "new_block"])
-    # All writes commit via deps_a's session, which expires ALL records in the session (including deps_b's)
-    # In prod, seperate agents have seperate sessions
-    await deps_b.session.refresh(deps_b._agent_record)
-
     # Verify Agent B is completely unaffected
-    b_blocks_after = await get_blocks(deps_b.session, deps_b.agent_id)
+    b_blocks_after = await get_blocks(data["session"], deps_b.agent_id)
     b_snapshot_after = [(b.label, b.content, b.position) for b in b_blocks_after]
     
     assert b_snapshot_after == b_snapshot_before, "Agent B was modified by operations on Agent A"
