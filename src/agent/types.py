@@ -190,7 +190,6 @@ class BlockSettings(BaseModel):
         )
 
 
-@dataclass(init=False)
 class AgentDeps:
     """
     Dependency bundle for agent operations. Outside tests, should only be constructed by build_deps.
@@ -211,15 +210,18 @@ class AgentDeps:
     - read_scope(): yields a read-only session for DB reads (blocks, messages, etc.).
       Record properties do NOT require a read_scope — the detached record is always
       readable (the agent lock guarantees no concurrent writes).
+
+    TODO: Add a test that programmatically iterates all property setters on this class
+    and verifies each one calls _require_write_scope (not a hardcoded list).
     """
-    _rw_engine: AsyncEngine = field(repr=False)
-    _ro_engine: AsyncEngine = field(repr=False)
-    _agent_record: "AgentRecord" = field(repr=False)
 
     def __init__(self, rw_engine: AsyncEngine, ro_engine: AsyncEngine, agent_record: "AgentRecord") -> None:
         self._rw_engine = rw_engine
         self._ro_engine = ro_engine
         self._agent_record = agent_record
+
+    def __repr__(self) -> str:
+        return f"AgentDeps(agent_id={self._agent_record.id!r}, name={self._agent_record.name!r})"
 
     def _require_write_scope(self) -> None:
         """Raise if the agent record is not attached to a session (i.e., not in a write_scope)."""
