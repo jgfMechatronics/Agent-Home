@@ -2,7 +2,7 @@
 Agent CRUD operations
 """
 from sqlalchemy import exists, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agent.types import AgentConfig, AgentDeps
 from db.models import AgentRecord
@@ -53,22 +53,34 @@ async def replace_agent_config(deps: AgentDeps, config: AgentConfig) -> AgentCon
 
 async def replace_system_instructions(deps: AgentDeps, instructions: str) -> str:
     """Replace system instructions in DB and recompile. Agent is already verified to exist via deps."""
-    async with deps.write_scope() as session:
+    async with deps.write_scope():
         deps.system_instructions = instructions
-        await compile_system_prompt(deps, session)
+        await compile_system_prompt(deps)
     return deps.system_instructions
 
 
 async def create_agent_record(
-    session: AsyncSession,
+    rw_engine: AsyncEngine,
+    ro_engine: AsyncEngine,
     name: str,
     system_instructions: str,
     config: AgentConfig,
 ) -> AgentRecord:
-    """Create a new agent, persist it, and return the AgentRecord."""
-    record = AgentRecord(name=name, system_instructions=system_instructions, agent_config=config)
-    session.add(record)
-    deps = AgentDeps(session, record)
-    await compile_system_prompt(deps)  # flushes session internally
-    await deps.commit_changes_refresh_agent_record()
-    return record
+    """Create a new agent, persist it, and return the AgentRecord.
+
+    Manages its own session — this is the bootstrap case: no agent lock exists yet,
+    so the normal deps/lock pattern doesn't apply. Everything happens in one
+    transaction so the record is fully initialized at commit time.
+    """
+    async with AsyncSession(rw_engine) as session:
+        record = AgentRecord(name=name, system_instructions=system_instructions, agent_config=config)
+        session.add(record)
+        await session.flush()  # populate record.id
+        # Temporary deps for compile_system_prompt — no lock needed (agent is brand new).
+        # Record is session-attached, so property setter guards pass naturally.
+        deps = AgentDeps(rw_engine, ro_engine, record)
+        await compile_system_prompt(deps)
+        await session.commit()
+        await session.refresh(record)
+        session.expunge(record)
+        return record

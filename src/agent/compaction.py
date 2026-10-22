@@ -123,10 +123,10 @@ async def compact(deps: AgentDeps) -> bool:
         return False
 
     new_start = messages[-n_msg_to_keep].seq_id
-    async with deps.write_scope() as session:
+    async with deps.write_scope():
         deps.context_window_start = new_start
         deps.compaction_warning_fired = False  # Reset for next compaction cycle
-        await compile_system_prompt(deps, session)
+        await compile_system_prompt(deps)
     return True
 
 
