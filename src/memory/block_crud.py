@@ -114,6 +114,11 @@ async def update_block(
             raise ContentExceedsLimitError("new content exceeds char limit")
 
         block.content = content
+        # Flush+refresh to load server-side values, then expunge so write_scope's
+        # commit doesn't expire attributes on the returned object
+        await session.flush()
+        await session.refresh(block)
+        session.expunge(block)
     return block
 
 
@@ -150,6 +155,11 @@ async def create_block(
             position=position,
         )
         session.add(block)
+        # Flush+refresh to load server-side values, then expunge so write_scope's
+        # commit doesn't expire attributes on the returned object
+        await session.flush()
+        await session.refresh(block)
+        session.expunge(block)
     return block
 
 
@@ -240,5 +250,10 @@ async def update_block_settings(
                     f"position {settings.position} already held by another block"
                 ) from e
             raise  # Re-raise unexpected IntegrityErrors
-    
+
+        # Refresh to load server-side values, then expunge so write_scope's
+        # commit doesn't expire attributes on the returned object
+        await session.refresh(block)
+        session.expunge(block)
+
     return block
