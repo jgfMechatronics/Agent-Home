@@ -184,7 +184,3 @@ class BlockSettings(BaseModel):
             char_limit=block.char_limit,
             position=block.position,
         )
-
-# TODO: types.py has outgrown its name — AgentDeps and build_deps moved to agent/deps.py
-# because they contain active infrastructure (session lifecycle, lock management) rather
-# than passive domain types. types.py retains configs, errors, and data structures.

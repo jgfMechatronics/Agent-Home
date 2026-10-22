@@ -191,7 +191,7 @@ async def build_deps(
         raise AgentLockedError(f"Agent {agent_id!r} did not become available within {timeout}s")
 
     try:
-        async with AsyncSession(rw_engine) as session:
+        async with AsyncSession(ro_engine) as session:
             agent_record = await session.get(AgentRecord, agent_id)
             if agent_record is None:
                 raise AgentNotFoundError(f"Agent {agent_id!r} not found")
