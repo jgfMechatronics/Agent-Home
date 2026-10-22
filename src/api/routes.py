@@ -223,7 +223,10 @@ async def create_agent(
             record = await create_agent_record(session, body.name, body.system_instructions, body.config)
             # Temporary deps for compile_system_prompt — no lock needed (agent is brand new).
             # Record is session-attached, so property setter guards pass naturally.
-            deps = AgentDeps(request.app.state.rw_engine, request.app.state.ro_engine, record)
+            deps = AgentDeps(
+                request.app.state.rw_engine, request.app.state.ro_engine, record,
+                bypass_factory_guard=True,  # Bootstrap: no lock exists yet for a brand-new agent
+            )
             await compile_system_prompt(deps)
             await session.commit()
             await session.refresh(record)
