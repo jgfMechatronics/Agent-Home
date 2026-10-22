@@ -41,12 +41,14 @@ async def init_db(engine: AsyncEngine) -> None:
 
 @asynccontextmanager
 async def get_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
+    """Yield a read-only session. No commit/rollback — callers must not write.
+
+    Raises ValueError if the engine is not read-only (mode=ro).
+    """
+    if "mode=ro" not in str(engine.url):
+        raise ValueError("get_session requires a read-only engine (mode=ro)")
     session = AsyncSession(engine)
     try:
         yield session
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
     finally:
         await session.close()

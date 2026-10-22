@@ -5,16 +5,18 @@ Internal domain objects for the agent layer. API layer imports FROM here,
 not the reverse.
 """
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, get_args, get_origin
+from typing import TYPE_CHECKING, AsyncIterator, Literal, get_args, get_origin
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.models import parse_model_id
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.settings import ThinkingLevel
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.orm import object_session
 
 
 # Union of valid agent run outputs. Single source of truth: the factory derives its
@@ -199,18 +201,64 @@ class AgentDeps:
 
     _agent_record is private by convention — access via properties.
 
-    All properties read through _agent_record. Whenever possible call
-    commit_changes_refresh_agent_record() rather than committing directly — it
-    commits and refreshes _agent_record, preventing MissingGreenlet on
-    subsequent reads. Mutating callers should always hold deps (proves lock), so the
-    commit site is always well-defined.
+    The record is detached from any session between write operations. Property reads
+    work on the detached record (simple columns, no lazy loading needed). Property
+    setters raise RuntimeError unless called inside a write_scope block.
+
+    Session lifecycle is fully internal:
+    - write_scope(): re-attaches record, yields session for DB work, commits + refreshes
+      + detaches on exit. All record mutations must happen inside a write_scope.
+    - read_scope(): yields a read-only session for DB reads (blocks, messages, etc.).
+      Record properties do NOT require a read_scope — the detached record is always
+      readable (the agent lock guarantees no concurrent writes).
     """
-    session: AsyncSession
+    _rw_engine: AsyncEngine = field(repr=False)
+    _ro_engine: AsyncEngine = field(repr=False)
     _agent_record: "AgentRecord" = field(repr=False)
 
-    def __init__(self, session: AsyncSession, agent_record: "AgentRecord") -> None:
-        self.session = session
+    def __init__(self, rw_engine: AsyncEngine, ro_engine: AsyncEngine, agent_record: "AgentRecord") -> None:
+        self._rw_engine = rw_engine
+        self._ro_engine = ro_engine
         self._agent_record = agent_record
+
+    def _require_write_scope(self) -> None:
+        """Raise if the agent record is not attached to a session (i.e., not in a write_scope)."""
+        if object_session(self._agent_record) is None:
+            raise RuntimeError(
+                "Cannot mutate agent record outside a write scope. "
+                "Use 'async with deps.write_scope():' to open a write session."
+            )
+
+    @asynccontextmanager
+    async def write_scope(self) -> AsyncIterator[AsyncSession]:
+        """Open a write session — re-attach record, yield session for DB work, commit on exit.
+
+        Inside the scope, property setters are enabled (record is session-attached).
+        On exit: commits, refreshes the record (absorbing post-commit attribute expiry),
+        and detaches it again so it remains readable outside the scope.
+
+        Usage:
+            async with deps.write_scope() as session:
+                deps.compiled_system_prompt = new_value
+                await session.execute(...)  # other DB work if needed
+        """
+        async with AsyncSession(self._rw_engine) as session:
+            session.add(self._agent_record)
+            try:
+                yield session
+                await session.commit()
+                await session.refresh(self._agent_record)
+            finally:
+                session.expunge(self._agent_record)
+
+    @asynccontextmanager
+    async def read_scope(self) -> AsyncIterator[AsyncSession]:
+        """Yield a read-only session for DB reads (blocks, messages, etc.).
+
+        Not needed for record property reads — the detached record is always readable.
+        """
+        async with AsyncSession(self._ro_engine) as session:
+            yield session
 
     @property
     def agent_id(self) -> str:
@@ -226,6 +274,7 @@ class AgentDeps:
 
     @config.setter
     def config(self, value: AgentConfig) -> None:
+        self._require_write_scope()
         self._agent_record.agent_config = value
 
     @property
@@ -234,6 +283,7 @@ class AgentDeps:
 
     @system_instructions.setter
     def system_instructions(self, value: str) -> None:
+        self._require_write_scope()
         self._agent_record.system_instructions = value
 
     @property
@@ -242,6 +292,7 @@ class AgentDeps:
 
     @compiled_system_prompt.setter
     def compiled_system_prompt(self, value: str) -> None:
+        self._require_write_scope()
         self._agent_record.compiled_system_prompt = value
 
     @property
@@ -251,6 +302,7 @@ class AgentDeps:
     @sys_prompt_compiled_at.setter
     def sys_prompt_compiled_at(self, value: datetime) -> None:
         # Setters take non-None values intentionally — callers always provide a concrete timestamp
+        self._require_write_scope()
         self._agent_record.sys_prompt_compiled_at = value
 
     @property
@@ -259,6 +311,7 @@ class AgentDeps:
 
     @context_window_start.setter
     def context_window_start(self, value: int) -> None:
+        self._require_write_scope()
         self._agent_record.context_window_start = value
 
     @property
@@ -267,18 +320,5 @@ class AgentDeps:
 
     @compaction_warning_fired.setter
     def compaction_warning_fired(self, value: bool) -> None:
+        self._require_write_scope()
         self._agent_record.compaction_warning_fired = value
-
-    async def commit_changes_refresh_agent_record(self) -> None:
-        """Commit the session and immediately refresh _agent_record.
-
-        These two operations should always be coupled: SQLAlchemy expires all ORM attributes
-        after a commit, so any subsequent read of a mutable property (compiled_system_prompt,
-        context_window_start, etc.) would trigger a lazy reload — which raises MissingGreenlet
-        outside SQLAlchemy's own async machinery. Refreshing immediately after the commit
-        reloads the record while the async context is still active, keeping the object live.
-
-        Whenever possible, use this instead of calling session.commit() directly.
-        """
-        await self.session.commit()
-        await self.session.refresh(self._agent_record)
