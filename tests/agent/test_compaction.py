@@ -46,12 +46,13 @@ def _make_config(
 
 
 async def _persist_messages_load_records(
+    session: AsyncSession,
     deps: AgentDeps,
     messages: list[ModelMessage],
 ) -> list[MessageRecord]:
     """Persist messages via the official persist_messages, then load and return the MessageRecords."""
-    await persist_messages(deps, messages, [])
-    return await load_messages(deps.session, deps.agent_id)
+    await persist_messages(deps, session, messages, [])
+    return await load_messages(session, deps.agent_id)
 
 
 async def _make_agent_with_messages(
@@ -87,7 +88,7 @@ async def _make_agent_with_messages(
     if total_tokens is not None:
         # Replace the last message (always a response for even counts) with one carrying usage data
         pydantic_msgs[-1] = make_response(total_tokens=total_tokens)
-    messages = await _persist_messages_load_records(deps, pydantic_msgs)
+    messages = await _persist_messages_load_records(session, deps, pydantic_msgs)
 
     return {"agent": agent, "messages": messages, "deps": deps}
 
@@ -259,7 +260,7 @@ class TestCompactEdgeCases(CompactTestBase):
     async def test_returns_false_when_no_model_responses_in_context(self, agent_deps: AgentDeps):
         """compact returns False without error when context contains only ModelRequests."""
         requests_only = [make_request(f"msg {i}") for i in range(6)]
-        await _persist_messages_load_records(agent_deps, requests_only)
+        await _persist_messages_load_records(session, agent_deps, requests_only)
 
         result = await compact(agent_deps)
 
@@ -271,7 +272,7 @@ class TestCompactEdgeCases(CompactTestBase):
         msgs = make_alternating_messages(10)   # ends with response at index 9
         msgs[-1] = make_response(total_tokens=1100)
         msgs.append(make_request("new user message"))  # trailing request — compact() must skip it
-        await _persist_messages_load_records(agent_deps, msgs)
+        await _persist_messages_load_records(session, agent_deps, msgs)
 
         result = await compact(agent_deps)
 
@@ -306,8 +307,8 @@ class TestCompactToolPairAtomicity:
         *,
         config: AgentConfig,
     ) -> dict:
-        agent_deps._agent_record.agent_config = config
-        await agent_deps.session.flush()
+        async with agent_deps.write_scope():
+            agent_deps.config = config
 
         tool_call_response, tool_response_request = tool_pair_generator()
         pydantic_msgs = [
@@ -322,7 +323,7 @@ class TestCompactToolPairAtomicity:
             make_request("msg 8"),
             make_response("resp 9", total_tokens=self.TOTAL_TOKENS),
         ]
-        records = await _persist_messages_load_records(agent_deps, pydantic_msgs)
+        records = await _persist_messages_load_records(session, agent_deps, pydantic_msgs)
         return {"agent": agent_deps._agent_record, "records": records, "deps": agent_deps}
 
     @pytest.mark.parametrize("tool_pair_generator", [make_tool_pair, make_retry_pair])
@@ -366,7 +367,7 @@ class TestClearContext:
     async def persist_some_messages(self, agent_deps: AgentDeps):
         """Fixture that persists N_MESSAGES alternating messages for test setup."""
         msgs = make_alternating_messages(self.N_MESSAGES)
-        records = await _persist_messages_load_records(agent_deps, msgs)
+        records = await _persist_messages_load_records(session, agent_deps, msgs)
         return records
 
     async def test_old_messages_excluded_new_messages_visible_after_clear(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
@@ -381,7 +382,7 @@ class TestClearContext:
 
         # New message added after clear IS visible in windowed view
         new_msg = make_request("test message after clear")
-        await persist_messages(agent_deps, [new_msg], [])
+        await persist_messages(agent_deps, session, [new_msg], [])
         visible = await load_messages(session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
         assert len(visible) == 1
 
