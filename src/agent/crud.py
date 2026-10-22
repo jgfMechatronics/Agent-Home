@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.connection import ReadOnlySession
 
-from agent.types import AgentConfig, AgentDeps
+from agent.deps import AgentDeps
+from agent.types import AgentConfig
 from db.models import AgentRecord
 from memory.system_prompt_compilation import compile_system_prompt
 

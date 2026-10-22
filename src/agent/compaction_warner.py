@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from pydantic_ai.messages import ModelResponse
 
 from messages.messages import format_system_alert
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 
 
 COMPACTION_WARNING_THRESHOLD_FRACTION = 0.85

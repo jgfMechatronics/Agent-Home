@@ -11,8 +11,9 @@ from typing import AsyncIterator
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST
-from agent.types import AgentAppState, AgentDeps
+from agent.deps import AgentDeps, build_deps
+from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST, get_or_create_agent_app_state
+from agent.types import AgentAppState
 from db.connection import get_session
 from agent.broadcast_streaming import BroadcastHub
 
@@ -72,7 +73,8 @@ async def get_agent_deps(
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
-    factory = AgentFactory(agent_id, agent_app_state_reg,
-                           request.app.state.rw_engine, request.app.state.ro_engine)
-    async with factory.build_deps(timeout=LOCK_TIMEOUT_FAST) as deps:
+    app_state = get_or_create_agent_app_state(agent_app_state_reg, agent_id)
+    async with build_deps(agent_id, app_state,
+                          request.app.state.rw_engine, request.app.state.ro_engine,
+                          timeout=LOCK_TIMEOUT_FAST) as deps:
         yield deps

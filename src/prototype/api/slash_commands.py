@@ -15,7 +15,7 @@ from agent.compaction import clear_context, compact
 from memory.system_prompt_compilation import compile_system_prompt
 
 if TYPE_CHECKING:
-    from agent.types import AgentDeps
+    from agent.deps import AgentDeps
 
 logger = logging.getLogger(__name__)
 

@@ -14,7 +14,7 @@ from pydantic_ai.common_tools.web_fetch import web_fetch_tool, BinaryContent
 from pydantic_ai.tools import Tool
 from pydantic_ai.exceptions import ModelRetry
 
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 from memory.block_crud import get_block, update_block, ContentExceedsLimitError
 from prototype.iac.send_message import send_message
 
