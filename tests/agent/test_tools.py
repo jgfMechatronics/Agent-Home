@@ -15,7 +15,7 @@ from agent.tools import (
     memory_read,
     memory_replace,
 )
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 from conftest import SAMPLE_AGENT_CONFIG, mock_run_context
 from db.models import AgentRecord, MemoryBlockRecord
 

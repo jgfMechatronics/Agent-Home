@@ -33,7 +33,7 @@ from pydantic_ai_harness.tool_output_limits import READ_TOOL_NAME
 from conftest import ScriptedFunction
 from agent.factory import TOOL_OUTPUT_SPILL_THRESHOLD_CHARS, _build_capabilities
 from agent.timestamping import add_timestamp_prefix
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 
 # Stamp assertions compare against add_timestamp_prefix built at assert time —
 # freeze the clock so runner-stamp and expected-stamp can't straddle a second.

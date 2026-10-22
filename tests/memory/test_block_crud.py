@@ -13,7 +13,8 @@ import pytest_asyncio
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import BlockSettings, AgentDeps
+from agent.deps import AgentDeps
+from agent.types import BlockSettings
 from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord
 

@@ -28,7 +28,8 @@ from db.connection import _configure_sqlite_conn
 from sqlalchemy.pool import StaticPool
 from sqlalchemy import event
 
-from agent.types import AgentConfig, AgentDeps
+from agent.deps import AgentDeps
+from agent.types import AgentConfig
 from db.models import AgentRecord, Base
 
 SAMPLE_CONFIG = AgentConfig(

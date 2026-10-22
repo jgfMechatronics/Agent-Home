@@ -46,11 +46,11 @@ from agent.factory import (
     _build_capabilities,
     _build_model_settings,
 )
+from agent.deps import AgentDeps
 from agent.types import (
     THINKING_EFFORT_LEVELS,
     AgentAppState,
     AgentConfig,
-    AgentDeps,
     AgentLockedError,
     AgentNotFoundError,
     AgentOutput,

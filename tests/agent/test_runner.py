@@ -45,7 +45,8 @@ from messages.messages import format_system_alert
 from agent.parallel_tool_call_trimmer import ParallelToolCallTrimmer
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
 from agent.timestamping import add_timestamp_prefix
-from agent.types import AgentAppState, MCPConnError, AgentDeps
+from agent.deps import AgentDeps
+from agent.types import AgentAppState, MCPConnError
 from api.fastapi_deps import get_agent_and_deps
 from conftest import make_mock_agent, _make_mock_session, local_dummy_tool, assert_ModelMessage_list_eq
 from db.models import AgentRecord, MemoryBlockRecord

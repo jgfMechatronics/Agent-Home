@@ -45,7 +45,7 @@ from conftest import (
     make_retry_pair,
     make_tool_pair,
 )
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 
 
 # ---------------------------------------------------------------------------

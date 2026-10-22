@@ -11,7 +11,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from conftest import mock_run_context, SAMPLE_AGENT_CONFIG
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 from db.models import AgentRecord, MemoryBlockRecord
 
 
