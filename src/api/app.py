@@ -70,19 +70,19 @@ async def lifespan(app: FastAPI):
         )
         logger.critical(msg)
         raise RuntimeError(msg)
-    engine = create_sqlite_engine(DB_PATH)
+    rw_engine = create_sqlite_engine(DB_PATH)
     ro_engine = create_sqlite_engine(DB_PATH, readonly=True)
     hub = BroadcastHub()
     try:
-        await init_db(engine)
-        app.state.rw_engine = engine
+        await init_db(rw_engine)
+        app.state.rw_engine = rw_engine
         app.state.ro_engine = ro_engine
         app.state.broadcast_hub = hub
         configure_iac(app.state.agent_app_state_reg, hub)  # TODO: Remove with IAC redesign
         yield
     finally:
         await hub.shutdown()
-        await engine.dispose()
+        await rw_engine.dispose()
         await ro_engine.dispose()
 
 
