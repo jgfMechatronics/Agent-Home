@@ -2,7 +2,7 @@
 Agent CRUD operations
 """
 from sqlalchemy import exists, select
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig, AgentDeps
 from db.models import AgentRecord
@@ -60,27 +60,15 @@ async def replace_system_instructions(deps: AgentDeps, instructions: str) -> str
 
 
 async def create_agent_record(
-    rw_engine: AsyncEngine,
-    ro_engine: AsyncEngine,
+    session: AsyncSession,
     name: str,
     system_instructions: str,
     config: AgentConfig,
 ) -> AgentRecord:
-    """Create a new agent, persist it, and return the AgentRecord.
-
-    Manages its own session — this is the bootstrap case: no agent lock exists yet,
-    so the normal deps/lock pattern doesn't apply. Everything happens in one
-    transaction so the record is fully initialized at commit time.
+    """Create a new agent record and flush. Does NOT commit — caller controls
+    the transaction boundary (when the agent becomes visible to other requests).
     """
-    async with AsyncSession(rw_engine) as session:
-        record = AgentRecord(name=name, system_instructions=system_instructions, agent_config=config)
-        session.add(record)
-        await session.flush()  # populate record.id
-        # Temporary deps for compile_system_prompt — no lock needed (agent is brand new).
-        # Record is session-attached, so property setter guards pass naturally.
-        deps = AgentDeps(rw_engine, ro_engine, record)
-        await compile_system_prompt(deps)
-        await session.commit()
-        await session.refresh(record)
-        session.expunge(record)
-        return record
+    record = AgentRecord(name=name, system_instructions=system_instructions, agent_config=config)
+    session.add(record)
+    await session.flush()  # populate record.id
+    return record
