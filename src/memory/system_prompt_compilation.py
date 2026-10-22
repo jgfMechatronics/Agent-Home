@@ -29,7 +29,7 @@ def _format_block(block: MemoryBlockRecord) -> str:
     )
 
 
-async def compile_system_prompt(deps: AgentDeps, session: AsyncSession) -> None:
+async def compile_system_prompt(deps: AgentDeps) -> None:
     """
     Assemble memory blocks into compiled_system_prompt.
 
@@ -39,21 +39,21 @@ async def compile_system_prompt(deps: AgentDeps, session: AsyncSession) -> None:
     - Stores result in agent.compiled_system_prompt
     - Updates agent.sys_prompt_compiled_at
 
-    Caller must be inside a write_scope — sets record fields and reads blocks
-    via the provided session.
+    Manages its own write_scope for DB reads and record field mutations.
     """
-    # Load blocks in position order
-    blocks = await get_blocks(session, deps.agent_id)
+    async with deps.write_scope() as session:
+        # Load blocks in position order
+        blocks = await get_blocks(session, deps.agent_id)
 
-    # Build prompt: system_instructions first, then blocks
-    parts = [f"<system_instructions>\n{deps.system_instructions}\n</system_instructions>"]
+        # Build prompt: system_instructions first, then blocks
+        parts = [f"<system_instructions>\n{deps.system_instructions}\n</system_instructions>"]
 
-    for block in blocks:
-        parts.append(_format_block(block))
+        for block in blocks:
+            parts.append(_format_block(block))
 
-    # Store result
-    deps.compiled_system_prompt = "\n".join(parts)
-    deps.sys_prompt_compiled_at = datetime.now(UTC)
+        # Store result
+        deps.compiled_system_prompt = "\n".join(parts)
+        deps.sys_prompt_compiled_at = datetime.now(UTC)
 
 
 async def get_system_prompt(ctx_or_deps : RunContext[AgentDeps] | AgentDeps) -> str:
