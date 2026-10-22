@@ -71,16 +71,19 @@ async def lifespan(app: FastAPI):
         logger.critical(msg)
         raise RuntimeError(msg)
     engine = create_sqlite_engine(DB_PATH)
+    ro_engine = create_sqlite_engine(DB_PATH, readonly=True)
     hub = BroadcastHub()
     try:
         await init_db(engine)
         app.state.engine = engine
+        app.state.ro_engine = ro_engine
         app.state.broadcast_hub = hub
         configure_iac(app.state.agent_app_state_reg, hub)  # TODO: Remove with IAC redesign
         yield
     finally:
         await hub.shutdown()
         await engine.dispose()
+        await ro_engine.dispose()
 
 
 # App-level handlers commonize exception → HTTP response mapping. Without them, each route or

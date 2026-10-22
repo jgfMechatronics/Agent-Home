@@ -31,7 +31,7 @@ from pydantic_ai_harness.tool_output_limits import (
     Truncate,
     indented_json,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agent.compaction_warner import CompactionWarner
 from agent.crud import get_agent_record
@@ -190,11 +190,12 @@ class AgentFactory:
     which proves the caller holds the lock.
     """
 
-    def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState], session: AsyncSession):
+    def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState], rw_engine: AsyncEngine, ro_engine: AsyncEngine):
         """Resolve (or create) the agent slot from the registry, then discard the registry ref."""
         self._agent_id = agent_id
         self._agent_app_state = self._get_or_create_agent_app_state(agent_app_state_reg, agent_id)
-        self._session = session  # TODO: session also lives and is passed around in deps. ref spaghetti?
+        self._rw_engine = rw_engine
+        self._ro_engine = ro_engine
 
     @staticmethod
     def _get_or_create_agent_app_state(agent_app_state_reg: dict[str, AgentAppState], agent_id: str) -> AgentAppState:
@@ -217,11 +218,13 @@ class AgentFactory:
             raise AgentLockedError(f"Agent {self._agent_id!r} did not become available within {timeout}s")
 
         try:
-            agent_record = await get_agent_record(self._session, self._agent_id)
-            if agent_record is None:
-                raise AgentNotFoundError(f"Agent {self._agent_id!r} not found")
+            async with AsyncSession(self._rw_engine) as session:
+                agent_record = await get_agent_record(session, self._agent_id)
+                if agent_record is None:
+                    raise AgentNotFoundError(f"Agent {self._agent_id!r} not found")
+                session.expunge(agent_record)
 
-            deps = AgentDeps(self._session, agent_record)
+            deps = AgentDeps(self._rw_engine, self._ro_engine, agent_record)
             yield deps
         finally:
             # Clear cancel_requested on exit to prevent a stale signal (e.g. a cancel that arrived
