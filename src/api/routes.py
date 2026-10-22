@@ -188,8 +188,8 @@ async def recompile_system_prompt_route_handler(
     if we do, need to design proper and unit test
     """
 
-    async with deps.write_scope() as session:
-        await compile_system_prompt(deps, session)
+    async with deps.write_scope():
+        await compile_system_prompt(deps)
     return True
 
 
@@ -205,24 +205,23 @@ async def list_agents(
 @router.post("", status_code=201)
 async def create_agent(
     body: CreateAgentRequest,
-    session: AsyncSession = Depends(get_ro_session_dep),
+    request: Request,
 ) -> AgentMetadataResponse:
     """Create a new agent and return its metadata.
 
-    TODO: Compile the system prompt immediately after creation so the agent's memory blocks
-    are visible from the first turn. Currently the agent starts without a compiled system
-    prompt and won't see its blocks until an explicit recompile or first compaction.
-    This should call compile_system_prompt (or equivalent) before returning, and the
-    behaviour should be covered by tests in test_routes.py::TestCreateAgent.
-    
+    This route directly accesses rw_engine because it's a write route that can't
+    take deps — the agent doesn't exist yet, so there's no lock to acquire and no
+    deps to construct. create_agent_record manages its own session internally
+    and compiles the system prompt in the same transaction.
+
     TODO: I was able to get an invalid model name through to the DB. Errored out when trying to do a model request but did persist
     (update: pretty sure this is fixed now)
-    TODO: this route and the associated crud function do not follow our read only scheme. granted, the read only scheme is intended to
-    block concurrent access to an existing agent, which doesn't apply here. we can't use our normal deps scheme to lock because there's
-    no agent to construct deps for. will need to figure out, perhaps this route manually acquires the lock.
     """
     try:
-        record = await create_agent_record(session, body.name, body.system_instructions, body.config)
+        record = await create_agent_record(
+            request.app.state.rw_engine, request.app.state.ro_engine,
+            body.name, body.system_instructions, body.config,
+        )
     except IntegrityError as e:
         if "UNIQUE constraint failed: agent.name" in str(e.orig):
             # SQLite-specific string check. This is brittle but worst case user just gets a less helpful but still helpful error msg
