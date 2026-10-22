@@ -181,6 +181,7 @@ async def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent
 
 async def _persist_error_warnings(
     deps: AgentDeps,
+    session: AsyncSession,
     errors: list[tuple[datetime | None, str]],
     toolsets: "Sequence[AbstractToolset]",
 ) -> None:
@@ -193,8 +194,8 @@ async def _persist_error_warnings(
         ))])
         for error_ts, error_text in errors
     ]
-    await deps.session.flush()  # Ensure main messages visible to recursive call's MAX query
-    await persist_messages(deps, warning_messages, toolsets, _is_error_pass=True)
+    await session.flush()  # Ensure main messages visible to recursive call's MAX query
+    await persist_messages(deps, session, warning_messages, toolsets, _is_error_pass=True)
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +204,7 @@ async def _persist_error_warnings(
 
 async def persist_messages(
     deps: AgentDeps,
+    session: AsyncSession,
     messages: list[ModelMessage],
     toolsets: "Sequence[AbstractToolset]",
     *,
@@ -227,7 +229,7 @@ async def persist_messages(
     # Get next seq_id: MAX(seq_id) + 1, or 0 if no messages exist
     # NOTE: Concurrent calls would race on this query. Agent-level locking in the runner
     # (AgentAppState.lock) ensures only one persist_messages runs per agent at a time.
-    result = await deps.session.execute(
+    result = await session.execute(
         select(func.max(MessageRecord.seq_id)).where(MessageRecord.agent_id == deps.agent_id)
     )
     max_seq_id = result.scalar()
@@ -235,13 +237,13 @@ async def persist_messages(
 
     tool_schemas = await _extract_tool_definitions(toolsets, deps.agent_id)
     # Snapshot hashes — computed once per call; **assumed** stable across the batch of messages
-    system_prompt_hash = await _ensure_system_prompt_snapshotted(deps.session, deps.compiled_system_prompt)
-    tool_definition_hash = await _ensure_tool_definition_snapshotted(deps.session, tool_schemas)
-    agent_config_hash = await _ensure_agent_config_snapshotted(deps.session, deps.config)
+    system_prompt_hash = await _ensure_system_prompt_snapshotted(session, deps.compiled_system_prompt)
+    tool_definition_hash = await _ensure_tool_definition_snapshotted(session, tool_schemas)
+    agent_config_hash = await _ensure_agent_config_snapshotted(session, deps.config)
 
     # context_window_start_msg_id — look up existing start, or resolve self-referentially on first insert
     context_window_start_msg_id = await _get_context_window_start_msg_id(
-        deps.session, deps.agent_id, deps.context_window_start
+        session, deps.agent_id, deps.context_window_start
     )
 
     messages = repair_messages(messages)
@@ -289,15 +291,15 @@ async def persist_messages(
             agent_config_hash=agent_config_hash,
             context_window_start_msg_id=context_window_start_msg_id,
         )
-        deps.session.add(record)
+        session.add(record)
 
     # Persist error warnings via recursion (errors are simple TextPart messages, won't fail)
     if errors:
         if _is_error_pass:
             raise RuntimeError("Persistence errors during attempt to persist error notifications")
-        await _persist_error_warnings(deps, errors, toolsets)
+        await _persist_error_warnings(deps, session, errors, toolsets)
     else:
-        await deps.session.flush()
+        await session.flush()
 
     return last_total_tokens
 

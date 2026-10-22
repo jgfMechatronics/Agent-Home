@@ -175,7 +175,6 @@ async def handle_message(
     except Exception as e:
         # TODO (low priority): put more thought into logging strategy (log levels, handler chain, structured logging)
         logger.exception("Unexpected error in handle_message for agent %s", agent_id)
-        await deps.session.rollback()
         yield map_to_sse(RunErrorEvent.from_exception(e))
 
 
@@ -189,7 +188,8 @@ async def recompile_system_prompt_route_handler(
     if we do, need to design proper and unit test
     """
 
-    await compile_system_prompt(deps)
+    async with deps.write_scope() as session:
+        await compile_system_prompt(deps, session)
     return True
 
 

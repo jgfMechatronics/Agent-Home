@@ -73,7 +73,8 @@ async def send_message(
     deps = ctx.deps
 
     # Resolve target name → agent_id
-    agents = await get_all_agents(deps.session)
+    async with deps.read_scope() as session:
+        agents = await get_all_agents(session)
     target_record = next((a for a in agents if a.name == target_name), None)
     if target_record is None:
         raise ModelRetry(f"Agent {target_name!r} not found.")
@@ -89,9 +90,9 @@ async def send_message(
     if _agent_app_state_reg_IAC_ref is None or _broadcast_hub_IAC_ref is None:
         raise ModelRetry("send_message is not configured (call configure_iac at startup).")
 
-    # Extract engine from session — always available via session.bind
-    # This is intended to avoid passing engine down on deps. Eventually we hope to not need the engine at this level at all.
-    engine = deps.session.bind
+    # Extract engine from deps — needed for the background delivery task which runs
+    # outside the current request scope. Eventually we hope to not need the engine at this level at all.
+    engine = deps._rw_engine
 
     # Spawn background task with delivery confirmation via Future
     loop = asyncio.get_running_loop()
