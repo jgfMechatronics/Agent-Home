@@ -74,7 +74,11 @@ async def get_agent_deps(
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
     app_state = get_or_create_agent_app_state(agent_app_state_reg, agent_id)
-    async with build_deps(agent_id, app_state,
-                          request.app.state.rw_engine, request.app.state.ro_engine,
-                          timeout=LOCK_TIMEOUT_FAST) as deps:
+    async with build_deps(
+        agent_id=agent_id,
+        agent_app_state=app_state,
+        rw_engine=request.app.state.rw_engine,
+        ro_engine=request.app.state.ro_engine,
+        timeout=LOCK_TIMEOUT_FAST,
+    ) as deps:
         yield deps
