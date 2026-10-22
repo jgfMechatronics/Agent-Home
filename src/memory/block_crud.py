@@ -46,15 +46,6 @@ class DuplicatePositionError(Exception):
     """Raised when attempting to set a block's position to one already held by another block."""
 
 
-# --- Internal helpers ---
-
-async def _persist(deps: AgentDeps, record: MemoryBlockRecord | None = None) -> None:
-    """Commit the session and refresh the agent record. Optionally refresh a returned record."""
-    await deps.commit_changes_refresh_agent_record()
-    if record is not None:
-        await deps.session.refresh(record)
-
-
 # --- Read operations (no lock) ---
 
 async def get_blocks(session: AsyncSession, agent_id: str) -> Sequence[MemoryBlockRecord]:
@@ -108,14 +99,14 @@ async def update_block(
     Raises if block doesn't exist or content exceeds char_limit.
     block: Optional pre-fetched block to avoid redundant DB query if caller already has it.
     """
-    if block is None:
-        block = await get_block_or_raise(deps.session, deps.agent_id, label)
+    async with deps.write_scope() as session:
+        if block is None:
+            block = await get_block_or_raise(session, deps.agent_id, label)
 
-    if len(content) > block.char_limit:
-        raise ContentExceedsLimitError("new content exceeds char limit")
+        if len(content) > block.char_limit:
+            raise ContentExceedsLimitError("new content exceeds char limit")
 
-    block.content = content
-    await _persist(deps, block)
+        block.content = content
     return block
 
 
@@ -130,36 +121,36 @@ async def create_block(
     If settings.position is None, appends to end (max existing position + 1).
     Raises if label already exists for this agent.
     """
-    await raise_if_label_exists(deps.session, deps.agent_id, settings.label)
+    async with deps.write_scope() as session:
+        await raise_if_label_exists(session, deps.agent_id, settings.label)
 
-    # Auto-assign position if not specified
-    position = settings.position
-    if position is None:
-        stmt = select(func.max(MemoryBlockRecord.position)).where(
-            MemoryBlockRecord.agent_id == deps.agent_id
+        # Auto-assign position if not specified
+        position = settings.position
+        if position is None:
+            stmt = select(func.max(MemoryBlockRecord.position)).where(
+                MemoryBlockRecord.agent_id == deps.agent_id
+            )
+            result = await session.execute(stmt)
+            max_pos = result.scalar()
+            position = 0 if max_pos is None else max_pos + 1
+
+        block = MemoryBlockRecord(
+            agent_id=deps.agent_id,
+            label=settings.label,
+            content=content,
+            description=settings.description,
+            char_limit=settings.char_limit,
+            position=position,
         )
-        result = await deps.session.execute(stmt)
-        max_pos = result.scalar()
-        position = 0 if max_pos is None else max_pos + 1
-
-    block = MemoryBlockRecord(
-        agent_id=deps.agent_id,
-        label=settings.label,
-        content=content,
-        description=settings.description,
-        char_limit=settings.char_limit,
-        position=position,
-    )
-    deps.session.add(block)
-    await _persist(deps, block)
+        session.add(block)
     return block
 
 
 async def delete_block(deps: AgentDeps, label: str) -> None:
     """Remove block. Raises if block doesn't exist (fail loudly)."""
-    block = await get_block_or_raise(deps.session, deps.agent_id, label)
-    await deps.session.delete(block)
-    await _persist(deps)
+    async with deps.write_scope() as session:
+        block = await get_block_or_raise(session, deps.agent_id, label)
+        await session.delete(block)
 
 
 async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str]) -> None:
@@ -168,34 +159,33 @@ async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str]) -> None:
     
     Raises if list doesn't include all blocks for agent or contains unknown labels.
     """
-    blocks = await get_blocks(deps.session, deps.agent_id)
-    existing_labels = {b.label for b in blocks}
-    provided_labels = set(labels_in_order)
+    async with deps.write_scope() as session:
+        blocks = await get_blocks(session, deps.agent_id)
+        existing_labels = {b.label for b in blocks}
+        provided_labels = set(labels_in_order)
 
-    # Validate: must be exact match
-    if existing_labels != provided_labels:
-        missing = existing_labels - provided_labels
-        unknown = provided_labels - existing_labels
-        errors = []
-        if missing:
-            errors.append(f"missing labels: {missing}")
-        if unknown:
-            errors.append(f"unknown labels: {unknown}")
-        raise InvalidBlockOrderListError("; ".join(errors))
+        # Validate: must be exact match
+        if existing_labels != provided_labels:
+            missing = existing_labels - provided_labels
+            unknown = provided_labels - existing_labels
+            errors = []
+            if missing:
+                errors.append(f"missing labels: {missing}")
+            if unknown:
+                errors.append(f"unknown labels: {unknown}")
+            raise InvalidBlockOrderListError("; ".join(errors))
 
-    # Build label -> block map for efficient lookup
-    blocks_by_label = {b.label: b for b in blocks}
+        # Build label -> block map for efficient lookup
+        blocks_by_label = {b.label: b for b in blocks}
 
-    # Clear positions first to avoid unique constraint collisions during reorder
-    for i, block in enumerate(blocks):
-        block.position = -(i + 1)  # Negative values won't collide with final 0,1,2...
-    await deps.session.flush()
+        # Clear positions first to avoid unique constraint collisions during reorder
+        for i, block in enumerate(blocks):
+            block.position = -(i + 1)  # Negative values won't collide with final 0,1,2...
+        await session.flush()
 
-    # Assign final positions
-    for position, label in enumerate(labels_in_order):
-        blocks_by_label[label].position = position
-
-    await _persist(deps)
+        # Assign final positions
+        for position, label in enumerate(labels_in_order):
+            blocks_by_label[label].position = position
 
 
 async def update_block_settings(
@@ -217,30 +207,31 @@ async def update_block_settings(
     Raises DuplicateBlockError if renaming to a label that already exists.
     Raises DuplicatePositionError if setting position to one already held by another block.
     """
-    block = await get_block_or_raise(deps.session, deps.agent_id, label)
-    
-    # Check for label conflict on rename (before mutations)
-    if settings.label != label:
-        await raise_if_label_exists(deps.session, deps.agent_id, settings.label)
-    
-    if settings.char_limit < len(block.content):
-        raise ContentExceedsLimitError("new char_limit is less than current content length")
-    
-    # Apply mutations
-    block.label = settings.label
-    block.description = settings.description
-    block.char_limit = settings.char_limit
-    if settings.position is not None:
-        block.position = settings.position
+    async with deps.write_scope() as session:
+        block = await get_block_or_raise(session, deps.agent_id, label)
+        
+        # Check for label conflict on rename (before mutations)
+        if settings.label != label:
+            await raise_if_label_exists(session, deps.agent_id, settings.label)
+        
+        if settings.char_limit < len(block.content):
+            raise ContentExceedsLimitError("new char_limit is less than current content length")
+        
+        # Apply mutations
+        block.label = settings.label
+        block.description = settings.description
+        block.char_limit = settings.char_limit
+        if settings.position is not None:
+            block.position = settings.position
 
-    try:
-        await _persist(deps, block)
-    except IntegrityError as e:
-        # Label conflict already checked above; check for position conflict
-        if "UNIQUE constraint failed: memory_block.agent_id, memory_block.position" in str(e):
-            raise DuplicatePositionError(
-                f"position {settings.position} already held by another block"
-            ) from e
-        raise  # Re-raise unexpected IntegrityErrors
+        try:
+            await session.flush()
+        except IntegrityError as e:
+            # Label conflict already checked above; check for position conflict
+            if "UNIQUE constraint failed: memory_block.agent_id, memory_block.position" in str(e):
+                raise DuplicatePositionError(
+                    f"position {settings.position} already held by another block"
+                ) from e
+            raise  # Re-raise unexpected IntegrityErrors
     
     return block

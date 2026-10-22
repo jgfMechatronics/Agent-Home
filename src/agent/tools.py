@@ -159,18 +159,19 @@ async def memory_replace(
     if not old_string:
         raise ModelRetry("old_string cannot be empty")
     
-    block = await get_block(deps.session, deps.agent_id, label)
-    if block is None:
-        raise ModelRetry(f"block '{label}' not found")
+    async with deps.read_scope() as session:
+        block = await get_block(session, deps.agent_id, label)
+        if block is None:
+            raise ModelRetry(f"block '{label}' not found")
+        
+        # Resolve occurrence to character position (raises ModelRetry on failure)
+        start_pos = _resolve_occurrence(block.content, old_string, occurrence, label)
+        
+        # Perform replacement
+        end_pos = start_pos + len(old_string)
+        new_content = block.content[:start_pos] + new_string + block.content[end_pos:]
     
-    # Resolve occurrence to character position (raises ModelRetry on failure)
-    start_pos = _resolve_occurrence(block.content, old_string, occurrence, label)
-    
-    # Perform replacement
-    end_pos = start_pos + len(old_string)
-    new_content = block.content[:start_pos] + new_string + block.content[end_pos:]
-    
-    # handles char limit check and persistence
+    # handles char limit check and persistence (update_block manages its own write_scope)
     try:
         await update_block(deps, label, new_content, block=block)
     except ContentExceedsLimitError as e:
@@ -226,26 +227,27 @@ async def memory_insert(
     if not after:
         raise ModelRetry("'after' cannot be empty. Use '<start>' or '<end>' for boundary insertions.")
 
-    # Get block
-    block = await get_block(deps.session, deps.agent_id, label)
-    if block is None:
-        raise ModelRetry(f"block '{label}' not found")
+    async with deps.read_scope() as session:
+        # Get block
+        block = await get_block(session, deps.agent_id, label)
+        if block is None:
+            raise ModelRetry(f"block '{label}' not found")
 
-    # Handle special markers
-    if after in ("<start>", "<end>"):
-        if occurrence is not None:
-            raise ModelRetry("occurrence cannot be used with '<start>' or '<end>'")
-        insert_pos = 0 if after == "<start>" else len(block.content)
-    else:
-        # Resolve anchor occurrence to character position (raises ModelRetry on failure)
-        anchor_pos = _resolve_occurrence(block.content, after, occurrence, label)
-        # Snap to the start of the line following the anchor's line
-        insert_pos = _snap_to_next_line_start(block.content, anchor_pos + len(after))
+        # Handle special markers
+        if after in ("<start>", "<end>"):
+            if occurrence is not None:
+                raise ModelRetry("occurrence cannot be used with '<start>' or '<end>'")
+            insert_pos = 0 if after == "<start>" else len(block.content)
+        else:
+            # Resolve anchor occurrence to character position (raises ModelRetry on failure)
+            anchor_pos = _resolve_occurrence(block.content, after, occurrence, label)
+            # Snap to the start of the line following the anchor's line
+            insert_pos = _snap_to_next_line_start(block.content, anchor_pos + len(after))
 
-    # Line-boundary insertion: verbatim content + exactly one trailing newline
-    new_content, content_start = _insert_at_line_boundary(block.content, insert_pos, content)
+        # Line-boundary insertion: verbatim content + exactly one trailing newline
+        new_content, content_start = _insert_at_line_boundary(block.content, insert_pos, content)
 
-    # handles char limit check and persistence
+    # handles char limit check and persistence (update_block manages its own write_scope)
     try:
         await update_block(deps, label, new_content, block=block)
     except ContentExceedsLimitError as e:
@@ -288,22 +290,23 @@ async def memory_read(
     if limit <= 0:
         raise ModelRetry("limit must be positive")
 
-    block = await get_block(deps.session, deps.agent_id, label)
-    if block is None:
-        raise ModelRetry(f"block '{label}' not found")
+    async with deps.read_scope() as session:
+        block = await get_block(session, deps.agent_id, label)
+        if block is None:
+            raise ModelRetry(f"block '{label}' not found")
 
-    lines = block.content.splitlines()
-    if not lines:
-        return f"[memory_read: block '{label}' is empty]"
+        lines = block.content.splitlines()
+        if not lines:
+            return f"[memory_read: block '{label}' is empty]"
 
-    window = lines[offset : offset + limit]
-    if not window:
-        raise ModelRetry(
-            f"[memory_read: block '{label}' has {len(lines)} lines — "
-            f"lines {offset + 1}-{offset + limit} are out of range. Adjust offset.]"
-        )
+        window = lines[offset : offset + limit]
+        if not window:
+            raise ModelRetry(
+                f"[memory_read: block '{label}' has {len(lines)} lines — "
+                f"lines {offset + 1}-{offset + limit} are out of range. Adjust offset.]"
+            )
 
-    header = f"[memory_read: block '{label}', lines {offset + 1}-{offset + len(window)} of {len(lines)}]"
+        header = f"[memory_read: block '{label}', lines {offset + 1}-{offset + len(window)} of {len(lines)}]"
     return header + "\n" + "\n".join(window)
 
 
