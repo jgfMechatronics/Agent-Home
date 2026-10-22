@@ -76,8 +76,8 @@ class CompactionWarner(AbstractCapability[AgentDeps]):
             # instead of the DB flag. Stamp warning with context_window_start as cycle marker,
             # check ctx.messages + ctx.pending_messages for matching marker. Would eliminate
             # the crash window entirely but adds complexity.
-            ctx.deps.compaction_warning_fired = True
-            await ctx.deps.commit_changes_refresh_agent_record()
+            async with ctx.deps.write_scope():
+                ctx.deps.compaction_warning_fired = True
             
             # Enqueue warning — delivered on next request, available for persistence in message history
             ctx.enqueue(UserPromptPart(content=COMPACTION_WARNING_TEXT))

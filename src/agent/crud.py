@@ -44,18 +44,18 @@ async def replace_agent_config(deps: AgentDeps, config: AgentConfig) -> AgentCon
     Lowering the limit does not reset: compaction will fire sooner, evicting content
     the agent already consolidated when the original warning fired.
     """
-    if config.soft_compaction_limit > deps.config.soft_compaction_limit:
-        deps.compaction_warning_fired = False
-    deps.config = config
-    await deps.commit_changes_refresh_agent_record()
+    async with deps.write_scope():
+        if config.soft_compaction_limit > deps.config.soft_compaction_limit:
+            deps.compaction_warning_fired = False
+        deps.config = config
     return deps.config
 
 
 async def replace_system_instructions(deps: AgentDeps, instructions: str) -> str:
     """Replace system instructions in DB and recompile. Agent is already verified to exist via deps."""
-    deps.system_instructions = instructions
-    await compile_system_prompt(deps)
-    await deps.commit_changes_refresh_agent_record()
+    async with deps.write_scope() as session:
+        deps.system_instructions = instructions
+        await compile_system_prompt(deps, session)
     return deps.system_instructions
 
 
