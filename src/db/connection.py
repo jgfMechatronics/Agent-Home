@@ -44,6 +44,7 @@ async def get_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
     """Yield a read-only session. No commit/rollback — callers must not write.
 
     Raises ValueError if the engine is not read-only (mode=ro).
+    TODO: Unit test for above functionality
     """
     if "mode=ro" not in str(engine.url):
         raise ValueError("get_session requires a read-only engine (mode=ro)")
