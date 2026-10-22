@@ -188,7 +188,8 @@ async def recompile_system_prompt_route_handler(
     if we do, need to design proper and unit test
     """
 
-    await compile_system_prompt(deps)
+    async with deps.write_scope() as session:
+        await compile_system_prompt(deps, session)
     return True
 
 

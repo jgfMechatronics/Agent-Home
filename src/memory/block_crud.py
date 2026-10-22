@@ -98,10 +98,14 @@ async def update_block(
 
     Raises if block doesn't exist or content exceeds char_limit.
     block: Optional pre-fetched block to avoid redundant DB query if caller already has it.
+           If provided, caller must ensure it's detached (e.g., from a read_scope).
     """
     async with deps.write_scope() as session:
         if block is None:
             block = await get_block_or_raise(session, deps.agent_id, label)
+        else:
+            # Re-attach detached block from caller's read_scope
+            session.add(block)
 
         if len(content) > block.char_limit:
             raise ContentExceedsLimitError("new content exceeds char limit")
