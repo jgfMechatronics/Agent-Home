@@ -64,12 +64,18 @@ async def multi_tenant_agents_with_core_memory(session: AsyncSession):
     
     all_blocks = [block_a_human, block_a_persona, block_a_system, block_b_persona, block_b_notes]
     session.add_all(all_blocks)
-    await session.flush()
-    
+    await session.commit()
+
     # Refresh to get server-generated values (created_at, updated_at)
     for block in all_blocks:
         await session.refresh(block)
-    
+    await session.refresh(agent_a)
+    await session.refresh(agent_b)
+
+    # Detach agents so write_scope's session.add() can re-attach
+    session.expunge(agent_a)
+    session.expunge(agent_b)
+
     return {
         "agent_a": agent_a,
         "agent_b": agent_b,
@@ -184,6 +190,8 @@ async def test_update_block_accepts_prefetched_block(multi_tenant_with_deps: dic
     """update_block with block param skips fetch and uses provided block."""
     deps = multi_tenant_with_deps["deps_a"]
     persona = multi_tenant_with_deps["blocks_a"][0]
+    # Expunge to simulate a block from read_scope (detached, as in production)
+    multi_tenant_with_deps["session"].expunge(persona)
     
     spy = mocker.spy(block_crud, "get_block")
     

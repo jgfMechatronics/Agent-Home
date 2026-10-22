@@ -20,7 +20,7 @@ from sqlalchemy import event
 from db.connection import _configure_sqlite_conn
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool
 
 from agent.deps import AgentDeps
 from agent.types import AgentConfig
@@ -244,19 +244,26 @@ def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
 
 @pytest_asyncio.fixture
 async def test_engine():
-    """Fresh in-memory SQLite engine per test. StaticPool ensures create_all and
-    sessions share the same connection; engine disposal destroys the DB."""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        poolclass=StaticPool,
-    )
+    """Per-test engine with named shared in-memory DB and NullPool.
+
+    Named shared cache (mode=memory&cache=shared) lets multiple connections see
+    the same data — matching production NullPool semantics where each session
+    owns its connection. Unique name per test gives isolation without cleanup.
+    A keeper connection is held open because SQLite destroys in-memory DBs
+    when the last connection closes (NullPool closes after each use).
+    """
+    db_name = f"testdb_{uuid.uuid4().hex}"
+    url = f"sqlite+aiosqlite:///file:{db_name}?mode=memory&cache=shared&uri=true"
+    engine = create_async_engine(url, poolclass=NullPool)
     event.listens_for(engine.sync_engine, "connect")(_configure_sqlite_conn)
 
+    keeper = await engine.connect()
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         yield engine
     finally:
+        await keeper.close()
         await engine.dispose()
 
 
