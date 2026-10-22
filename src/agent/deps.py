@@ -96,6 +96,13 @@ class AgentDeps:
                 yield session
                 await session.commit()
                 await session.refresh(self._agent_record)
+            except BaseException:
+                # Expire all attributes so the detached record refuses to serve potentially
+                # stale data. Reads outside a scope will raise DetachedInstanceError (fail
+                # loudly). The next write_scope re-attaches, and the first attribute access
+                # triggers a SELECT — self-healing with fresh DB values.
+                session.expire(self._agent_record)
+                raise
             finally:
                 session.expunge(self._agent_record)
 
