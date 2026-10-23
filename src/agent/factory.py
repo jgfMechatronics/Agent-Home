@@ -12,6 +12,7 @@ StatefulAgent Pattern:
 """
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import AsyncIterator
@@ -100,15 +101,15 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
             anthropic_cache_messages=True,
         )
     elif isinstance(m, OpenRouterModel):
-        # sort by price opts out of auto exacto which breaks sticky routing.
-        # TODO: OR providers game the cost sort and will often try to win on uncached input price (sort col)
-        # and take profit on the cache price. Need to impl custom sort by effective price or something.
+        # Default routing uses cache-adjusted "effective price" — smarter than raw list price.
+        # Only override with provider.order when we need explicit provider control.
+        provider_config: dict = {"data_collection": "deny"}
+        # Optional provider pinning via env var (comma-separated slugs, e.g. "anthropic,aws-bedrock")
+        if pinned := os.environ.get("OPENROUTER_PROVIDER_ORDER"):
+            provider_config["order"] = [p.strip() for p in pinned.split(",")]
         settings = OpenRouterModelSettings(
             **settings,
-            openrouter_provider={
-                "sort": "price",
-                "data_collection": "deny",
-            },
+            openrouter_provider=provider_config,
             openrouter_usage={"include": True},
         )
 

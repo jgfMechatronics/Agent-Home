@@ -611,10 +611,20 @@ class TestBuildModelSettings:
     # --- OpenRouter-specific settings ---
 
     def test_openrouter_routing_prefs(self):
-        """OpenRouter model → fp8-only routing, price sort (Auto Exacto off), data collection denied."""
+        """OpenRouter model → data collection denied, default routing (cache-adjusted effective price)."""
         settings = _build_model_settings(self._config("openrouter:z-ai/glm-5.3"))
         provider = settings.get("openrouter_provider")
-        assert provider == {"sort": "price", "data_collection": "deny"}
+        assert provider == {"data_collection": "deny"}
+
+    def test_openrouter_provider_order_from_env(self, monkeypatch):
+        """OPENROUTER_PROVIDER_ORDER env var → provider order list added."""
+        monkeypatch.setenv("OPENROUTER_PROVIDER_ORDER", "anthropic, aws-bedrock")
+        settings = _build_model_settings(self._config("openrouter:z-ai/glm-5.3"))
+        provider = settings.get("openrouter_provider")
+        assert provider == {
+            "data_collection": "deny",
+            "order": ["anthropic", "aws-bedrock"],
+        }
 
     def test_openrouter_usage_included(self):
         """OpenRouter model → usage details included in responses."""
