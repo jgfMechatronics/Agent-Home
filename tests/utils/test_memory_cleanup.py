@@ -185,8 +185,6 @@ class TestRunCleanupFlowIntegration:
         self.skill_label = "active-skill"
         self.skill_content = "Original skill content"
         
-        # Detach agent from its original session so it can be attached to test_engine's session
-        session.expunge(self.agent)
         # Commit current session to release locks before using test_engine
         await session.commit()
         deps = make_deps(test_engine, self.agent)
