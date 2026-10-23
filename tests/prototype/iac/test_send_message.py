@@ -224,7 +224,7 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
     """
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, mocker):
+    async def setup(self, session: AsyncSession, mocker, test_engine):
         # Real DB records — only needed for flush (gives us real UUIDs) and
         # as registry keys. NOT used inside the agent-run path to avoid
         # ORM attribute access inside pydantic-ai's async context (which
@@ -259,19 +259,29 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # Configure IAC module with registry + hub
         configure_iac(self.app_state_reg, self.mock_hub)
 
-        # Sender deps: mock session (DB access in send_message is bypassed via
-        # mocked get_all_agents; session.bind still needed for engine extraction)
+        # Detach records from fixture session before using with test_engine
+        session.expunge(sender_record)
+        session.expunge(recipient_record)
+        # Commit fixture session to release locks
+        await session.commit()
+
+        # Sender deps: use test_engine (DB access in send_message is bypassed via
+        # mocked get_all_agents)
         self.sender_deps = AgentDeps(
-            session=_make_mock_session(),
-            agent_record=self.sender_record,
+            test_engine,
+            test_engine,
+            self.sender_record,
+            bypass_factory_guard=True,
         )
         self.sender_app_state = AgentAppState()
         self.sender_agent = _SenderTestAgent()
 
-        # Recipient deps: mock session + real record (refreshed to avoid lazy load)
+        # Recipient deps: use test_engine + real record (refreshed to avoid lazy load)
         self.recipient_deps = AgentDeps(
-            session=_make_mock_session(),
-            agent_record=self.recipient_record,
+            test_engine,
+            test_engine,
+            self.recipient_record,
+            bypass_factory_guard=True,
         )
         # B runs two loop iterations: iter1 ends at ToolResultEvent (compaction fires),
         # iter2 runs steps 2–4 (two more tool calls + completion).  With the fix, all 9
@@ -315,7 +325,7 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # All other calls (A's persists and B's iter2 persists) return None → no compaction.
         b_first_persist_done = [False]
 
-        async def _persist_side_effect(deps, messages, toolsets):
+        async def _persist_side_effect(deps, session, messages, toolsets, **kwargs):
             if deps._agent_record is self.recipient_record and not b_first_persist_done[0]:
                 b_first_persist_done[0] = True
                 return 999_999  # > soft_compaction_limit (10 000) → compaction fires
@@ -395,11 +405,12 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
 
         # Flatten all messages persisted by B across all persist_messages calls.
         # Use _agent_record identity (not .id) to avoid ORM lazy-load outside async context.
+        # persist_messages signature: (deps, session, messages, toolsets, ...)
         b_persisted = [
             msg
             for call in self.mock_persist_messages.call_args_list
-            if call.kwargs["deps"]._agent_record is self.recipient_record
-            for msg in call.kwargs["messages"]
+            if call.args[0]._agent_record is self.recipient_record  # deps is first positional arg
+            for msg in call.args[2]  # messages is third positional arg
         ]
 
         expected = [

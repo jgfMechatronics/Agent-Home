@@ -55,13 +55,14 @@ async def assert_round_trips(session: AsyncSession, record: Any, expected_fields
 
 async def assert_timestamps_auto_populated(session: AsyncSession, record: Any):
     """Verify created_at and updated_at are set automatically on creation and within 5 minutes of now (rough sanity check on accuracy)."""
-    await session.refresh(record)
+    # Merge record into current session if it's from a different session/detached
+    merged_record = await session.merge(record)
     now = utcnow()
     five_minutes = timedelta(minutes=5)
-    assert record.created_at is not None, "created_at should be auto-populated on creation"
-    assert record.updated_at is not None, "updated_at should be auto-populated on creation"
-    assert abs(now - record.created_at) < five_minutes, f"created_at {record.created_at!r} is not within 5 minutes of now"
-    assert abs(now - record.updated_at) < five_minutes, f"updated_at {record.updated_at!r} is not within 5 minutes of now"
+    assert merged_record.created_at is not None, "created_at should be auto-populated on creation"
+    assert merged_record.updated_at is not None, "updated_at should be auto-populated on creation"
+    assert abs(now - merged_record.created_at) < five_minutes, f"created_at {merged_record.created_at!r} is not within 5 minutes of now"
+    assert abs(now - merged_record.updated_at) < five_minutes, f"updated_at {merged_record.updated_at!r} is not within 5 minutes of now"
 
 
 async def assert_updated_at_bumps_on_modify(session: AsyncSession, record: Any, modify_fn):

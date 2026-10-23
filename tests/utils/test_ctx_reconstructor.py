@@ -231,15 +231,24 @@ class TestReconstructContextIntegration:
         overridden with TestModel for the actual run."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord, agent_deps: AgentDeps):
+    async def setup(self, session: AsyncSession, agent_record: AgentRecord, agent_deps: AgentDeps, test_engine):
         """Configure agent_record for integration tests, store common fixtures as member data."""
         self.session = session
         self.agent_record = agent_record
+        self.test_engine = test_engine
         
         # Configure for integration tests: all tools, known system instructions
-        agent_record.agent_config = INTEGRATION_AGENT_CONFIG
-        agent_record.system_instructions = INTEGRATION_SYSTEM_INSTRUCTIONS
-        await compile_system_prompt(agent_deps)
+        # Must do this inside write_scope per compile_system_prompt requirements
+        async with agent_deps.write_scope() as ws_session:
+            # Reattach the detached record within write_scope
+            record = await ws_session.merge(agent_record)
+            record.agent_config = INTEGRATION_AGENT_CONFIG
+            record.system_instructions = INTEGRATION_SYSTEM_INSTRUCTIONS
+        
+        # Now compile system prompt - requires write_scope but uses read_scope internally
+        # So we nest: outer write_scope for the deps setters, inner read_scope for fetching blocks
+        async with agent_deps.write_scope():
+            await compile_system_prompt(agent_deps)
 
     async def _run_and_reconstruct(
         self, prompt: str, test_model: TestModel
@@ -250,7 +259,7 @@ class TestReconstructContextIntegration:
         """
         agent_app_state_reg: dict[str, AgentAppState] = {}
 
-        factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
+        factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.test_engine, self.test_engine)
         async with factory.build_agent_and_deps() as (pydantic_agent, deps):
             # Capture expected tool definitions from the live agent (ground truth)
             expected_tool_definitions = await _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)
@@ -323,11 +332,17 @@ class TestReconstructContextIntegration:
         mutated_config = AgentConfig(
             model_name="anthropic:claude-sonnet-4-20250514", tool_names=["memory_replace"], soft_compaction_limit=10000
         )
-        self.agent_record.system_instructions = new_instructions
-        self.agent_record.agent_config = mutated_config
-        await compile_system_prompt(AgentDeps(test_engine, test_engine, self.agent_record, bypass_factory_guard=True))
-        await self.session.commit()
-        await self.session.refresh(self.agent_record)
+        
+        # Update record and compile within write_scope
+        mutated_deps = AgentDeps(test_engine, test_engine, self.agent_record, bypass_factory_guard=True)
+        async with mutated_deps.write_scope() as ws_session:
+            record = await ws_session.merge(self.agent_record)
+            record.system_instructions = new_instructions
+            record.agent_config = mutated_config
+        
+        # Now compile with the mutated record within a new write_scope
+        async with mutated_deps.write_scope():
+            await compile_system_prompt(mutated_deps)
 
         # Second run with mutated config
         second, second_expected_tools, second_msgs = await self._run_and_reconstruct("Second", model)

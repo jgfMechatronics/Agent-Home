@@ -65,22 +65,29 @@ class TestCompactionWarnerIntegration:
         via build_agent_and_deps, then overrides the model with TestModel."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
+    async def setup(self, session: AsyncSession, agent_record: AgentRecord, test_engine):
         self.session = session
         self.agent_record = agent_record
+        self.test_engine = test_engine
+        self.rw_engine = test_engine
+        self.ro_engine = test_engine
 
     async def _run_and_get_messages(self, model: TestModel, soft_limit: int = 100) -> list[ModelMessage]:
         """Run agent with given model and return persisted messages."""
-        self.agent_record.agent_config = AgentConfig(
-            model_name="anthropic:claude-sonnet-4-20250514",
-            tool_names=["duckduckgo_search"],
-            soft_compaction_limit=soft_limit,
-        )
-        await self.session.flush()
+        # Update agent config via write_scope (following new pattern)
+        async with AsyncSession(self.rw_engine) as update_session:
+            record = await update_session.get(AgentRecord, self.agent_record.id)
+            if record:
+                record.agent_config = AgentConfig(
+                    model_name="anthropic:claude-sonnet-4-20250514",
+                    tool_names=["duckduckgo_search"],
+                    soft_compaction_limit=soft_limit,
+                )
+            await update_session.commit()
 
         agent_app_state_reg: dict[str, AgentAppState] = {}
         with patch("agent.runner.is_compaction_needed", return_value=False):
-            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
+            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.test_engine, self.test_engine)
             async with factory.build_agent_and_deps() as (agent, deps):
                 with agent.override(model=model):
                     events = [e async for e in run_stateful_agent(
@@ -123,8 +130,10 @@ class TestCompactionWarnerIntegration:
         warning_idx = self._find_warning_index(messages)
         assert warning_idx is not None, "Warning should appear in persisted history"
         
-        await self.session.refresh(self.agent_record)
-        assert self.agent_record.compaction_warning_fired is True
+        # Verify flag is set in the database
+        async with AsyncSession(self.ro_engine) as check_session:
+            record = await check_session.get(AgentRecord, self.agent_record.id)
+            assert record.compaction_warning_fired is True
 
         # Warning should appear BEFORE last tool call (proves mid-chain injection)
         tool_call_indices = self._find_tool_call_indices(messages)
@@ -139,12 +148,19 @@ class TestCompactionWarnerIntegration:
         # High limit = threshold won't be crossed
         await self._run_and_get_messages(model, soft_limit=100000)
 
-        await self.session.refresh(self.agent_record)
-        assert self.agent_record.compaction_warning_fired is False
+        # Verify flag is not set in the database
+        async with AsyncSession(self.ro_engine) as check_session:
+            record = await check_session.get(AgentRecord, self.agent_record.id)
+            assert record.compaction_warning_fired is False
 
     async def test_fire_once_per_cycle(self):
         """Warning only fires once per compaction cycle (flag prevents re-fire)."""
-        self.agent_record.compaction_warning_fired = True  # Pre-set flag
+        # Pre-set flag in the database
+        async with AsyncSession(self.rw_engine) as update_session:
+            record = await update_session.get(AgentRecord, self.agent_record.id)
+            if record:
+                record.compaction_warning_fired = True
+            await update_session.commit()
         
         model = TestModel(call_tools="all", custom_output_text="Response")
         messages = await self._run_and_get_messages(model)
@@ -153,8 +169,10 @@ class TestCompactionWarnerIntegration:
         warning_idx = self._find_warning_index(messages)
         assert warning_idx is None, "Should not inject warning when flag already set"
         
-        await self.session.refresh(self.agent_record)
-        assert self.agent_record.compaction_warning_fired is True
+        # Verify flag is still set
+        async with AsyncSession(self.ro_engine) as check_session:
+            record = await check_session.get(AgentRecord, self.agent_record.id)
+            assert record.compaction_warning_fired is True
 
 
 SMALL_COMPACT_LIMIT = 100

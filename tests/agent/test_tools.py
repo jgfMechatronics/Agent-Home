@@ -5,6 +5,7 @@ Tests the tool registry, lookup, and memory editing tools (memory_replace, memor
 import pytest
 import pytest_asyncio
 from pydantic_ai.exceptions import ModelRetry
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.tools import (
@@ -586,8 +587,13 @@ class TestMemoryInsertLineBoundary(UsesEditableBlock):
 
     async def _insert(self, content: str, after: str):
         await memory_insert(self.ctx, label=self.block.label, content=content, after=after)
-        await self.session.refresh(self.block)
-        return self.block.content
+        # After memory_insert completes (which uses write_scope), the database is updated.
+        # Fetch fresh content using deps's read_scope to get a clean read
+        deps = self.ctx.deps
+        async with deps.read_scope() as session:
+            from memory.block_crud import get_block
+            fresh_block = await get_block(session, deps.agent_id, self.block.label)
+            return fresh_block.content if fresh_block else self.block.content
 
     @pytest.mark.parametrize(
         "block_content, content, after, expected",
