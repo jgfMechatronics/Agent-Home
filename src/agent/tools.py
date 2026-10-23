@@ -173,7 +173,7 @@ async def memory_replace(
     
     # handles char limit check and persistence (update_block manages its own write_scope)
     try:
-        await update_block(deps, label, new_content, block=block)
+        await update_block(deps, label, new_content)
     except ContentExceedsLimitError as e:
         raise ModelRetry(str(e))
 
@@ -249,7 +249,7 @@ async def memory_insert(
 
     # handles char limit check and persistence (update_block manages its own write_scope)
     try:
-        await update_block(deps, label, new_content, block=block)
+        await update_block(deps, label, new_content)
     except ContentExceedsLimitError as e:
         raise ModelRetry(str(e))
 

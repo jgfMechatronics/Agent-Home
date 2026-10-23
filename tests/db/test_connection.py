@@ -93,73 +93,66 @@ async def test_init_db_creates_tables(raw_engine):
             await conn.execute(text("SELECT 1 FROM " + table_name))  # no error = table exists
 
 
-# --- get_session ---
+# --- get_session (read-only) ---
 
-async def test_get_session_yields_async_session(initialized_engine):
-    async with get_session(initialized_engine) as session:
+@pytest_asyncio.fixture
+async def ro_engine(tmp_path):
+    """Read-only engine with schema initialised. File-based SQLite with mode=ro."""
+    db_path = str(tmp_path / "test.db")
+    # Create and init with a rw engine first (readonly can't create schema)
+    rw = create_sqlite_engine(db_path)
+    await init_db(rw)
+    await rw.dispose()
+    engine = create_sqlite_engine(db_path, readonly=True)
+    yield engine
+    await engine.dispose()
+
+
+async def test_get_session_yields_async_session(ro_engine):
+    async with get_session(ro_engine) as session:
         assert isinstance(session, AsyncSession)
+
+
+async def test_get_session_rejects_non_readonly_engine(initialized_engine):
+    """get_session requires a read-only engine (mode=ro in URL)."""
+    with pytest.raises(ValueError, match="mode=ro"):
+        async with get_session(initialized_engine):
+            pass
 
 
 async def test_get_session_bound_to_provided_engine(tmp_path):
     """Sessions are bound to the engine they were created from, not a global engine."""
-    engine_a = create_sqlite_engine(str(tmp_path / "a.db"))
-    engine_b = create_sqlite_engine(str(tmp_path / "b.db"))
+    # Init two DBs with different data
+    for name, agent_name in [("a.db", "agent-a"), ("b.db", None)]:
+        rw = create_sqlite_engine(str(tmp_path / name))
+        await init_db(rw)
+        if agent_name:
+            async with rw.begin() as conn:
+                await conn.execute(
+                    AgentRecord.__table__.insert().values(
+                        id="test-id", name=agent_name, agent_config=SAMPLE_AGENT_CONFIG,
+                        system_instructions="test", compiled_system_prompt="",
+                    )
+                )
+        await rw.dispose()
+
+    ro_a = create_sqlite_engine(str(tmp_path / "a.db"), readonly=True)
+    ro_b = create_sqlite_engine(str(tmp_path / "b.db"), readonly=True)
     try:
-        await init_db(engine_a)
-        await init_db(engine_b)
+        async with get_session(ro_a) as session:
+            result = await session.execute(text("SELECT COUNT(*) FROM agent"))
+            assert result.scalar() == 1
 
-        async with get_session(engine_a) as session:
-            session.add(AgentRecord(name="agent-a", agent_config=SAMPLE_AGENT_CONFIG))
-            await session.commit()
-
-        async with get_session(engine_b) as session:
+        async with get_session(ro_b) as session:
             result = await session.execute(text("SELECT COUNT(*) FROM agent"))
             assert result.scalar() == 0
     finally:
-        await engine_a.dispose()
-        await engine_b.dispose()
+        await ro_a.dispose()
+        await ro_b.dispose()
 
 
-class TestGetSessionTransactionBehavior:
-    """get_session commit/rollback/close semantics on context exit."""
-
-    @pytest.fixture(autouse=True)
-    async def setup(self, initialized_engine):
-        self.engine = initialized_engine
-
-    async def _count_agents(self) -> int:
-        """Read agent count via raw connection — bypasses get_session to avoid masking bugs in it."""
-        async with self.engine.connect() as conn:
-            result = await conn.execute(text("SELECT COUNT(*) FROM agent"))
-            return result.scalar()
-
-    async def test_commits_on_clean_exit(self):
-        """Data written in the block persists after a clean exit (implicit commit)."""
-        async with get_session(self.engine) as session:
-            session.add(AgentRecord(name="test", agent_config=SAMPLE_AGENT_CONFIG))
-
-        assert await self._count_agents() == 1
-
-    async def test_rollbacks_and_reraises_on_exception(self):
-        """Unhandled exception rolls back writes and propagates."""
-        with pytest.raises(RuntimeError, match="boom"):
-            async with get_session(self.engine) as session:
-                session.add(AgentRecord(name="test", agent_config=SAMPLE_AGENT_CONFIG))
-                raise RuntimeError("boom")
-
-        assert await self._count_agents() == 0
-
-    async def test_close_always_called_on_exception(self):
-        """Session is closed even when an exception is raised."""
-        with pytest.raises(RuntimeError):
-            async with get_session(self.engine) as session:
-                await session.execute(text("SELECT 1"))  # triggers autobegin
-                raise RuntimeError("oops")
-        assert not session.in_transaction()
-
-
-async def test_get_session_closes_on_context_exit(initialized_engine):
-    async with get_session(initialized_engine) as session:
+async def test_get_session_closes_on_context_exit(ro_engine):
+    async with get_session(ro_engine) as session:
         await session.execute(text("SELECT 1"))  # triggers autobegin
         assert session.in_transaction()
     assert not session.in_transaction()
@@ -167,16 +160,12 @@ async def test_get_session_closes_on_context_exit(initialized_engine):
 
 # --- concurrent sessions ---
 
-async def test_concurrent_sessions_function_independently(initialized_engine):
-    """Two sessions can write and commit concurrently without deadlock or error.
-    Catches misconfigured pool settings (e.g. StaticPool)."""
-    async def write_agent(name: str):
-        async with get_session(initialized_engine) as session:
-            session.add(AgentRecord(name=name, agent_config=SAMPLE_AGENT_CONFIG))
-            await session.commit()
+async def test_concurrent_sessions_function_independently(ro_engine):
+    """Two read-only sessions can query concurrently without deadlock or error."""
+    async def read_count():
+        async with get_session(ro_engine) as session:
+            result = await session.execute(text("SELECT COUNT(*) FROM agent"))
+            return result.scalar()
 
-    await asyncio.gather(write_agent("agent-1"), write_agent("agent-2"))
-
-    async with get_session(initialized_engine) as session:
-        result = await session.execute(text("SELECT COUNT(*) FROM agent"))
-        assert result.scalar() == 2
+    results = await asyncio.gather(read_count(), read_count())
+    assert all(r == 0 for r in results)

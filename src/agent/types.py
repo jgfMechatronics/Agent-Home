@@ -118,7 +118,7 @@ class AgentConfig(BaseModel):
     - thinking_mode: False (off) | True (on, provider default effort) | effort level
       ('minimal'/'low'/'medium'/'high'/'xhigh' — pydantic-ai ThinkingLevel, mapped per provider)
     """
-    model_config = ConfigDict(extra="forbid") # prevent extra unexpected fields
+    model_config = ConfigDict(frozen=True, extra="forbid")  # frozen: prevents silent divergence via in-place mutation (JSON TypeDecorator isn't change-tracked)
 
     model_name: str
     tool_names: list[str]

@@ -257,7 +257,7 @@ class TestCompactEdgeCases(CompactTestBase):
         # Expect exactly 10 (50% of 20); allow ±1 for integer rounding
         assert 9 <= len(in_context) <= 11
 
-    async def test_returns_false_when_no_model_responses_in_context(self, agent_deps: AgentDeps):
+    async def test_returns_false_when_no_model_responses_in_context(self, session: AsyncSession, agent_deps: AgentDeps):
         """compact returns False without error when context contains only ModelRequests."""
         requests_only = [make_request(f"msg {i}") for i in range(6)]
         await _persist_messages_load_records(session, agent_deps, requests_only)
@@ -267,7 +267,7 @@ class TestCompactEdgeCases(CompactTestBase):
         assert result is False
         assert agent_deps.context_window_start == 0
 
-    async def test_crawls_back_past_trailing_request_for_total_tokens(self, agent_deps: AgentDeps):
+    async def test_crawls_back_past_trailing_request_for_total_tokens(self, session: AsyncSession, agent_deps: AgentDeps):
         """compact() correctly finds total_tokens when the last message in context is a ModelRequest."""
         msgs = make_alternating_messages(10)   # ends with response at index 9
         msgs[-1] = make_response(total_tokens=1100)
@@ -302,6 +302,7 @@ class TestCompactToolPairAtomicity:
 
     async def _make_agent_with_tool_sequence(
         self,
+        session: AsyncSession,
         agent_deps: AgentDeps,
         tool_pair_generator,
         *,
@@ -344,7 +345,7 @@ class TestCompactToolPairAtomicity:
         Fixed result: context_window_start = records[5].seq_id  ← pair kept intact
         """
         config = _make_config(soft_compaction_limit=1000, compaction_target_fraction=0.5)
-        data = await self._make_agent_with_tool_sequence(agent_deps, tool_pair_generator, config=config)
+        data = await self._make_agent_with_tool_sequence(session, agent_deps, tool_pair_generator, config=config)
 
         # sanity check: records[5] and [6] are the tool pair (assumed in ending assertion)
         call_record, return_record = deserialize_messages(data["records"][5:7])
@@ -364,7 +365,7 @@ class TestClearContext:
     N_MESSAGES = 4
 
     @pytest_asyncio.fixture
-    async def persist_some_messages(self, agent_deps: AgentDeps):
+    async def persist_some_messages(self, session: AsyncSession, agent_deps: AgentDeps):
         """Fixture that persists N_MESSAGES alternating messages for test setup."""
         msgs = make_alternating_messages(self.N_MESSAGES)
         records = await _persist_messages_load_records(session, agent_deps, msgs)
