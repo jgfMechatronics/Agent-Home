@@ -140,17 +140,17 @@ async def memory_replace(
     occurrence: int | None = None,
 ) -> str:
     """Replace text in a memory block.
-    
+
     Args:
-        ctx: Pydantic AI run context with AgentDeps
-        label: The label of the memory block to edit
-        old_string: The text to find and replace
-        new_string: The replacement text
-        occurrence: Which occurrence to replace (1-indexed). Required if multiple matches.
-    
+        ctx: Pydantic AI run context with AgentDeps.
+        label: The label of the memory block to edit.
+        old_string: The text to find and replace.
+        new_string: The replacement text.
+        occurrence: Which occurrence to replace (1-indexed). Required if multiple matches for old_string.
+
     Returns:
         Snippet of updated content on success.
-    
+
     Raises:
         ModelRetry: On validation failure (block not found, target not found, etc.)
     """
@@ -189,31 +189,27 @@ async def memory_insert(
 ) -> str:
     """Insert text into a memory block at a line boundary.
 
-    Insertion always lands on a fresh line — mid-line splicing is impossible by
-    construction. The tool guarantees line separation on both sides of the insert;
-    the agent controls blank-line separation by including leading/trailing
-    newlines in content (e.g. content="\\nNew entry\\n" inserts a cleanly
-    blank-separated entry).
+    Insertion lands on a fresh line — mid-line splicing is impossible. The tool
+    guarantees line separation on both sides of insert; control blank-line separation via leading/trailing
+    newlines in content (e.g. "\\nNew entry\\n" inserts a blank-separated entry).
 
-    Use memory_replace instead if the above behavior is undesirable
-    (IE if you need to insert into the middle of a single line passage. Just rewrite the section being spliced.)
+    Use memory_replace instead if you need to insert into the middle of a single line.
 
     Args:
-        ctx: Pydantic AI run context with AgentDeps
-        label: The label of the memory block to edit
-        content: The text to insert, verbatim (its newlines are preserved exactly)
+        ctx: Pydantic AI run context with AgentDeps.
+        label: The label of the memory block to edit.
+        content: The text to insert, verbatim (its newlines are preserved exactly).
         after: Where to insert. Use '<start>' for beginning, '<end>' for end,
-               or any string to insert after the line containing that anchor
-               (the anchor's line stays intact — nothing is ever split mid-line).
+           or any string to insert after the line containing that anchor
+           (the anchor's line stays intact — nothing is ever split mid-line).
         occurrence: Which occurrence of anchor to insert after (1-indexed).
-                    Required if anchor appears multiple times.
+            Required if anchor appears multiple times.
 
     Returns:
         Snippet of updated content on success.
 
     Raises:
-        ModelRetry: On validation failure (block not found, anchor not found, etc.), or on multiple occurrences of 'after'
-                    without specifying 'occurrence'
+        ModelRetry: On validation failure (block not found, anchor not found, etc.)
     """
     deps = ctx.deps
 
@@ -257,37 +253,26 @@ async def memory_read(
     offset: int = 0,
     limit: int = 100,
 ) -> str:
-    """Read a window of a memory block's CURRENT content, with computed line numbers.
+    """Read a window of a memory block's CURRENT content, with line numbers.
 
-    Use this to get exact current strings — for example, to retry a memory edit
-    that failed because your view of the block (from the system prompt) is stale.
-    This tool is NOT for normal recall: block content is already visible in your
-    system prompt, and changes from your own edits are in your context. Only use
-    it when you suspect significant drift AND that's causing a problem (a failed
-    edit, many accumulated edits, etc.).
+    Use to get exact current strings when a memory edit fails due to stale view.
+    NOT for normal recall — block content is already in your system prompt.
+    Use only when you suspect your system prompt view is stale AND that staleness is causing an issue.
 
-    Workflow: eyeball the approximate line number of your target from your
-    system-prompt view (the block's lines_current metadata gives the total line
-    count), read a window, page around by adjusting offset until you have the
-    target region, then re-attempt your edit using the exact current strings.
-
-    Returns lines verbatim (directly copyable) under a header giving the window
-    range and total line count.
+    Workflow: eyeball target line from system-prompt view, read a window, page
+    with offset until you have the desired region, retry edit with exact strings.
 
     Args:
-        ctx: Pydantic AI run context with AgentDeps
-        label: The label of the memory block to read
-        offset: 0-indexed line to start reading from
-        limit: Maximum number of lines to return
+        ctx: Pydantic AI run context with AgentDeps.
+        label: The label of the memory block to read.
+        offset: 0-indexed line to start reading from.
+        limit: Maximum number of lines to return.
 
     Returns:
-        A header line ([memory_read: block '<label>', lines X-Y of Z]) followed
-        by the requested lines verbatim.
+        Header line with range/total, then requested lines verbatim.
 
     Raises:
-        ModelRetry: If the block is not found, offset/limit are invalid, or the
-        requested window is out of range (message includes the total line count
-        and requested range for paging).
+        ModelRetry: If block not found, offset/limit invalid, or window out of range.
     """
     deps = ctx.deps
 
@@ -324,14 +309,16 @@ _underlying_web_fetch = web_fetch_tool()
 
 
 async def web_fetch(ctx: RunContext[AgentDeps], url: str) -> str | BinaryContent:  # noqa: ARG001
-    """Fetches the content of a web page at the given URL and returns it as markdown.
+    """Fetch a web page and return it as markdown.
 
-    For text/HTML content: returns plain text with a metadata header, preserving
-    newlines from the original content. This makes spilled results pageable via
-    read_tool_result's line-based pagination.
+    Args:
+        ctx: Pydantic AI run context with AgentDeps.
+        url: The URL to fetch.
 
-    For binary content (images, PDFs, audio): returns the BinaryContent object
-    unchanged for pydantic-ai's native handling.
+    Returns:
+        Text/HTML: markdown with metadata header, newlines preserved (pageable via
+        read_tool_result if spilled). Binary (images, PDFs, audio): BinaryContent
+        passed through for native handling.
     """
     # Call the underlying tool — returns WebFetchResult (TypedDict) or BinaryContent
     result = await _underlying_web_fetch.function(url)

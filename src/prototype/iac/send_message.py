@@ -55,14 +55,14 @@ async def send_message(
 ) -> str:
     """Send a message to another agent by name.
 
-    Resolves the target agent by name, then spawns a background task to deliver
-    the message. Returns a delivery confirmation once the target's lock is acquired,
-    or an error string if the target is not found or is unavailable.
+    Recipient must be idle — there is no queue. If busy, delivery fails. To receive
+    a reply, end your turn after sending; their response reactivates you. Looping
+    or sleeping keeps your turn active, blocking messages TO you.
 
     Args:
-        ctx: Pydantic AI run context with AgentDeps
-        target_name: Name of the agent to message
-        content: The message content to send
+        ctx: Pydantic AI run context with AgentDeps.
+        target_name: Name of the agent to message.
+        content: The message content to send.
 
     Returns:
         A confirmation string on success.
