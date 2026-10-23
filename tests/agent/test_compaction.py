@@ -52,6 +52,7 @@ async def _persist_messages_load_records(
 ) -> list[MessageRecord]:
     """Persist messages via the official persist_messages, then load and return the MessageRecords."""
     await persist_messages(deps, session, messages, [])
+    await session.commit()  # close write transaction so write_scope can write on separate connection
     return await load_messages(session, deps.agent_id)
 
 
@@ -81,7 +82,9 @@ async def _make_agent_with_messages(
         compiled_system_prompt="x" * system_prompt_chars,
     )
     session.add(agent)
-    await session.flush()
+    await session.commit()
+    await session.refresh(agent)
+    session.expunge(agent)
 
     deps = AgentDeps(test_engine, test_engine, agent, bypass_factory_guard=True)
     pydantic_msgs = make_alternating_messages(message_count)
@@ -153,6 +156,14 @@ class CompactTestBase:
         self.messages = data["messages"]
         self.deps = data["deps"]
 
+    async def _fresh_agent(self, session: AsyncSession) -> AgentRecord:
+        """Fetch fresh agent record from DB (self.agent is detached)."""
+        return await session.get(AgentRecord, self.agent.id)
+
+    async def _fresh_messages(self, session: AsyncSession) -> list[MessageRecord]:
+        """Fetch fresh message records from DB."""
+        return await load_messages(session, self.agent.id)
+
 class TestCompactCommon(CompactTestBase):
     """Tests with standard config: 500 limit, 0.5 target, 10 messages, 1100 tokens."""
     
@@ -168,8 +179,8 @@ class TestCompactCommon(CompactTestBase):
         
         await compact(self.deps)
 
-        await session.refresh(self.agent)
-        assert self.agent.context_window_start > 0
+        fresh = await self._fresh_agent(session)
+        assert fresh.context_window_start > 0
 
     async def test_does_not_delete_messages(self, session: AsyncSession):
         """compact does NOT delete any messages — pointer only."""
@@ -218,20 +229,20 @@ class TestCompactEdgeCases(CompactTestBase):
         await self._setup(session, test_engine, limit=100, target=0.01, msg_count=10, total_tokens=5000)
         
         await compact(self.deps)
-        
-        await session.refresh(self.agent)
-        await session.refresh(self.messages[-4])
-        assert self.agent.context_window_start <= self.messages[-4].seq_id
+
+        fresh = await self._fresh_agent(session)
+        fresh_msgs = await self._fresh_messages(session)
+        assert fresh.context_window_start <= fresh_msgs[-4].seq_id
 
     async def test_no_op_with_four_or_fewer_messages(self, session: AsyncSession, test_engine):
         """compact is a no-op when agent has 4 or fewer messages in context."""
         await self._setup(session, test_engine, limit=100, target=0.1, msg_count=4, total_tokens=5000)
         
         await compact(self.deps)
-        
-        await session.refresh(self.agent)
+
+        fresh = await self._fresh_agent(session)
         # Should remain 0 — nothing to compact
-        assert self.agent.context_window_start == 0
+        assert fresh.context_window_start == 0
 
     async def test_targets_percentage_of_message_tokens(self, session: AsyncSession, test_engine):
         """compact retains compaction_target_fraction of current message tokens.
@@ -246,13 +257,12 @@ class TestCompactEdgeCases(CompactTestBase):
         await self._setup(session, test_engine, limit=10000, target=0.5, msg_count=20, total_tokens=2100)
         
         await compact(self.deps)
-        
-        await session.refresh(self.agent)
-        for m in self.messages:
-            await session.refresh(m)
-        
+
+        fresh = await self._fresh_agent(session)
+        fresh_msgs = await self._fresh_messages(session)
+
         # Count messages still in context (seq_id >= context_window_start)
-        in_context = [m for m in self.messages if m.seq_id >= self.agent.context_window_start]
+        in_context = [m for m in fresh_msgs if m.seq_id >= fresh.context_window_start]
         
         # Expect exactly 10 (50% of 20); allow ±1 for integer rounding
         assert 9 <= len(in_context) <= 11
@@ -354,9 +364,9 @@ class TestCompactToolPairAtomicity:
 
         await compact(data["deps"])
 
-        await session.refresh(data["agent"])
-        await session.refresh(data["records"][5])
-        assert data["agent"].context_window_start == data["records"][5].seq_id
+        fresh_agent = await session.get(AgentRecord, data["agent"].id)
+        fresh_record_5 = await session.get(MessageRecord, data["records"][5].id)
+        assert fresh_agent.context_window_start == fresh_record_5.seq_id
 
 
 class TestClearContext:
@@ -406,7 +416,8 @@ class TestClearContext:
 
     async def test_resets_compaction_warning_fired(self, agent_deps: AgentDeps, persist_some_messages):
         """clear_context resets compaction_warning_fired so a fresh warning can fire."""
-        agent_deps.compaction_warning_fired = True
+        async with agent_deps.write_scope():
+            agent_deps.compaction_warning_fired = True
 
         await clear_context(agent_deps)
 
@@ -423,13 +434,8 @@ class TestClearContext:
 
     async def test_commits_changes(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
         """clear_context commits so the new pointer survives a session expiry."""
-        committed = False
-
-        @event.listens_for(session.sync_session, "after_commit")
-        def on_commit(sess):
-            nonlocal committed
-            committed = True
-
         await clear_context(agent_deps)
 
-        assert committed
+        # Verify by re-reading from DB (clear_context commits on write_scope's session)
+        fresh = await session.get(AgentRecord, agent_deps.agent_id)
+        assert fresh.context_window_start > 0
