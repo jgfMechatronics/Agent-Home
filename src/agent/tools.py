@@ -145,7 +145,7 @@ async def memory_replace(
         label: The label of the memory block to edit
         old_string: The text to find and replace
         new_string: The replacement text
-        occurrence: Which occurrence to replace (1-indexed). Required if multiple matches.
+        occurrence: Which occurrence to replace (1-indexed). Required if multiple matches for old_string.
 
     Returns:
         Snippet of updated content on success.
@@ -186,7 +186,7 @@ async def memory_insert(
     """Insert text into a memory block at a line boundary.
 
     Insertion lands on a fresh line — mid-line splicing is impossible. The tool
-    guarantees line separation; control blank-line separation via leading/trailing
+    guarantees line separation on both sides of insert; control blank-line separation via leading/trailing
     newlines in content (e.g. "\\nNew entry\\n" inserts a blank-separated entry).
 
     Use memory_replace instead if you need to insert into the middle of a single line.
@@ -249,9 +249,10 @@ async def memory_read(
 
     Use to get exact current strings when a memory edit fails due to stale view.
     NOT for normal recall — block content is already in your system prompt.
+    Use only when you suspect your system prompt view is stale AND that staleness is causing an issue
 
     Workflow: eyeball target line from system-prompt view, read a window, page
-    with offset until you have the region, retry edit with exact strings.
+    with offset until you have the desired region, retry edit with exact strings.
 
     Args:
         label: The label of the memory block to read
