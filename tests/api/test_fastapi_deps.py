@@ -53,6 +53,7 @@ async def _build_test_client(
     route,
     session: AsyncSession,
     agent_app_state_reg: dict,
+    test_engine=None,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Minimal FastAPI test app with session and agent state registry overridden, as an AsyncClient.
 
@@ -64,6 +65,9 @@ async def _build_test_client(
     """
     app = FastAPI()
     app.get("/test/{agent_id}")(route)
+    if test_engine is not None:
+        app.state.rw_engine = test_engine
+        app.state.ro_engine = test_engine
 
     async def _override_session():
         yield session
@@ -82,6 +86,7 @@ async def agent_and_deps_client(
     session: AsyncSession,
     agent_app_state_reg: dict,
     captured: dict,
+    test_engine,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Test client wired to get_agent_and_deps — route captures both Agent and AgentDeps."""
     async def _route(agent_and_deps: tuple = Depends(get_agent_and_deps)):
@@ -92,7 +97,7 @@ async def agent_and_deps_client(
             raise exc
         return {}
 
-    async with _build_test_client(_route, session, agent_app_state_reg) as client:
+    async with _build_test_client(_route, session, agent_app_state_reg, test_engine) as client:
         yield client
 
 
@@ -101,6 +106,7 @@ async def deps_only_client(
     session: AsyncSession,
     agent_app_state_reg: dict,
     captured: dict,
+    test_engine,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Test client wired to get_agent_deps — route captures AgentDeps only (no Agent)."""
     async def _route(deps: AgentDeps = Depends(get_agent_deps)):
@@ -109,7 +115,7 @@ async def deps_only_client(
             raise exc
         return {}
 
-    async with _build_test_client(_route, session, agent_app_state_reg) as client:
+    async with _build_test_client(_route, session, agent_app_state_reg, test_engine) as client:
         yield client
 
 
@@ -210,7 +216,7 @@ class TestGetAgentDeps:
             finally:
                 self.contextman_state["exited"] = True
 
-        with patch.object(AgentFactory, "build_deps", _build):
+        with patch("api.fastapi_deps.build_deps", _build):
             yield
 
     async def test_yields_correct_deps(
@@ -244,7 +250,7 @@ class TestGetAgentDeps:
             raise error
             yield  # unreachable — makes this an async generator function
 
-        with patch.object(AgentFactory, "build_deps", _raise):
+        with patch("api.fastapi_deps.build_deps", _raise):
             with pytest.raises(type(error)):
                 await deps_only_client.get("/test/any-id")
 
@@ -293,7 +299,7 @@ class TestGetSessionDep:
             session = await get_ro_session_dep(mock_request).__anext__()
 
         assert session is mock_session
-        assert captured_engine is mock_request.app.state.engine
+        assert captured_engine is mock_request.app.state.ro_engine
 
     async def test_new_session_per_call(self, mock_request: MagicMock):
         """Each invocation of get_ro_session_dep yields a distinct session object."""
