@@ -17,7 +17,7 @@ import time_machine
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
-from db.connection import _configure_sqlite_conn
+from db.connection import _configure_sqlite_conn, ReadOnlySession
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -169,10 +169,20 @@ async def seed_stub_snapshots(session: AsyncSession):
     await session.flush()
 
 
+def make_deps(engine, agent_record) -> AgentDeps:
+    """Test-side factory for AgentDeps — bypasses the factory guard (valid in tests only).
+
+    Same engine for rw and ro; tests don't need the prod rw/ro split. Sites that
+    specifically exercise different rw/ro engines should use the raw constructor.
+    Centralizes the guard-bypass so constructor signature changes touch one place.
+    """
+    return AgentDeps(engine, engine, agent_record, bypass_factory_guard=True)
+
+
 @pytest_asyncio.fixture
 async def agent_deps(test_engine, agent_record: AgentRecord) -> AgentDeps:
     """AgentDeps with test engine for both rw and ro (bypasses factory guard — valid in tests)."""
-    return AgentDeps(test_engine, test_engine, agent_record, bypass_factory_guard=True)
+    return make_deps(test_engine, agent_record)
 
 
 # ---------------------------------------------------------------------------
@@ -418,13 +428,17 @@ async def client(app: FastAPI) -> AsyncClient:
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def override_db_session(app: FastAPI, session: AsyncSession):
-    """Ensure routes use the test session, not a separate DB connection.
+async def override_db_session(app: FastAPI, test_engine):
+    """Route read-only sessions to fresh per-request sessions on the test engine.
 
-    Without this, routes call get_ro_session_dep() -> new connection -> test data invisible.
+    Can't use the real get_ro_session_dep path: get_session() requires a mode=ro engine,
+    and SQLite can't open a shared-cache in-memory DB as mode=ro. Fresh session per
+    request (not a shared one) avoids identity-map staleness against write_scope commits;
+    the named shared-cache DB + read_uncommitted pragma make committed data visible.
     """
     async def _get_test_session():
-        yield session
+        async with AsyncSession(test_engine) as session:
+            yield ReadOnlySession(session)
 
     app.dependency_overrides[get_ro_session_dep] = _get_test_session
     yield

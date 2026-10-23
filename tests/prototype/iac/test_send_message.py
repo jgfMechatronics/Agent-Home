@@ -17,7 +17,7 @@ from agent.runner import COMPACTION_RESUME_NOTICE, run_stateful_agent, is_compac
 from agent.timestamping import add_timestamp_prefix
 from agent.deps import AgentDeps
 from agent.types import AgentAppState
-from conftest import SAMPLE_AGENT_CONFIG, _make_mock_session, make_alternating_messages, mock_run_context, assert_ModelMessage_list_eq
+from conftest import SAMPLE_AGENT_CONFIG, _make_mock_session, make_alternating_messages, mock_run_context, assert_ModelMessage_list_eq, make_deps
 from db.models import AgentRecord
 from prototype.iac.send_message import (
     _format_inter_agent_message,
@@ -50,7 +50,7 @@ class TestSendMessage:
         await session.flush()
         self.sender = sender
         self.session = session
-        self.deps = AgentDeps(test_engine, test_engine, sender, bypass_factory_guard=True)
+        self.deps = make_deps(test_engine, sender)
         self.ctx = mock_run_context(self.deps)
         # Clear IAC module state before each test (some tests check unconfigured state)
         iac_module._agent_app_state_reg_IAC_ref = None
@@ -267,22 +267,12 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
 
         # Sender deps: use test_engine (DB access in send_message is bypassed via
         # mocked get_all_agents)
-        self.sender_deps = AgentDeps(
-            test_engine,
-            test_engine,
-            self.sender_record,
-            bypass_factory_guard=True,
-        )
+        self.sender_deps = make_deps(test_engine, self.sender_record)
         self.sender_app_state = AgentAppState()
         self.sender_agent = _SenderTestAgent()
 
         # Recipient deps: use test_engine + real record (refreshed to avoid lazy load)
-        self.recipient_deps = AgentDeps(
-            test_engine,
-            test_engine,
-            self.recipient_record,
-            bypass_factory_guard=True,
-        )
+        self.recipient_deps = make_deps(test_engine, self.recipient_record)
         # B runs two loop iterations: iter1 ends at ToolResultEvent (compaction fires),
         # iter2 runs steps 2–4 (two more tool calls + completion).  With the fix, all 9
         # expected messages are persisted correctly.  Without the fix, iter2's stale
@@ -404,8 +394,8 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         b_persisted = [
             msg
             for call in self.mock_persist_messages.call_args_list
-            if call.args[0]._agent_record is self.recipient_record  # deps is first positional arg
-            for msg in call.args[2]  # messages is third positional arg
+            if call.kwargs["deps"]._agent_record is self.recipient_record
+            for msg in call.kwargs["messages"]
         ]
 
         expected = [
@@ -430,8 +420,8 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         a_persisted = [
             msg
             for call in self.mock_persist_messages.call_args_list
-            if call.args[0]._agent_record is self.sender_record  # deps is first positional arg
-            for msg in call.args[2]  # messages is third positional arg
+            if call.kwargs["deps"]._agent_record is self.sender_record
+            for msg in call.kwargs["messages"]
         ]
         a_expected = [
             ModelRequest(parts=[UserPromptPart(content=add_timestamp_prefix("send a message"))]),

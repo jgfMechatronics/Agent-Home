@@ -31,6 +31,7 @@ from sqlalchemy import event
 from agent.deps import AgentDeps
 from agent.types import AgentConfig
 from db.models import AgentRecord, Base
+from conftest import make_deps
 
 SAMPLE_CONFIG = AgentConfig(
     model_name="anthropic:claude-sonnet-4-20250514",
@@ -65,7 +66,7 @@ async def deps_with_mutable_data(test_engine) -> AgentDeps:
         )
         async_session.add(agent)
         await async_session.flush()
-        return AgentDeps(test_engine, test_engine, agent, bypass_factory_guard=True)
+        return make_deps(test_engine, agent)
 
 
 async def test_mutable_property_after_commit(deps_with_mutable_data: AgentDeps, async_session: AsyncSession):

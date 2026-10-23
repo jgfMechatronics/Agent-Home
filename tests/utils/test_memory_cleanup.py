@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from agent.deps import AgentDeps
 from agent.types import BlockSettings
 from memory.block_crud import create_block
+from conftest import make_deps
 from utils.memory_cleanup import (
     ValidationError,
     create_session_dir,
@@ -188,7 +189,7 @@ class TestRunCleanupFlowIntegration:
         session.expunge(self.agent)
         # Commit current session to release locks before using test_engine
         await session.commit()
-        deps = AgentDeps(test_engine, test_engine, self.agent, bypass_factory_guard=True)
+        deps = make_deps(test_engine, self.agent)
         await create_block(deps, BlockSettings(label=self.skill_label), self.skill_content)
         
         # TestClient WITHOUT context manager = no lifespan run
@@ -228,9 +229,8 @@ class TestRunCleanupFlowIntegration:
                         skill_path=cleanup_skill_file,
                     )
         
-        # Verify blocks were updated. The PUTs committed via write_scope on a separate
-        # session; the overridden read session's identity map holds stale blocks, so expire first.
-        self.session.expire_all()
+        # Verify blocks were updated (read routes get fresh sessions per request —
+        # see override_db_session in conftest)
         for label in self.cleanup_labels:
             resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/{label}")
             assert resp.json()["content"] == f"Edited {label}"

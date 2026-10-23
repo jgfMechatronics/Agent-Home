@@ -3,7 +3,7 @@ Prototype-quality route tests. These cover endpoints or behaviours that were
 added on prototype branches and haven't been fully reviewed yet.
 """
 from datetime import datetime
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -46,7 +46,7 @@ class TestGetMessages:
             self.mock_load_messages = mock_load
             yield
 
-    async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+    async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord):
         """Without ?full=true: calls load_messages with context_window_start as start_seq_id."""
         self.mock_load_messages.return_value = [
             self._make_message_record(id="msg-1", seq_id=0, content='{"kind": "response", "parts": []}')
@@ -55,11 +55,13 @@ class TestGetMessages:
         response = await client.get(f"/agents/{agent_record.id}/messages")
 
         assert response.status_code == 200
+        # Session is ANY: routes get a fresh per-request session (see override_db_session).
+        # What matters here is the loader routing (agent_id, start_seq_id).
         self.mock_load_messages.assert_called_once_with(
-            session, agent_record.id, start_seq_id=agent_record.context_window_start
+            ANY, agent_record.id, start_seq_id=agent_record.context_window_start
         )
 
-    async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+    async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord):
         """With ?full=true: calls load_messages with start_seq_id=0 for full history."""
         self.mock_load_messages.return_value = [
             self._make_message_record(id="msg-1", seq_id=0),
@@ -71,7 +73,7 @@ class TestGetMessages:
         assert response.status_code == 200
         assert len(response.json()["messages"]) == 2
         self.mock_load_messages.assert_called_once_with(
-            session, agent_record.id, start_seq_id=0
+            ANY, agent_record.id, start_seq_id=0
         )
 
     async def test_response_uses_message_item_format(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
