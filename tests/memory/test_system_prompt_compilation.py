@@ -196,9 +196,10 @@ async def test_exact_compiled_format(session: AsyncSession, agent_deps: AgentDep
         content=_BLOCK_B_CONTENT, char_limit=_BLOCK_B_LIMIT, position=1,
     )
     session.add_all([block_a, block_b])
-    await session.flush()
+    await session.commit()
 
-    await compile_system_prompt(agent_deps)
+    async with agent_deps.write_scope():
+        await compile_system_prompt(agent_deps)
 
     expected = (
         f"<system_instructions>\n"
@@ -223,7 +224,8 @@ async def test_compile_handles_agent_with_no_blocks(agent_no_blocks_with_deps: d
     deps = agent_no_blocks_with_deps["deps"]
     agent = agent_no_blocks_with_deps["agent"]
 
-    await compile_system_prompt(deps)
+    async with deps.write_scope():
+        await compile_system_prompt(deps)
     compiled = agent.compiled_system_prompt
 
     assert f"<system_instructions>\n{agent.system_instructions}\n</system_instructions>" == compiled
@@ -258,21 +260,29 @@ async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession
     )
     session.add_all([agent_a, agent_b])
     await session.flush()
+    agent_a_id = agent_a.id
+    agent_b_id = agent_b.id
 
     block_a = MemoryBlockRecord(
-        agent_id=agent_a.id, label="a_block", description="",
+        agent_id=agent_a_id, label="a_block", description="",
         content="A's secret content", char_limit=1000, position=0
     )
     block_b = MemoryBlockRecord(
-        agent_id=agent_b.id, label="b_block", description="",
+        agent_id=agent_b_id, label="b_block", description="",
         content="B's secret content", char_limit=1000, position=0
     )
     session.add_all([block_a, block_b])
-    await session.flush()
+    await session.commit()
 
-    deps_a = AgentDeps(test_engine, test_engine, agent_a, bypass_factory_guard=True)
-    await compile_system_prompt(deps_a, session)
-    compiled_a = agent_a.compiled_system_prompt
+    # Fetch fresh agent_a for deps, expunge so write_scope can attach it
+    fresh_agent_a = await session.get(AgentRecord, agent_a_id)
+    session.expunge(fresh_agent_a)
+    deps_a = AgentDeps(test_engine, test_engine, fresh_agent_a, bypass_factory_guard=True)
+    async with deps_a.write_scope():
+        await compile_system_prompt(deps_a)
+
+    # Re-fetch to see compiled prompt (write_scope committed on separate session)
+    compiled_a = (await session.get(AgentRecord, agent_a_id)).compiled_system_prompt
 
     assert "A's secret content" in compiled_a
     assert "B's secret content" not in compiled_a
