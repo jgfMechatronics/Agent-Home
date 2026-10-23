@@ -9,7 +9,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
-from conftest import SAMPLE_AGENT_CONFIG_DATA
+from conftest import SAMPLE_AGENT_CONFIG_DATA, make_deps
 from pydantic import ValidationError
 
 from agent.deps import AgentDeps
@@ -292,7 +292,7 @@ def test_agentdeps_setters_all_require_write_scope(agent_with_blocks: dict):
         insp.session.expunge(agent_record)
 
     mock_engine = Mock()
-    deps = AgentDeps(mock_engine, mock_engine, agent_record, bypass_factory_guard=True)
+    deps = make_deps(mock_engine, agent_record)
 
     # List of setters to test: (property_name, test_value)
     setters_to_test = [

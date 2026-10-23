@@ -20,6 +20,7 @@ from agent.compaction import clear_context, compact, is_compaction_needed
 from agent.deps import AgentDeps
 from agent.types import AgentConfig
 from conftest import (
+    make_deps,
     SAMPLE_AGENT_CONFIG,
     make_alternating_messages,
     make_request,
@@ -86,7 +87,7 @@ async def _make_agent_with_messages(
     await session.refresh(agent)
     session.expunge(agent)
 
-    deps = AgentDeps(test_engine, test_engine, agent, bypass_factory_guard=True)
+    deps = make_deps(test_engine, agent)
     pydantic_msgs = make_alternating_messages(message_count)
     if total_tokens is not None:
         # Replace the last message (always a response for even counts) with one carrying usage data

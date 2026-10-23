@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.deps import AgentDeps
 from agent.types import BlockSettings
-from conftest import SAMPLE_AGENT_CONFIG
+from conftest import SAMPLE_AGENT_CONFIG, make_deps
 from db.models import AgentRecord, MemoryBlockRecord
 
 from memory.block_crud import (
@@ -91,8 +91,8 @@ async def multi_tenant_with_deps(session: AsyncSession, test_engine, multi_tenan
     For testing that write operations respect agent_id boundaries.
     """
     data = multi_tenant_agents_with_core_memory
-    deps_a = AgentDeps(test_engine, test_engine, data["agent_a"], bypass_factory_guard=True)
-    deps_b = AgentDeps(test_engine, test_engine, data["agent_b"], bypass_factory_guard=True)
+    deps_a = make_deps(test_engine, data["agent_a"])
+    deps_b = make_deps(test_engine, data["agent_b"])
     return {**data, "deps_a": deps_a, "deps_b": deps_b, "session": session}
 
 

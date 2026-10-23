@@ -48,7 +48,7 @@ from agent.timestamping import add_timestamp_prefix
 from agent.deps import AgentDeps
 from agent.types import AgentAppState, MCPConnError
 from api.fastapi_deps import get_agent_and_deps
-from conftest import make_mock_agent, _make_mock_session, local_dummy_tool, assert_ModelMessage_list_eq
+from conftest import make_mock_agent, _make_mock_session, local_dummy_tool, assert_ModelMessage_list_eq, make_deps
 from db.models import AgentRecord, MemoryBlockRecord
 from agent.tools import TOOL_REGISTRY
 
@@ -187,7 +187,7 @@ class TestHandleMessage(_BaseRouteTest):
             async def _mock_dep():
                 if raise_exc is not None:
                     raise raise_exc
-                yield make_mock_agent(events, raises_mid_stream), AgentDeps(test_engine, test_engine, agent_record, bypass_factory_guard=True)
+                yield make_mock_agent(events, raises_mid_stream), make_deps(test_engine, agent_record)
 
             app.dependency_overrides[get_agent_and_deps] = _mock_dep
 
@@ -469,7 +469,7 @@ class FunctionModelTestAgent:
 
         async def _make_agent_and_deps():
             async with agent_app_state.lock:
-                yield self._agent, AgentDeps(test_engine, test_engine, agent_record, bypass_factory_guard=True)
+                yield self._agent, make_deps(test_engine, agent_record)
                 agent_app_state.cancel_requested.clear()
 
         app.dependency_overrides[get_agent_and_deps] = _make_agent_and_deps
@@ -553,14 +553,14 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
 
     @staticmethod
     def _list_persisted_messages(mock_persist_messages) -> list:
-        """Concatenate messages from all persist_messages calls, in call order.
-        persist_messages(deps, session, messages, toolsets) — messages may be positional or kwarg."""
+        """Concatenate messages from all persist_messages calls, in call order."""
         messages = []
         for call in mock_persist_messages.call_args_list:
-            if "messages" in call.kwargs:
-                messages.extend(call.kwargs["messages"])
-            else:
-                messages.extend(call.args[2])  # positional: (deps, session, messages, toolsets)
+            assert "messages" in call.kwargs, (
+                "At time of writing impl only uses kwargs. This will break if impl switches to positional args. "
+                "Update if that issue occurs."
+            )
+            messages.extend(call.kwargs["messages"])
         return messages
 
     @staticmethod
@@ -640,10 +640,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
 
 
     def _get_messages_from_last_persist_call(self) -> list:
-        call = self.mock_persist_messages.call_args_list[-1]
-        if "messages" in call.kwargs:
-            return call.kwargs["messages"]
-        return call.args[2]  # positional: (deps, session, messages, toolsets)
+        return self.mock_persist_messages.call_args_list[-1].kwargs["messages"]
 
     async def test_persists_as_complete_msgs_come_in(self, client: AsyncClient):
         """
@@ -1061,7 +1058,7 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         # to process tool result, then resume needs another step)
         self.test_agent.set_steps(FunctionModelTestAgent.DEFAULT_STEPS + [FunctionModelTestAgent.COMPLETION_TEXT])
         self.agent_app_state = AgentAppState()
-        self._deps = AgentDeps(test_engine, test_engine, agent_record, bypass_factory_guard=True)
+        self._deps = make_deps(test_engine, agent_record)
 
     async def _run_agent_to_completion(self, user_prompt: str = "test") -> list:
         return [event async for event in run_stateful_agent(
@@ -1295,7 +1292,7 @@ class TestMCPTools(_BaseRouteTest):
 
         assert self.mock_persist_messages.called, "persist_messages must be called at least once"
         for call in self.mock_persist_messages.call_args_list:
-            toolsets = call.kwargs.get("toolsets", call.args[3] if len(call.args) > 3 else [])
+            toolsets = call.kwargs["toolsets"]
             function_toolsets = [ts for ts in toolsets if isinstance(ts, FunctionToolset)]
             mcp_toolsets = [ts for ts in toolsets if isinstance(ts, MCPToolset)]
             assert len(function_toolsets) == 1, "Expected exactly one FunctionToolset"
@@ -1447,7 +1444,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
             tools=[TOOL_REGISTRY[tool_name]],
         )
         
-        deps = AgentDeps(test_engine, test_engine, agent_record, bypass_factory_guard=True)
+        deps = make_deps(test_engine, agent_record)
         
         events = []
         async for event in run_stateful_agent(agent, deps, AgentAppState(), f"call {tool_name}"):

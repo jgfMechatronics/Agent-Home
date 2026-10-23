@@ -17,7 +17,7 @@ from agent.tools import (
     memory_replace,
 )
 from agent.deps import AgentDeps
-from conftest import SAMPLE_AGENT_CONFIG, mock_run_context
+from conftest import SAMPLE_AGENT_CONFIG, mock_run_context, make_deps
 from db.models import AgentRecord, MemoryBlockRecord
 
 
@@ -61,7 +61,7 @@ async def _make_agent_with_block(
     await session.refresh(block)
     session.expunge(agent)  # Detach so write_scope's session.add() can re-attach
 
-    deps = AgentDeps(test_engine, test_engine, agent, bypass_factory_guard=True)
+    deps = make_deps(test_engine, agent)
     ctx = mock_run_context(deps)
     
     return {"agent": agent, "block": block, "deps": deps, "ctx": ctx, "session": session}

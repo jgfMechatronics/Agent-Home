@@ -29,6 +29,7 @@ from db.models import (
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import _compute_sha256, deserialize_messages, load_messages
 from utils.ctx_reconstructor import ReconstructedContext, reconstruct_context
+from conftest import make_deps
 
 
 UNIT_TEST_TOOL_DEF = ToolDefinition(
@@ -334,7 +335,7 @@ class TestReconstructContextIntegration:
         )
         
         # Update record and compile within write_scope
-        mutated_deps = AgentDeps(test_engine, test_engine, self.agent_record, bypass_factory_guard=True)
+        mutated_deps = make_deps(test_engine, self.agent_record)
         async with mutated_deps.write_scope() as ws_session:
             record = await ws_session.merge(self.agent_record)
             record.system_instructions = new_instructions
