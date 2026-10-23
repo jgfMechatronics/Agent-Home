@@ -172,6 +172,7 @@ class TestRunCleanupFlowIntegration:
     @pytest_asyncio.fixture(autouse=True)
     async def setup(self, session, test_engine, app, agent_with_blocks):
         """Set up test with agent_with_blocks fixture plus skill block."""
+        self.session = session
         self.agent = agent_with_blocks["agent"]
         self.agent_id = self.agent.id
         self.agent_name = self.agent.name
@@ -227,7 +228,9 @@ class TestRunCleanupFlowIntegration:
                         skill_path=cleanup_skill_file,
                     )
         
-        # Verify blocks were updated
+        # Verify blocks were updated. The PUTs committed via write_scope on a separate
+        # session; the overridden read session's identity map holds stale blocks, so expire first.
+        self.session.expire_all()
         for label in self.cleanup_labels:
             resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/{label}")
             assert resp.json()["content"] == f"Edited {label}"

@@ -371,25 +371,20 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         """
         A calls send_message → B spawned in background task.
         B runs 2 loop iterations using THREE_TOOL_CALL_STEPS (tool, tool, tool, done):
-          iter1: step 1 (tool call) → compaction fires after ToolResultEvent
-          iter2: steps 2–4 (two more tool calls + completion text)
+          iter1: step 0 (tool call) → compaction fires after ToolResultEvent.
+                 NOTE: pydantic-ai prefetches step 1 when the ToolResultEvent is pulled
+                 off the iterator; its response is discarded on the compaction break
+                 (known wastefulness — see test_runner compaction tests).
+          iter2: steps 2–3 (one more tool call + completion text)
 
-        With the contextvar fix (context=contextvars.Context()):
-          B's capture list is isolated per-iteration → all 9 messages persisted correctly.
-        Without the fix (surgical _RunMessages only):
-          iter2 reuses the stale iter1 capture list which ends in ToolCallPart;
-          the ToolResultEvent if-branch fires with stale history and re-persists it → 15 msgs.
-
-        Expected persisted messages for B (9 total):
+        Expected persisted messages for B (7 total):
           iter1  ① ModelRequest  [UserPromptPart(inter-agent msg)]        ← PartStartEvent elif
           iter1  ② ModelResponse [DUMMY_TOOL_CALL_PART]                   ┐ ToolResultEvent
-          iter1  ③ ModelRequest  [DUMMY_TOOL_RETURN_PART]                 ┘  step 1 atomic persist
+          iter1  ③ ModelRequest  [DUMMY_TOOL_RETURN_PART]                 ┘  step 0 atomic persist
           iter2  ④ ModelRequest  [UserPromptPart(COMPACTION_RESUME_NOTICE)] ← PartStartEvent elif
           iter2  ⑤ ModelResponse [DUMMY_TOOL_CALL_PART]                   ┐ ToolResultEvent
           iter2  ⑥ ModelRequest  [DUMMY_TOOL_RETURN_PART]                 ┘  step 2 atomic persist
-          iter2  ⑦ ModelResponse [DUMMY_TOOL_CALL_PART]                   ┐ ToolResultEvent
-          iter2  ⑧ ModelRequest  [DUMMY_TOOL_RETURN_PART]                 ┘  step 3 atomic persist
-          iter2  ⑨ ModelResponse [TextPart(COMPLETION_TEXT)]              ← AgentRunResultEvent elif
+          iter2  ⑦ ModelResponse [TextPart(COMPLETION_TEXT)]              ← AgentRunResultEvent elif
         """
         a_events = [event async for event in run_stateful_agent(
             self.sender_agent.agent,
@@ -420,13 +415,12 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
             )))]),
             ModelResponse(parts=[FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
             ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
-            # iter2: compaction resume notice + steps 2 and 3 tool call/return pairs
+            # iter2: compaction resume notice + step 2 tool call/return pair
+            # (step 1 was prefetch-discarded by pydantic-ai during iter1's compaction break)
             ModelRequest(parts=[UserPromptPart(content=COMPACTION_RESUME_NOTICE)]),
             ModelResponse(parts=[FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
             ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
-            ModelResponse(parts=[FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
-            ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
-            # iter2: step 4 completion
+            # iter2: step 3 completion
             ModelResponse(parts=[TextPart(content=FunctionModelTestAgent.COMPLETION_TEXT)]),
         ]
         assert_ModelMessage_list_eq(b_persisted, expected)
@@ -436,8 +430,8 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         a_persisted = [
             msg
             for call in self.mock_persist_messages.call_args_list
-            if call.kwargs["deps"]._agent_record is self.sender_record
-            for msg in call.kwargs["messages"]
+            if call.args[0]._agent_record is self.sender_record  # deps is first positional arg
+            for msg in call.args[2]  # messages is third positional arg
         ]
         a_expected = [
             ModelRequest(parts=[UserPromptPart(content=add_timestamp_prefix("send a message"))]),
