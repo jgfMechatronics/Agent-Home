@@ -182,9 +182,13 @@ class TestRunCleanupFlowIntegration:
         # Add skill block for cleanup flow
         self.skill_label = "active-skill"
         self.skill_content = "Original skill content"
+        
+        # Detach agent from its original session so it can be attached to test_engine's session
+        session.expunge(self.agent)
+        # Commit current session to release locks before using test_engine
+        await session.commit()
         deps = AgentDeps(test_engine, test_engine, self.agent, bypass_factory_guard=True)
         await create_block(deps, BlockSettings(label=self.skill_label), self.skill_content)
-        await session.commit()
         
         # TestClient WITHOUT context manager = no lifespan run
         # override_db_session fixture handles routing to test session

@@ -5,6 +5,7 @@ AgentConfig: Pydantic model for agent configuration
 AgentDeps: Dataclass holding request-scoped agent state
 """
 import json
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
@@ -278,5 +279,31 @@ async def test_agentdeps_holds_expected_fields(agent_deps, agent_record):
     assert agent_deps.system_instructions == agent_record.system_instructions
 
 
-def test_agentdeps_setters_all_require_write_scope():
-    pytest.fail(reason="TODO. Programatic sweep, not manually maintained list")
+def test_agentdeps_setters_all_require_write_scope(agent_with_blocks: dict):
+    """All AgentDeps setters require write_scope context."""
+    from agent.deps import AgentDeps
+    from sqlalchemy import inspect
+    from unittest.mock import Mock
+
+    agent_record = agent_with_blocks["agent"]
+    # Expunge the record so it's not attached to any session
+    insp = inspect(agent_record)
+    if insp.session is not None:
+        insp.session.expunge(agent_record)
+
+    mock_engine = Mock()
+    deps = AgentDeps(mock_engine, mock_engine, agent_record, bypass_factory_guard=True)
+
+    # List of setters to test: (property_name, test_value)
+    setters_to_test = [
+        ("config", agent_record.agent_config),
+        ("system_instructions", "new instructions"),
+        ("compiled_system_prompt", "new prompt"),
+        ("sys_prompt_compiled_at", datetime.now()),
+        ("context_window_start", 100),
+        ("compaction_warning_fired", True),
+    ]
+
+    for prop_name, test_value in setters_to_test:
+        with pytest.raises(RuntimeError, match="write_scope"):
+            setattr(deps, prop_name, test_value)

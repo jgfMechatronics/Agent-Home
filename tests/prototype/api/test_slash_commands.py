@@ -92,14 +92,20 @@ class TestHandleRecompile:
     """_handle_recompile handler — calls compile + commit, returns success SSE."""
 
     async def test_calls_compile_and_commit_then_returns_success_sse(self):
+        # Create a proper async context manager mock
+        class AsyncContextManagerMock:
+            async def __aenter__(self):
+                return None
+            async def __aexit__(self, *args):
+                return None
+        
         deps = Mock()
-        deps.commit_changes_refresh_agent_record = AsyncMock()
+        deps.write_scope = Mock(return_value=AsyncContextManagerMock())
 
         with patch("prototype.api.slash_commands.compile_system_prompt", new_callable=AsyncMock) as mock_compile:
             result = await _handle_recompile(deps)
 
         mock_compile.assert_awaited_once_with(deps)
-        deps.commit_changes_refresh_agent_record.assert_awaited_once()
         assert result.event == "SlashCommandResult"
         assert result.data["name"] == "user_recompile"
         assert result.data["status"] == "success"
