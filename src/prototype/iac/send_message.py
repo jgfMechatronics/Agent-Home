@@ -55,16 +55,20 @@ async def send_message(
 ) -> str:
     """Send a message to another agent by name.
 
-    Recipient must be idle — there is no queue. If busy, delivery fails. After
-    sending, end your turn and wait; their response reactivates you. Don't loop
-    or sleep waiting — that keeps your turn active and blocks messages TO you.
+    Recipient must be idle — there is no queue. If busy, delivery fails. To receive
+    a reply, end your turn after sending; their response reactivates you. Looping
+    or sleeping keeps your turn active, blocking messages TO you.
 
     Args:
-        target_name: Name of the agent to message
-        content: The message content to send
+        ctx: Pydantic AI run context with AgentDeps.
+        target_name: Name of the agent to message.
+        content: The message content to send.
 
     Returns:
         A confirmation string on success.
+
+    Raises:
+        ModelRetry: If target agent not found, registry not configured, or target is busy.
     """
     deps = ctx.deps
 

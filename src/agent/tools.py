@@ -142,13 +142,17 @@ async def memory_replace(
     """Replace text in a memory block.
 
     Args:
-        label: The label of the memory block to edit
-        old_string: The text to find and replace
-        new_string: The replacement text
+        ctx: Pydantic AI run context with AgentDeps.
+        label: The label of the memory block to edit.
+        old_string: The text to find and replace.
+        new_string: The replacement text.
         occurrence: Which occurrence to replace (1-indexed). Required if multiple matches for old_string.
 
     Returns:
         Snippet of updated content on success.
+
+    Raises:
+        ModelRetry: On validation failure (block not found, target not found, etc.)
     """
     deps = ctx.deps
     
@@ -192,8 +196,9 @@ async def memory_insert(
     Use memory_replace instead if you need to insert into the middle of a single line.
 
     Args:
-        label: The label of the memory block to edit
-        content: The text to insert, verbatim (its newlines are preserved exactly)
+        ctx: Pydantic AI run context with AgentDeps.
+        label: The label of the memory block to edit.
+        content: The text to insert, verbatim (its newlines are preserved exactly).
         after: Where to insert. Use '<start>' for beginning, '<end>' for end,
            or any string to insert after the line containing that anchor
            (the anchor's line stays intact — nothing is ever split mid-line).
@@ -202,6 +207,9 @@ async def memory_insert(
 
     Returns:
         Snippet of updated content on success.
+
+    Raises:
+        ModelRetry: On validation failure (block not found, anchor not found, etc.)
     """
     deps = ctx.deps
 
@@ -249,18 +257,22 @@ async def memory_read(
 
     Use to get exact current strings when a memory edit fails due to stale view.
     NOT for normal recall — block content is already in your system prompt.
-    Use only when you suspect your system prompt view is stale AND that staleness is causing an issue
+    Use only when you suspect your system prompt view is stale AND that staleness is causing an issue.
 
     Workflow: eyeball target line from system-prompt view, read a window, page
     with offset until you have the desired region, retry edit with exact strings.
 
     Args:
-        label: The label of the memory block to read
-        offset: 0-indexed line to start reading from
-        limit: Maximum number of lines to return
+        ctx: Pydantic AI run context with AgentDeps.
+        label: The label of the memory block to read.
+        offset: 0-indexed line to start reading from.
+        limit: Maximum number of lines to return.
 
     Returns:
         Header line with range/total, then requested lines verbatim.
+
+    Raises:
+        ModelRetry: If block not found, offset/limit invalid, or window out of range.
     """
     deps = ctx.deps
 
@@ -299,9 +311,14 @@ _underlying_web_fetch = web_fetch_tool()
 async def web_fetch(ctx: RunContext[AgentDeps], url: str) -> str | BinaryContent:  # noqa: ARG001
     """Fetch a web page and return it as markdown.
 
-    Text/HTML: plain text with metadata header, newlines preserved (pageable via
-    read_tool_result if spilled). Binary (images, PDFs, audio): passed through
-    for native handling.
+    Args:
+        ctx: Pydantic AI run context with AgentDeps.
+        url: The URL to fetch.
+
+    Returns:
+        Text/HTML: markdown with metadata header, newlines preserved (pageable via
+        read_tool_result if spilled). Binary (images, PDFs, audio): BinaryContent
+        passed through for native handling.
     """
     # Call the underlying tool — returns WebFetchResult (TypedDict) or BinaryContent
     result = await _underlying_web_fetch.function(url)
