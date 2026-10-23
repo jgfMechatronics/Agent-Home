@@ -4,18 +4,14 @@ Block CRUD operations — Section 2.1
 Read operations take (session, agent_id) — no lock required, allows concurrent reads.
 Write operations take (deps: AgentDeps) — requires deps, proving caller holds per-agent lock.
 
-TODO (Critical): Here we hit the DB directly, in other places we go through ORM. Question of if we should just have the mutating
-functions go through the agent record on deps (added after we implemented these originally) rather than hitting db directly.
-UPDATE: Yes, we should go thorugh the agent record on deps wherever it is avaiable. The current design will result in the memory blocks
-on deps going stale after update. We need a single source of truth. get_blocks is still maybe useful as is because you don't necessarily want to have to have
-deps just to *read* the blocks (admittedly, it does return a mutable object), but we need either some polymorphism or just a seperate helper that gets the blocks from deps
-and returns a ref or something.
-
-TODO: The "read only" design is flawed here. get_blocks don't take deps and therefore aren't associted with a lock and are *supposed*
-to be read only BUT they do still get a full session. Is there a such thing as a read only session?
+ORM objects never outlive the session that loaded them. Write operations return
+MemoryBlock DTOs (pydantic), safe to use after the session closes. Read operations
+return ORM objects that must be consumed within the caller's read_scope.
 """
 from collections.abc import Sequence
+from datetime import datetime
 
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +21,38 @@ from db.connection import ReadOnlySession
 from agent.deps import AgentDeps
 from agent.types import BlockSettings
 from db.models import MemoryBlockRecord
+
+
+class MemoryBlock(BaseModel):
+    """Domain model for a memory block. Returned by write ops — safe to use after session closes.
+
+    Built inside write_scope after flush (which populates Python-side defaults).
+    """
+    id: str
+    agent_id: str
+    label: str
+    description: str
+    content: str
+    char_limit: int
+    position: int
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_record(cls, block: MemoryBlockRecord) -> "MemoryBlock":
+        """Build from ORM record. Must be called inside session scope after flush —
+        attributes must be loaded (not expired)."""
+        return cls(
+            id=block.id,
+            agent_id=block.agent_id,
+            label=block.label,
+            description=block.description,
+            content=block.content,
+            char_limit=block.char_limit,
+            position=block.position,
+            created_at=block.created_at,
+            updated_at=block.updated_at,
+        )
 
 
 # --- Exceptions ---
@@ -94,41 +122,30 @@ async def update_block(
     deps: AgentDeps,
     label: str,
     content: str,
-    block: MemoryBlockRecord | None = None,
-) -> MemoryBlockRecord:
+) -> MemoryBlock:
     """
-    Update block content.
+    Update block content. Returns MemoryBlock DTO (safe outside session scope).
 
     Raises if block doesn't exist or content exceeds char_limit.
-    block: Optional pre-fetched block to avoid redundant DB query if caller already has it.
-           If provided, caller must ensure it's detached (e.g., from a read_scope).
     """
     async with deps.write_scope() as session:
-        if block is None:
-            block = await get_block_or_raise(session, deps.agent_id, label)
-        else:
-            # Re-attach detached block from caller's read_scope
-            session.add(block)
+        block = await get_block_or_raise(session, deps.agent_id, label)
 
         if len(content) > block.char_limit:
             raise ContentExceedsLimitError("new content exceeds char limit")
 
         block.content = content
-        # Flush+refresh to load server-side values, then expunge so write_scope's
-        # commit doesn't expire attributes on the returned object
         await session.flush()
-        await session.refresh(block)
-        session.expunge(block)
-    return block
+        return MemoryBlock.from_record(block)
 
 
 async def create_block(
     deps: AgentDeps,
     settings: BlockSettings,
     content: str = "",
-) -> MemoryBlockRecord:
+) -> MemoryBlock:
     """
-    Create new block.
+    Create new block. Returns MemoryBlock DTO (safe outside session scope).
 
     If settings.position is None, appends to end (max existing position + 1).
     Raises if label already exists for this agent.
@@ -155,12 +172,8 @@ async def create_block(
             position=position,
         )
         session.add(block)
-        # Flush+refresh to load server-side values, then expunge so write_scope's
-        # commit doesn't expire attributes on the returned object
         await session.flush()
-        await session.refresh(block)
-        session.expunge(block)
-    return block
+        return MemoryBlock.from_record(block)
 
 
 async def delete_block(deps: AgentDeps, label: str) -> None:
@@ -209,9 +222,10 @@ async def update_block_settings(
     deps: AgentDeps,
     label: str,
     settings: BlockSettings,
-) -> MemoryBlockRecord:
+) -> MemoryBlock:
     """
     Update block settings (label, description, char_limit, position).
+    Returns MemoryBlock DTO (safe outside session scope).
 
     Args:
         deps: Agent dependencies (proves caller holds lock)
@@ -219,21 +233,21 @@ async def update_block_settings(
         settings: New settings to apply (settings.label may differ for rename)
 
     If settings.position is None, keeps the current position (no change).
-    
+
     Raises BlockNotFoundError if block doesn't exist.
     Raises DuplicateBlockError if renaming to a label that already exists.
     Raises DuplicatePositionError if setting position to one already held by another block.
     """
     async with deps.write_scope() as session:
         block = await get_block_or_raise(session, deps.agent_id, label)
-        
+
         # Check for label conflict on rename (before mutations)
         if settings.label != label:
             await raise_if_label_exists(session, deps.agent_id, settings.label)
-        
+
         if settings.char_limit < len(block.content):
             raise ContentExceedsLimitError("new char_limit is less than current content length")
-        
+
         # Apply mutations
         block.label = settings.label
         block.description = settings.description
@@ -251,9 +265,4 @@ async def update_block_settings(
                 ) from e
             raise  # Re-raise unexpected IntegrityErrors
 
-        # Refresh to load server-side values, then expunge so write_scope's
-        # commit doesn't expire attributes on the returned object
-        await session.refresh(block)
-        session.expunge(block)
-
-    return block
+        return MemoryBlock.from_record(block)

@@ -50,6 +50,7 @@ from api.schemas import (
 from memory.block_crud import (
     ContentExceedsLimitError,
     InvalidBlockOrderListError,
+    MemoryBlock,
     create_block,
     get_block,
     get_blocks,
@@ -330,7 +331,7 @@ async def create_memory_block(
     agent_id: str,
     body: CreateMemoryBlockRequest,
     deps: AgentDeps = Depends(get_agent_deps),
-) -> MemoryBlockResponse:
+) -> MemoryBlock:
     """Create a new memory block for an agent."""
     try:
         settings = BlockSettings(
@@ -340,8 +341,7 @@ async def create_memory_block(
         )
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=f"Invalid block settings: {e}") from e
-    block = await create_block(deps, settings, body.content)
-    return MemoryBlockResponse.from_record(block)
+    return await create_block(deps, settings, body.content)
 
 
 @router.put("/{agent_id}/memory/blocks/{label}/content")
@@ -350,13 +350,12 @@ async def update_block_content(
     label: str,
     body: UpdateBlockContentRequest,
     deps: AgentDeps = Depends(get_agent_deps),
-) -> MemoryBlockResponse:
+) -> MemoryBlock:
     """Update the content of a memory block."""
     try:
-        block = await update_block(deps, label, body.content)
+        return await update_block(deps, label, body.content)
     except ContentExceedsLimitError as e:
         raise HTTPException(status_code=422, detail=f"Content exceeds char limit") from e
-    return MemoryBlockResponse.from_record(block)
 
 
 @router.get("/{agent_id}/memory/blocks/{label}/settings")
@@ -381,7 +380,7 @@ async def put_block_settings(
 ) -> BlockSettings:
     """Update settings/metadata for a memory block."""
     block = await update_block_settings(deps, label, settings)
-    return BlockSettings.from_record(block)
+    return BlockSettings(label=block.label, description=block.description, char_limit=block.char_limit, position=block.position)
 
 
 @router.put("/{agent_id}/memory/blocks/order", status_code=204)

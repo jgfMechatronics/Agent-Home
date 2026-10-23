@@ -32,10 +32,12 @@ class TestLifespan:
     async def setup_and_teardown(self):
         # Fresh app instance per test - no state contamination
         self.app = _create_app()
-        
-        # set up mocks and handle patching
-        self.mock_db_engine = MagicMock()
-        self.mock_db_engine.dispose = AsyncMock()
+
+        # Lifespan creates two engines (rw + ro)
+        self.mock_rw_engine = MagicMock()
+        self.mock_rw_engine.dispose = AsyncMock()
+        self.mock_ro_engine = MagicMock()
+        self.mock_ro_engine.dispose = AsyncMock()
         self.mock_broadcast_hub = MagicMock()
         self.mock_broadcast_hub.shutdown = AsyncMock()
 
@@ -44,27 +46,32 @@ class TestLifespan:
               patch('api.app.BroadcastHub', return_value=self.mock_broadcast_hub)):
             self.mock_create_engine = mock_create_engine
             self.mock_init_db = mock_init_db
-            self.mock_create_engine.return_value = self.mock_db_engine
+            # First call returns rw_engine, second returns ro_engine
+            self.mock_create_engine.side_effect = [self.mock_rw_engine, self.mock_ro_engine]
             yield
-    
+
     async def startup_and_shutdown_lifespan(self) -> None:
         try:
             async with LifespanManager(self.app):  # Triggers ASGI lifespan startup/shutdown
                 pass
         finally:
             # lifespan shutdown should have cleaned up resources
-            self.mock_db_engine.dispose.assert_called_once()
+            self.mock_rw_engine.dispose.assert_called_once()
+            self.mock_ro_engine.dispose.assert_called_once()
             self.mock_broadcast_hub.shutdown.assert_called_once()
 
     async def test_happy_path(self):
         await self.startup_and_shutdown_lifespan()
 
         expected_db_path = os.environ["AGENT_HOME_DB_PATH"]
-        
-        self.mock_create_engine.assert_called_once_with(expected_db_path)
-        self.mock_init_db.assert_called_once_with(self.mock_db_engine)
 
-        assert self.app.state.engine is self.mock_db_engine
+        assert self.mock_create_engine.call_count == 2
+        self.mock_create_engine.assert_any_call(expected_db_path)
+        self.mock_create_engine.assert_any_call(expected_db_path, readonly=True)
+        self.mock_init_db.assert_called_once_with(self.mock_rw_engine)
+
+        assert self.app.state.rw_engine is self.mock_rw_engine
+        assert self.app.state.ro_engine is self.mock_ro_engine
         assert self.app.state.broadcast_hub is self.mock_broadcast_hub
         assert self.app.state.agent_app_state_reg == {}
         # teardown asserts cleanup activity

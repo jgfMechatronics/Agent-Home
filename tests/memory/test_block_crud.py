@@ -18,7 +18,6 @@ from agent.types import BlockSettings
 from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord
 
-from memory import block_crud
 from memory.block_crud import (
     get_blocks,
     get_block,
@@ -190,21 +189,6 @@ async def test_update_block_enforces_char_limit(multi_tenant_with_deps: dict):
         await update_block(deps, "human", oversized_content)
 
 
-async def test_update_block_accepts_prefetched_block(multi_tenant_with_deps: dict, mocker):
-    """update_block with block param skips fetch and uses provided block."""
-    deps = multi_tenant_with_deps["deps_a"]
-    persona = multi_tenant_with_deps["blocks_a"][0]
-    # Expunge to simulate a block from read_scope (detached, as in production)
-    multi_tenant_with_deps["session"].expunge(persona)
-    
-    spy = mocker.spy(block_crud, "get_block")
-    
-    new_content = "Updated via prefetched block."
-    result = await update_block(deps, "persona", new_content, block=persona)
-    
-    assert result.content == new_content
-    assert result is persona  # Same object, not a fresh fetch
-    spy.assert_not_called()
 
 
 class TestUpdateBlockSettings:
