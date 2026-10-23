@@ -638,7 +638,9 @@ class TestMemoryInsertLineBoundary(UsesEditableBlock):
         """Insertion lands at a line boundary per each scenario (block_content=None uses the fixture default)."""
         if block_content is not None:
             self.block.content = block_content
-            await self.session.flush()
+            await self.session.commit()
+            await self.session.refresh(self.block)
+            self.session.expunge(self.block)
 
         result = await self._insert(content=content, after=after)
 
