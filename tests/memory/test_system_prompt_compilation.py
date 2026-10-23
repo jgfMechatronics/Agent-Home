@@ -77,7 +77,8 @@ class TestCompileSystemPrompt:
         self.agent = agent_with_blocks_and_deps["agent"]
         self.blocks = agent_with_blocks_and_deps["blocks"]
         self.session = agent_with_blocks_and_deps["session"]
-        await compile_system_prompt(self.deps)
+        async with self.deps.write_scope():
+            await compile_system_prompt(self.deps)
         self.compiled = self.agent.compiled_system_prompt
 
     async def test_assembles_blocks_in_position_order(self):
@@ -155,7 +156,8 @@ class TestCompileSystemPrompt:
         """Compiling the same blocks twice should produce identical output."""
         first_compile = self.compiled
 
-        await compile_system_prompt(self.deps)
+        async with self.deps.write_scope():
+            await compile_system_prompt(self.deps)
         second_compile = self.agent.compiled_system_prompt
 
         assert first_compile == second_compile, "Compilation should be deterministic"
@@ -163,9 +165,11 @@ class TestCompileSystemPrompt:
     async def test_reflects_updated_blocks_on_recompile(self):
         """Recompiling after a block edit should produce output reflecting the new content."""
         self.blocks[0].content = "Updated persona content after first compile."
-        await self.session.flush()
+        await self.session.merge(self.blocks[0])
+        await self.session.commit()
 
-        await compile_system_prompt(self.deps)
+        async with self.deps.write_scope():
+            await compile_system_prompt(self.deps)
 
         assert "Updated persona content after first compile." in self.agent.compiled_system_prompt
 
@@ -238,9 +242,12 @@ async def test_compile_updates_sys_prompt_compiled_at(agent_with_blocks_and_deps
 
     assert agent.sys_prompt_compiled_at is None
 
-    before = datetime.now(UTC)
-    await compile_system_prompt(deps)
-    after = datetime.now(UTC)
+    # SQLite stores naive datetimes — sys_prompt_compiled_at round-trips naive-UTC,
+    # so compare against naive now() values.
+    before = datetime.now(UTC).replace(tzinfo=None)
+    async with deps.write_scope():
+        await compile_system_prompt(deps)
+    after = datetime.now(UTC).replace(tzinfo=None)
 
     assert agent.sys_prompt_compiled_at is not None
     assert before < agent.sys_prompt_compiled_at < after
@@ -349,13 +356,15 @@ async def test_get_returns_stale_prompt_after_block_edit(agent_with_blocks_and_d
     ctx = mock_run_context(deps)
 
     # Compile initial prompt
-    await compile_system_prompt(deps)
+    async with deps.write_scope():
+        await compile_system_prompt(deps)
     original_compiled = agent.compiled_system_prompt
 
     # Modify a block directly (simulating what memory tools would do)
     blocks = agent_with_blocks_and_deps["blocks"]
     blocks[0].content = "COMPLETELY NEW CONTENT THAT SHOULD NOT APPEAR"
-    await agent_with_blocks_and_deps["session"].flush()
+    await agent_with_blocks_and_deps["session"].merge(blocks[0])
+    await agent_with_blocks_and_deps["session"].commit()
 
     # get_system_prompt should return the OLD compiled prompt
     result = await get_system_prompt(ctx)

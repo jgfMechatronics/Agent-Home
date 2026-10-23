@@ -355,8 +355,16 @@ async def agent_with_blocks(session: AsyncSession):
     # Insert out of position order to verify queries sort by position, not insertion order
     session.add_all([block_human, block_notes, block_persona])
     blocks = [block_persona, block_human, block_notes]  # position order for test assertions
-    await session.flush()
-    
+    # Commit + refresh + expunge: fixtures hand out detached, attribute-loaded records
+    # (ORM objects never outlive their session). Mutate via merge + commit in tests.
+    await session.commit()
+    await session.refresh(agent)
+    for block in blocks:
+        await session.refresh(block)
+    session.expunge(agent)
+    for block in blocks:
+        session.expunge(block)
+
     return {"agent": agent, "blocks": blocks}
 
 
