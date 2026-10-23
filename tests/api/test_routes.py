@@ -563,10 +563,13 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
 
     async def test_calls_create_block_and_returns_201(self, client: AsyncClient):
         """Successful creation calls create_block and returns 201 with block data."""
-        mock_block_record = MemoryBlockRecord(
-            agent_id="dummy", position=0, updated_at=self._MOCK_UPDATED_AT, **self._VALID_BODY
+        from memory.block_crud import MemoryBlock
+        mock_block = MemoryBlock(
+            id=str(uuid4()), agent_id="dummy", position=0,
+            created_at=self._MOCK_UPDATED_AT, updated_at=self._MOCK_UPDATED_AT,
+            **self._VALID_BODY,
         )
-        self.mock_create_block.return_value = mock_block_record
+        self.mock_create_block.return_value = mock_block
 
         response = await client.post(
             f"/agents/{self.agent_record.id}/memory/blocks",
@@ -575,7 +578,11 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
 
         assert response.status_code == 201
         self.mock_create_block.assert_called_once()
-        assert MemoryBlockResponse.model_validate(response.json()) == MemoryBlockResponse.from_record(mock_block_record)
+        assert MemoryBlockResponse.model_validate(response.json()) == MemoryBlockResponse(
+            label=mock_block.label, description=mock_block.description,
+            content=mock_block.content, char_limit=mock_block.char_limit,
+            updated_at=mock_block.updated_at,
+        )
 
     # 404 tested via parametrized TestNotFound
     # 422 for Duplicate block handled by app level handler + test
