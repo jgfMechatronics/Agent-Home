@@ -189,9 +189,16 @@ async def memory_insert(
 ) -> str:
     """Insert text into a memory block at a line boundary.
 
-    Insertion lands on a fresh line — mid-line splicing is impossible. The tool
-    guarantees line separation on both sides of insert; control blank-line separation via leading/trailing
-    newlines in content (e.g. "\\nNew entry\\n" inserts a blank-separated entry).
+    Insertion lands on a fresh line, directly after the anchor's LAST line — mid-line
+    splicing is impossible. Choose anchors with that in mind: if the anchor's last line
+    is a section header, your content becomes the first entry inside that section
+    (between the header and its body). To append after a section, anchor on the
+    section's last content line or closing tag, or use '<end>' to append to the end of the
+    entire block.
+
+    The tool guarantees line separation on both sides of the insert; control blank-line
+    separation via leading/trailing newlines in content (e.g. "\\nNew entry\\n" inserts
+    a blank-separated entry).
 
     Use memory_replace instead if you need to insert into the middle of a single line.
 
@@ -200,8 +207,8 @@ async def memory_insert(
         label: The label of the memory block to edit.
         content: The text to insert, verbatim (its newlines are preserved exactly).
         after: Where to insert. Use '<start>' for beginning, '<end>' for end,
-           or any string to insert after the line containing that anchor
-           (the anchor's line stays intact — nothing is ever split mid-line).
+           or any string — content lands on a fresh line directly after the anchor's
+           last line (anchor lines stay intact — nothing is ever split mid-line).
         occurrence: Which occurrence of anchor to insert after (1-indexed).
             Required if anchor appears multiple times.
 
