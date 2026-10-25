@@ -286,12 +286,29 @@ async def test_engine():
 async def session(test_engine):
     """Session bound to the test engine, for test setup and assertions.
 
-    Fixture setup that other connections must see should commit + refresh —
-    the same idiom as prod write_scope (commit expires attributes; refresh
-    reloads them so records stay usable, incl. after make_deps expunges).
+    Fixture setup that other connections must see: use commit_fixture_record
+    (add + commit + refresh — the same idiom as prod write_scope).
     """
     async with AsyncSession(test_engine) as async_session:
         yield async_session
+
+
+async def commit_fixture_record(session: AsyncSession, record):
+    """Fixture setup idiom: add + commit + refresh (mirrors prod write_scope pattern).
+    
+    Commit publishes the record to other connections (read_scope queries) AND 
+    autoflushes any pending inserts (no explicit flush() needed). Refresh reloads 
+    attributes wiped by commit-expiry, so the record stays usable after make_deps 
+    expunges it.
+    
+    Use this for fixture records accessed via separate sessions (e.g., read_scope
+    in tested functions). If you need DB-generated values BEFORE committing (rare),
+    do explicit flush+commit by hand instead (see TestListAgents.test_returns_all_agents).
+    """
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+    return record
 
 
 @pytest_asyncio.fixture
@@ -306,9 +323,7 @@ async def agent_record(session: AsyncSession) -> AgentRecord:
         agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="You are a test agent.",
     )
-    session.add(agent)
-    await session.commit()
-    await session.refresh(agent)
+    agent = await commit_fixture_record(session, agent)
     session.expunge(agent)
     return agent
 

@@ -62,6 +62,7 @@ from conftest import (
     ScriptedFunction,
     assert_ModelMessage_list_eq,
     local_dummy_tool,
+    commit_fixture_record,
 )
 from db.models import AgentRecord
 
@@ -747,13 +748,7 @@ class TestToolsetConditionalAttachment:
             agent_config=config,
             system_instructions="Test agent with no toolsets",
         )
-        session.add(record)
-        await session.flush()
-        # Commit + refresh: publish to other connections (read_scope), then reload
-        # attributes wiped by commit-expiry so the record stays usable (prod idiom).
-        await session.commit()
-        await session.refresh(record)
-        return record
+        return await commit_fixture_record(session, record)
     
     @pytest_asyncio.fixture
     async def agent_record_with_mcp(self, session: AsyncSession) -> AgentRecord:
@@ -764,13 +759,7 @@ class TestToolsetConditionalAttachment:
             agent_config=config,
             system_instructions="Test agent with MCP toolset",
         )
-        session.add(record)
-        await session.flush()
-        # Commit + refresh: publish to other connections (read_scope), then reload
-        # attributes wiped by commit-expiry so the record stays usable (prod idiom).
-        await session.commit()
-        await session.refresh(record)
-        return record
+        return await commit_fixture_record(session, record)
     
     @pytest.mark.asyncio
     async def test_empty_toolset_names_no_mcp_instantiation(
