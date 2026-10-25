@@ -749,8 +749,10 @@ class TestToolsetConditionalAttachment:
         )
         session.add(record)
         await session.flush()
-        # Commit so record visible to AgentFactory's read_scope query
+        # Commit + refresh: publish to other connections (read_scope), then reload
+        # attributes wiped by commit-expiry so the record stays usable (prod idiom).
         await session.commit()
+        await session.refresh(record)
         return record
     
     @pytest_asyncio.fixture
@@ -764,8 +766,10 @@ class TestToolsetConditionalAttachment:
         )
         session.add(record)
         await session.flush()
-        # Commit so record visible to AgentFactory's read_scope query
+        # Commit + refresh: publish to other connections (read_scope), then reload
+        # attributes wiped by commit-expiry so the record stays usable (prod idiom).
         await session.commit()
+        await session.refresh(record)
         return record
     
     @pytest.mark.asyncio

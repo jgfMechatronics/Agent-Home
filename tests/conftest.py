@@ -286,12 +286,11 @@ async def test_engine():
 async def session(test_engine):
     """Session bound to the test engine, for test setup and assertions.
 
-    expire_on_commit=False is test-plumbing only: fixture setup commits publish
-    data to other connections without expiring the loaded attribute values tests
-    (and make_deps' detached-record invariant) rely on. Prod session config is
-    untouched.
+    Fixture setup that other connections must see should commit + refresh —
+    the same idiom as prod write_scope (commit expires attributes; refresh
+    reloads them so records stay usable, incl. after make_deps expunges).
     """
-    async with AsyncSession(test_engine, expire_on_commit=False) as async_session:
+    async with AsyncSession(test_engine) as async_session:
         yield async_session
 
 
@@ -475,9 +474,8 @@ async def override_db_session(app: FastAPI, test_engine):
     """Route read-only sessions to fresh per-request sessions on the test engine.
 
     Can't use the real get_ro_session_dep path: get_session() requires a mode=ro engine,
-    and SQLite can't open a shared-cache in-memory DB as mode=ro. Fresh session per
-    request (not a shared one) avoids identity-map staleness against write_scope commits;
-    the named shared-cache DB + read_uncommitted pragma make committed data visible.
+    and the test engine is rw. Fresh session per request (not a shared one) avoids
+    identity-map staleness against write_scope commits.
     """
     async def _get_test_session():
         async with AsyncSession(test_engine) as session:

@@ -48,8 +48,10 @@ class TestSendMessage:
         )
         session.add(sender)
         await session.flush()
-        # Commit so sender visible to send_message's read_scope query
+        # Commit + refresh: publish to send_message's read_scope, then reload
+        # attributes wiped by commit-expiry (make_deps expunges; record must stay loaded).
         await session.commit()
+        await session.refresh(sender)
         self.sender = sender
         self.session = session
         self.deps = make_deps(test_engine, sender)
@@ -67,8 +69,10 @@ class TestSendMessage:
         )
         self.session.add(target)
         await self.session.flush()
-        # Commit so target visible to send_message's read_scope query
+        # Commit + refresh: publish to send_message's read_scope, then reload
+        # attributes wiped by commit-expiry so the returned record stays usable.
         await self.session.commit()
+        await self.session.refresh(target)
         return target
 
     def _configure_iac(self, mocker):
