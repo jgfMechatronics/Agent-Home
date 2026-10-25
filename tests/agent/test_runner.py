@@ -42,6 +42,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThink
 
 # Local
 from messages.messages import format_system_alert
+from agent.parallel_tool_call_trimmer import ParallelToolCallTrimmer
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
 from agent.timestamping import add_timestamp_prefix
 from agent.types import AgentAppState, MCPConnError, AgentDeps
@@ -1496,3 +1497,38 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
             for expected in expected_contents:
                 assert expected in agent_with_block.content, \
                     f"Expected '{expected}' in block content after {tool_name}"
+
+    async def test_parallel_calls_trimmed_to_first(self, session, agent_record, agent_with_block):
+        """BANDAID: ParallelToolCallTrimmer turns a parallel-call response into a single call.
+
+        Simulates an OpenRouter provider ignoring parallel_tool_calls=False. Only the first call
+        executes, and nothing handed to persist_messages contains more than one ToolCallPart.
+        Remove with the trimmer once the runner refactor handles parallel calls.
+        """
+        stream_fn = self._make_tool_stream("memory_insert", [
+            {"label": self._LABEL, "content": "first insert", "after": "<end>"},
+            {"label": self._LABEL, "content": "second insert", "after": "<end>"},
+        ])
+        agent = Agent(
+            FunctionModel(stream_function=stream_fn),
+            tools=[TOOL_REGISTRY["memory_insert"]],
+            capabilities=[ParallelToolCallTrimmer()],
+        )
+        deps = AgentDeps(session=session, agent_record=agent_record)
+
+        events = [e async for e in run_stateful_agent(agent, deps, AgentAppState(), "call memory_insert")]
+
+        tool_results = [e for e in events if isinstance(e, FunctionToolResultEvent)]
+        assert len(tool_results) == 1
+
+        await session.refresh(agent_with_block)
+        assert "first insert" in agent_with_block.content
+        assert "second insert" not in agent_with_block.content
+
+        persisted = [m for call in self.mock_persist_messages.call_args_list for m in call.kwargs["messages"]]
+        persisted_calls = [p for m in persisted if isinstance(m, ModelResponse)
+                           for p in m.parts if isinstance(p, ToolCallPart)]
+        persisted_returns = [p for m in persisted if isinstance(m, ModelRequest)
+                             for p in m.parts if isinstance(p, ToolReturnPart)]
+        assert [p.tool_call_id for p in persisted_calls] == ["call-0"]
+        assert [p.tool_call_id for p in persisted_returns] == ["call-0"]
