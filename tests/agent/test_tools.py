@@ -278,15 +278,12 @@ class TestMemoryToolsShared(UsesEditableBlock):
         pytest.param(memory_insert, MEMORY_INSERT_ARGS, id="memory_insert"),
     ])
     async def test_persists_change_immediately(self, tool_fn, valid_args):
-        """Tool persists change to DB immediately (flush), not deferred."""
+        """Tool persists change to DB immediately, not deferred."""
         original_content = self.block.content
 
         await tool_fn(self.ctx, label=self.block.label, **valid_args)
 
-        # Block should be flushed (not in session.new or session.dirty)
-        assert self.block not in self.session.new
-        assert self.block not in self.session.dirty
-        # And content should have changed
+        # Re-read from DB: the change must be visible outside the tool's own write scope
         self.block = await self.session.get(MemoryBlockRecord, self.block.id)
         assert self.block.content != original_content
 

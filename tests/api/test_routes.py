@@ -31,7 +31,7 @@ from agent.deps import AgentDeps
 from agent.types import AgentAppState, AgentConfig, BlockSettings
 from api.fastapi_deps import get_agent_deps
 from agent.crud import create_agent_record
-from conftest import SAMPLE_AGENT_CONFIG
+from conftest import AsyncNoOpSession, SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError
@@ -503,7 +503,6 @@ class _MemoryBlockEndpointBase:
     Provides:
     - self.agent_record: The agent from agent_with_blocks
     - self.blocks: The pre-existing blocks from agent_with_blocks
-    - self.mock_session: A mock session
     - self.<crud_attr_name>: The mocked crud function
     """
     crud_patch_target: str
@@ -512,36 +511,19 @@ class _MemoryBlockEndpointBase:
     @pytest.fixture(autouse=True)
     def _setup(self, app: FastAPI, agent_with_blocks: dict):
         """Common setup: override get_agent_deps, patch crud function, cleanup."""
-        class AsyncSessionMock:
-            async def commit(self):
-                pass
-            async def refresh(self, obj):
-                pass
-            def expunge(self, obj):
-                pass
-            def add(self, obj):
-                pass
-            def expire(self, obj):
-                pass
-            async def __aenter__(self):
-                return self
-            async def __aexit__(self, *args):
-                pass
-        
         self.agent_record = agent_with_blocks["agent"]
         self.blocks = agent_with_blocks["blocks"]
-        self.mock_session = AsyncSessionMock()
 
         async def _mock_dep():
             mock_rw_engine = Mock()
             mock_ro_engine = Mock()
-            
+
             yield AgentDeps(mock_rw_engine, mock_ro_engine, self.agent_record, bypass_factory_guard=True)
 
         app.dependency_overrides[get_agent_deps] = _mock_dep
 
         with patch(self.crud_patch_target, new_callable=AsyncMock) as mock_crud, \
-             patch("agent.deps.AsyncSession", return_value=AsyncSessionMock()) as mock_async_session:
+             patch("agent.deps.AsyncSession", return_value=AsyncNoOpSession()):
             setattr(self, self.crud_attr_name, mock_crud)
             yield
 

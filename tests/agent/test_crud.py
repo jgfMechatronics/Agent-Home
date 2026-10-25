@@ -5,7 +5,6 @@ import uuid
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import create_agent_record, get_agent_record, get_agent_record_by_name, replace_agent_config, replace_system_instructions
@@ -119,17 +118,6 @@ class TestReplaceFunctionCommonBehaviors:
         result = await replace_fn(agent_deps, new_value)
 
         assert result == new_value
-        # agent_record is detached (conftest expunges) — get_agent_record fetches fresh
-        refreshed = await get_agent_record(session, agent_id)
-        assert getattr(refreshed, attr_name) == new_value
-
-    async def test_commits_on_success(
-        self, session: AsyncSession, agent_record, agent_deps: AgentDeps, replace_fn, new_value, attr_name
-    ):
-        """Replace functions commit their changes — verified by re-reading from DB."""
-        agent_id = agent_record.id
-        await replace_fn(agent_deps, new_value)
-
         # agent_record is detached (conftest expunges) — get_agent_record fetches fresh
         refreshed = await get_agent_record(session, agent_id)
         assert getattr(refreshed, attr_name) == new_value

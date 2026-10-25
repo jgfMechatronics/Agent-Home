@@ -725,12 +725,13 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         self._assert_no_orphans(persisted_msgs_list)  # sanity check
 
 
-    async def test_rollback_and_error_sse_on_persist_failure(self, client: AsyncClient):
-        """persist_messages failure triggers rollback and yields Error SSE. Session is not committed.
+    async def test_error_sse_on_persist_failure(self, client: AsyncClient):
+        """persist_messages failure aborts the stream and yields Error SSE.
 
         Uses a real pydantic-ai Agent (default steps) so capture_run_messages populates
         and the incremental persist path is exercised. The first persist call raises,
-        which should propagate out of the stream loop, trigger rollback, and emit Error SSE.
+        which should propagate out of the stream loop and emit Error SSE. (Uncommitted
+        state is discarded structurally — write_scope rolls back on exception.)
         """
         self.mock_persist_messages.side_effect = RuntimeError("DB write failed")
 

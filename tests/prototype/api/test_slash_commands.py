@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from fastapi.sse import ServerSentEvent
 
+from conftest import AsyncNoOpContextManager
 from prototype.api.slash_commands import (
     _handle_clear,
     _handle_compact,
@@ -89,18 +90,11 @@ class TestHandleSlashCmd:
 
 
 class TestHandleRecompile:
-    """_handle_recompile handler — calls compile + commit, returns success SSE."""
+    """_handle_recompile handler — compiles within write_scope, returns success SSE."""
 
     async def test_calls_compile_and_commit_then_returns_success_sse(self):
-        # Create a proper async context manager mock
-        class AsyncContextManagerMock:
-            async def __aenter__(self):
-                return None
-            async def __aexit__(self, *args):
-                return None
-        
         deps = Mock()
-        deps.write_scope = Mock(return_value=AsyncContextManagerMock())
+        deps.write_scope = Mock(return_value=AsyncNoOpContextManager())
 
         with patch("prototype.api.slash_commands.compile_system_prompt", new_callable=AsyncMock) as mock_compile:
             result = await _handle_recompile(deps)

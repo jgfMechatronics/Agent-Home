@@ -441,7 +441,7 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     assert b_snapshot_after == b_snapshot_before, "Agent B was modified by operations on Agent A"
 
 
-# --- Commit behavior (common to all write ops) ---
+# --- DTO safety (common to all write ops) ---
 
 @pytest.mark.parametrize("write_op,call_args,returns_record", [
     pytest.param(update_block, ("persona", "new content"), True, id="update_block"),
@@ -450,18 +450,16 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     pytest.param(delete_block, ("persona",), False, id="delete_block"),
     pytest.param(reorder_blocks, (["system", "human", "persona"],), False, id="reorder_blocks"),
 ])
-async def test_write_ops_commit_and_refresh(multi_tenant_with_deps, write_op, call_args, returns_record):
-    """Write ops with commit=True (default) should commit and refresh returned objects."""
+async def test_write_ops_return_dtos_usable_after_scope_close(multi_tenant_with_deps, write_op, call_args, returns_record):
+    """Write ops return MemoryBlock DTOs that stay usable after the write scope closes.
+
+    DTOs are plain data, not ORM records — attribute access can never trigger a lazy load.
+    (Commit itself is structural: write_scope always commits on clean exit.)
+    """
     deps = multi_tenant_with_deps["deps_a"]
 
     result = await write_op(deps, *call_args)
 
     if returns_record:
-        # Accessing attributes proves refresh happened (would raise MissingGreenlet otherwise)
         _ = result.label
         _ = result.content
-
-    # No pending changes proves commit happened
-    assert not multi_tenant_with_deps["session"].new
-    assert not multi_tenant_with_deps["session"].dirty
-    assert not multi_tenant_with_deps["session"].deleted

@@ -4,9 +4,17 @@ Block CRUD operations — Section 2.1
 Read operations take (session, agent_id) — no lock required, allows concurrent reads.
 Write operations take (deps: AgentDeps) — requires deps, proving caller holds per-agent lock.
 
-ORM objects never outlive the session that loaded them. Write operations return
-MemoryBlock DTOs (pydantic), safe to use after the session closes. Read operations
-return ORM objects that must be consumed within the caller's read_scope.
+ORM objects should not outlive the session that loaded them — with one common
+exception. Write operations return MemoryBlock DTOs (pydantic), safe to use after
+the session closes. Read operations return ORM objects intended to be consumed
+within the caller's read_scope.
+
+Exception: reading simple column attributes of objects loaded from a read-only
+session is safe after the scope closes. Read scopes never commit, so loaded
+attributes are never expired — they stay populated on the detached object. The
+hazard the rule guards against is any access that triggers a lazy load (expired
+attributes, unloaded relationships), which needs a live session and fails outside
+one (DetachedInstanceError, or MissingGreenlet in async context).
 """
 from collections.abc import Sequence
 from datetime import datetime
