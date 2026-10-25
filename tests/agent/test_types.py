@@ -281,20 +281,10 @@ async def test_agentdeps_holds_expected_fields(agent_deps, agent_record):
 
 def test_agentdeps_setters_all_require_write_scope(agent_with_blocks: dict):
     """All AgentDeps setters require write_scope context."""
-    from agent.deps import AgentDeps
-    from sqlalchemy import inspect
-    from unittest.mock import Mock
+    agent_record = agent_with_blocks["agent"]  # already detached (conftest expunges)
 
-    agent_record = agent_with_blocks["agent"]
-    # Expunge the record so it's not attached to any session
-    insp = inspect(agent_record)
-    if insp.session is not None:
-        insp.session.expunge(agent_record)
+    deps = make_deps(MagicMock(), agent_record)
 
-    mock_engine = Mock()
-    deps = make_deps(mock_engine, agent_record)
-
-    # List of setters to test: (property_name, test_value)
     setters_to_test = [
         ("config", agent_record.agent_config),
         ("system_instructions", "new instructions"),

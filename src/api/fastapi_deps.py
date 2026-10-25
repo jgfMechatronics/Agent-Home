@@ -9,12 +9,11 @@ by app-level exception handlers registered in api/app.py — not caught here.
 from typing import AsyncIterator
 
 from fastapi import Depends, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.deps import AgentDeps, build_deps
 from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST, get_or_create_agent_app_state
 from agent.types import AgentAppState
-from db.connection import get_session
+from db.connection import ReadOnlySession, get_session
 from agent.broadcast_streaming import BroadcastHub
 
 from pydantic_ai import Agent
@@ -30,7 +29,7 @@ def get_broadcast_hub(request: Request) -> BroadcastHub:
     return request.app.state.broadcast_hub
 
 
-async def get_ro_session_dep(request: Request) -> AsyncIterator[AsyncSession]:
+async def get_ro_session_dep(request: Request) -> AsyncIterator[ReadOnlySession]:
     """FastAPI dependency: yields a read-only session bound to app.state.ro_engine."""
     async with get_session(request.app.state.ro_engine) as session:
         yield session

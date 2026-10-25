@@ -34,7 +34,6 @@ from pydantic_ai_harness.tool_output_limits import (
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agent.compaction_warner import CompactionWarner
-from agent.crud import get_agent_record
 from agent.deps import AgentDeps, build_deps
 from agent.parallel_tool_call_trimmer import ParallelToolCallTrimmer
 from agent.timestamping import ToolReturnTimestamper
@@ -197,7 +196,7 @@ def get_or_create_agent_app_state(agent_app_state_reg: dict[str, AgentAppState],
 class AgentFactory:
     """Per-agent, per-request factory for building agents with locking.
 
-    Constructed via FastAPI Depends with agent_id, session, and agent_app_state bound.
+    Constructed via FastAPI Depends with agent_id, rw/ro engines, and agent_app_state bound.
     Resolves (or creates) the agent's AppState entry at construction time, so the registry
     reference can be discarded after __init__. Routes call build_agent_and_deps() for
     a fully configured (Agent, AgentDeps) pair.

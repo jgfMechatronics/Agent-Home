@@ -84,6 +84,9 @@ class AgentDeps:
         Inside the scope, property setters are enabled (record is session-attached).
         On exit: commits, refreshes the record (absorbing post-commit attribute expiry),
         and detaches it again so it remains readable outside the scope.
+        On exception: rolls back and reloads the record from the DB (discarding
+        uncommitted mutations) so it stays readable; falls back to expiring it
+        (reads fail loudly until the next write_scope) if the reload fails.
 
         Usage:
             async with deps.write_scope() as session:
@@ -97,11 +100,19 @@ class AgentDeps:
                 await session.commit()
                 await session.refresh(self._agent_record)
             except BaseException:
-                # Expire all attributes so the detached record refuses to serve potentially
-                # stale data. Reads outside a scope will raise DetachedInstanceError (fail
-                # loudly). The next write_scope re-attaches, and the first attribute access
-                # triggers a SELECT — self-healing with fresh DB values.
-                session.expire(self._agent_record)
+                # The record may carry uncommitted mutations — discard them by reloading
+                # from the DB, so the detached record stays readable with known-good state.
+                # This matters for routine validation errors (e.g. ContentExceedsLimitError
+                # on the ModelRetry path): they are normal operation and must not poison
+                # subsequent property reads with DetachedInstanceError.
+                # If the reload itself fails (e.g. dead connection), expire instead so
+                # reads fail loudly rather than serving uncertain data; the next
+                # write_scope re-attaches and self-heals with fresh DB values.
+                try:
+                    await session.rollback()
+                    await session.refresh(self._agent_record)
+                except Exception:
+                    session.expire(self._agent_record)
                 raise
             finally:
                 session.expunge(self._agent_record)

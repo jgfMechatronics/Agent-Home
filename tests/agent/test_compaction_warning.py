@@ -72,18 +72,26 @@ class TestCompactionWarnerIntegration:
         self.rw_engine = test_engine
         self.ro_engine = test_engine
 
-    async def _run_and_get_messages(self, model: TestModel, soft_limit: int = 100) -> list[ModelMessage]:
-        """Run agent with given model and return persisted messages."""
-        # Update agent config via write_scope (following new pattern)
+    async def _update_record(self, **fields) -> None:
+        """Update agent record fields directly in the DB (test setup)."""
         async with AsyncSession(self.rw_engine) as update_session:
             record = await update_session.get(AgentRecord, self.agent_record.id)
-            if record:
-                record.agent_config = AgentConfig(
-                    model_name="anthropic:claude-sonnet-4-20250514",
-                    tool_names=["duckduckgo_search"],
-                    soft_compaction_limit=soft_limit,
-                )
+            for key, value in fields.items():
+                setattr(record, key, value)
             await update_session.commit()
+
+    async def _fresh_record(self) -> AgentRecord:
+        """Fetch the agent record fresh from the DB (self.agent_record is detached/stale)."""
+        async with AsyncSession(self.ro_engine) as check_session:
+            return await check_session.get(AgentRecord, self.agent_record.id)
+
+    async def _run_and_get_messages(self, model: TestModel, soft_limit: int = 100) -> list[ModelMessage]:
+        """Run agent with given model and return persisted messages."""
+        await self._update_record(agent_config=AgentConfig(
+            model_name="anthropic:claude-sonnet-4-20250514",
+            tool_names=["duckduckgo_search"],
+            soft_compaction_limit=soft_limit,
+        ))
 
         agent_app_state_reg: dict[str, AgentAppState] = {}
         with patch("agent.runner.is_compaction_needed", return_value=False):
@@ -131,9 +139,7 @@ class TestCompactionWarnerIntegration:
         assert warning_idx is not None, "Warning should appear in persisted history"
         
         # Verify flag is set in the database
-        async with AsyncSession(self.ro_engine) as check_session:
-            record = await check_session.get(AgentRecord, self.agent_record.id)
-            assert record.compaction_warning_fired is True
+        assert (await self._fresh_record()).compaction_warning_fired is True
 
         # Warning should appear BEFORE last tool call (proves mid-chain injection)
         tool_call_indices = self._find_tool_call_indices(messages)
@@ -149,30 +155,21 @@ class TestCompactionWarnerIntegration:
         await self._run_and_get_messages(model, soft_limit=100000)
 
         # Verify flag is not set in the database
-        async with AsyncSession(self.ro_engine) as check_session:
-            record = await check_session.get(AgentRecord, self.agent_record.id)
-            assert record.compaction_warning_fired is False
+        assert (await self._fresh_record()).compaction_warning_fired is False
 
     async def test_fire_once_per_cycle(self):
         """Warning only fires once per compaction cycle (flag prevents re-fire)."""
-        # Pre-set flag in the database
-        async with AsyncSession(self.rw_engine) as update_session:
-            record = await update_session.get(AgentRecord, self.agent_record.id)
-            if record:
-                record.compaction_warning_fired = True
-            await update_session.commit()
-        
+        await self._update_record(compaction_warning_fired=True)
+
         model = TestModel(call_tools="all", custom_output_text="Response")
         messages = await self._run_and_get_messages(model)
 
         # Should complete without injecting another warning
         warning_idx = self._find_warning_index(messages)
         assert warning_idx is None, "Should not inject warning when flag already set"
-        
+
         # Verify flag is still set
-        async with AsyncSession(self.ro_engine) as check_session:
-            record = await check_session.get(AgentRecord, self.agent_record.id)
-            assert record.compaction_warning_fired is True
+        assert (await self._fresh_record()).compaction_warning_fired is True
 
 
 SMALL_COMPACT_LIMIT = 100

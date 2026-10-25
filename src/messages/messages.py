@@ -198,7 +198,7 @@ async def _persist_error_warnings(
         for error_ts, error_text in errors
     ]
     await session.flush()  # Ensure main messages visible to recursive call's MAX query
-    await persist_messages(deps, session, warning_messages, toolsets, _is_error_pass=True)
+    await persist_messages(deps=deps, session=session, messages=warning_messages, toolsets=toolsets, _is_error_pass=True)
 
 
 # ---------------------------------------------------------------------------

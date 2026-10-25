@@ -140,10 +140,10 @@ class DBTestBase:
     async def _persist(self, messages: list[ModelMessage], toolsets: Sequence[AbstractToolset] | None = None, *, deps: AgentDeps | None = None) -> int | None:
         """Persist messages with real toolset extraction. Defaults to no toolsets."""
         return await persist_messages(
-            deps if deps is not None else self.deps,
-            self.session,
-            messages,
-            toolsets if toolsets is not None else [],
+            deps=deps if deps is not None else self.deps,
+            session=self.session,
+            messages=messages,
+            toolsets=toolsets if toolsets is not None else [],
         )
 
     async def _persist_and_fetch(self, messages: list[ModelMessage], toolsets: Sequence[AbstractToolset] | None = None) -> list[MessageRecord]:
@@ -441,10 +441,10 @@ class TestPersistMessagesSnapshots(DBTestBase):
         schemas = tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS
         with patch("messages.messages._extract_tool_definitions", AsyncMock(return_value=schemas)):
             return await persist_messages(
-                deps if deps is not None else self.deps,
-                self.session,
-                messages,
-                [],
+                deps=deps if deps is not None else self.deps,
+                session=self.session,
+                messages=messages,
+                toolsets=[],
             )
 
     async def _persist_and_fetch(self, messages: list[ModelMessage], tool_schemas: list[ToolDefinition] | None = None) -> list[MessageRecord]:
