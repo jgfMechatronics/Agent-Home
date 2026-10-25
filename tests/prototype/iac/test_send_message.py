@@ -48,6 +48,8 @@ class TestSendMessage:
         )
         session.add(sender)
         await session.flush()
+        # Commit so sender visible to send_message's read_scope query
+        await session.commit()
         self.sender = sender
         self.session = session
         self.deps = make_deps(test_engine, sender)
@@ -65,6 +67,8 @@ class TestSendMessage:
         )
         self.session.add(target)
         await self.session.flush()
+        # Commit so target visible to send_message's read_scope query
+        await self.session.commit()
         return target
 
     def _configure_iac(self, mocker):

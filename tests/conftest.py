@@ -1,6 +1,9 @@
 import hashlib
 import os
+import shutil
+import tempfile
 import uuid
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 # Must be set before any import of api.app (which reads it at module level).
@@ -16,12 +19,10 @@ import pytest_asyncio
 import time_machine
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event
 from sqlalchemy.orm import object_session
-from db.connection import _configure_sqlite_conn, ReadOnlySession
+from db.connection import create_sqlite_engine, ReadOnlySession
 
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.deps import AgentDeps
 from agent.types import AgentConfig
@@ -261,39 +262,36 @@ def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
 
 @pytest_asyncio.fixture
 async def test_engine():
-    """Per-test engine with named shared in-memory DB and NullPool.
+    """Per-test engine backed by a real file DB in a per-test tmpfs directory.
 
-    Named shared cache (mode=memory&cache=shared) lets multiple connections see
-    the same data — matching production NullPool semantics where each session
-    owns its connection. Unique name per test gives isolation without cleanup.
-    A keeper connection is held open because SQLite destroys in-memory DBs
-    when the last connection closes (NullPool closes after each use).
+    File-backed + create_sqlite_engine gives tests the exact production SQLite
+    configuration (WAL, busy_timeout, foreign_keys): committed-visibility and
+    snapshot semantics, with no read_uncommitted divergence. The directory
+    lives under /dev/shm (tmpfs) — RAM speed, no disk wear. Per-test directory
+    gives isolation (including across xdist workers); removed at teardown.
     """
-    db_name = f"testdb_{uuid.uuid4().hex}"
-    url = f"sqlite+aiosqlite:///file:{db_name}?mode=memory&cache=shared&uri=true"
-    engine = create_async_engine(url, poolclass=NullPool)
-    event.listens_for(engine.sync_engine, "connect")(_configure_sqlite_conn)
-    # Shared-cache in-memory DBs use table-level locking (WAL unavailable).
-    # read_uncommitted prevents concurrent connections (test session vs write_scope)
-    # from blocking each other on open transactions.
-    event.listens_for(engine.sync_engine, "connect")(
-        lambda conn, _: conn.execute("PRAGMA read_uncommitted=ON")
-    )
-
-    keeper = await engine.connect()
+    tmpfs = "/dev/shm" if Path("/dev/shm").is_dir() else None
+    db_dir = Path(tempfile.mkdtemp(prefix="agent-home-test-", dir=tmpfs))
+    engine = create_sqlite_engine(str(db_dir / "test.db"))
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         yield engine
     finally:
-        await keeper.close()
         await engine.dispose()
+        shutil.rmtree(db_dir, ignore_errors=True)
 
 
 @pytest_asyncio.fixture
 async def session(test_engine):
-    """Session bound to the test engine, for test setup and assertions."""
-    async with AsyncSession(test_engine) as async_session:
+    """Session bound to the test engine, for test setup and assertions.
+
+    expire_on_commit=False is test-plumbing only: fixture setup commits publish
+    data to other connections without expiring the loaded attribute values tests
+    (and make_deps' detached-record invariant) rely on. Prod session config is
+    untouched.
+    """
+    async with AsyncSession(test_engine, expire_on_commit=False) as async_session:
         yield async_session
 
 

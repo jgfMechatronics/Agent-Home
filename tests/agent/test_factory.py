@@ -749,6 +749,8 @@ class TestToolsetConditionalAttachment:
         )
         session.add(record)
         await session.flush()
+        # Commit so record visible to AgentFactory's read_scope query
+        await session.commit()
         return record
     
     @pytest_asyncio.fixture
@@ -762,6 +764,8 @@ class TestToolsetConditionalAttachment:
         )
         session.add(record)
         await session.flush()
+        # Commit so record visible to AgentFactory's read_scope query
+        await session.commit()
         return record
     
     @pytest.mark.asyncio

@@ -305,6 +305,9 @@ class TestListAgents:
                 session, name=f"agent-{i}", system_instructions="", config=SAMPLE_AGENT_CONFIG
             )
             expected.append(AgentMetadataResponse.from_record(record))
+        
+        # Commit so records are visible to separate client connection
+        await session.commit()
 
         response = await client.get("/agents")
 
