@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction_warner import CompactionWarner
 from agent.crud import get_agent_record
+from agent.parallel_tool_call_trimmer import ParallelToolCallTrimmer
 from agent.timestamping import ToolReturnTimestamper
 from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError, AgentOutput
 from memory.system_prompt_compilation import get_system_prompt
@@ -78,9 +79,12 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     # clock, so 180s of silence means a genuine hang, not a slow run (e.g. an OpenRouter
     # provider that accepted the request and never sends a byte).
     #
-    # parallel_tool_calls=False: When model requests multiple tool calls in one response,
-    # execute them sequentially. Required because run_stateful_agent's persist_messages
-    # shares a session with tool execution — parallel tool tasks race on the session.
+    # parallel_tool_calls=False: Asks the model not to emit multiple tool calls in one response.
+    # This is a provider-side REQUEST, not an execution mode: Anthropic enforces it, but many
+    # OpenRouter providers ignore it, and pydantic-ai runs any multiple calls it receives
+    # concurrently. ParallelToolCallTrimmer (in _build_capabilities) is what actually guarantees
+    # one call per response. Required because run_stateful_agent's persistence can't handle
+    # parallel calls and shares a session with tool execution.
     # Safe to remove after session factory refactor.
     settings = ModelSettings(
         thinking=config.thinking_mode,
@@ -175,6 +179,11 @@ def _build_capabilities() -> list[AgentCapability[AgentDeps]]:
             store=LocalFileStore(cleanup_after=TOOL_OUTPUT_SPILL_CLEANUP_AFTER),
             serializer=indented_json,
         ),
+        # BANDAID: drops every tool call after the first in each model response, since
+        # parallel_tool_calls=False isn't enforced by many OpenRouter providers and persistence
+        # can't handle parallel calls yet. LAST so after_model_request trims before the others see it.
+        # Remove with the runner refactor.
+        ParallelToolCallTrimmer(),
     ]
 
 
