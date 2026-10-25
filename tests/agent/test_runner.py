@@ -1462,7 +1462,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
                 assert expected in agent_with_block.content, \
                     f"Expected '{expected}' in block content after {tool_name}"
 
-    async def test_parallel_calls_trimmed_to_first(self, session, agent_record, agent_with_block):
+    async def test_parallel_calls_trimmed_to_first(self, session, test_engine, agent_record, agent_with_block):
         """BANDAID: ParallelToolCallTrimmer turns a parallel-call response into a single call.
 
         Simulates an OpenRouter provider ignoring parallel_tool_calls=False. Only the first call
@@ -1478,7 +1478,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
             tools=[TOOL_REGISTRY["memory_insert"]],
             capabilities=[ParallelToolCallTrimmer()],
         )
-        deps = AgentDeps(session=session, agent_record=agent_record)
+        deps = make_deps(test_engine, agent_record)
 
         events = [e async for e in run_stateful_agent(agent, deps, AgentAppState(), "call memory_insert")]
 

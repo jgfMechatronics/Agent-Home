@@ -28,7 +28,7 @@ from pydantic_ai.models import ModelRequestContext
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelResponse
 
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 
 
 logger = logging.getLogger(__name__)
