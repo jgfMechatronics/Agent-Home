@@ -315,7 +315,12 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # All other calls (A's persists and B's iter2 persists) return None → no compaction.
         b_first_persist_done = [False]
 
-        async def _persist_side_effect(deps, session, messages, toolsets, **kwargs):
+        async def _persist_side_effect(deps, messages, toolsets, **kwargs):
+            # Yield to the event loop like production persist's real DB I/O does —
+            # pydantic-ai's post-ToolResultEvent prefetch needs the scheduling window
+            # (see _BaseRouteTest._persist_noop in test_runner.py for the full rationale).
+            for _ in range(10):
+                await asyncio.sleep(0)
             if deps._agent_record is self.recipient_record and not b_first_persist_done[0]:
                 b_first_persist_done[0] = True
                 return 999_999  # > soft_compaction_limit (10 000) → compaction fires

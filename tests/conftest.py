@@ -17,6 +17,7 @@ import time_machine
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
+from sqlalchemy.orm import object_session
 from db.connection import _configure_sqlite_conn, ReadOnlySession
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -175,7 +176,13 @@ def make_deps(engine, agent_record) -> AgentDeps:
     Same engine for rw and ro; tests don't need the prod rw/ro split. Sites that
     specifically exercise different rw/ro engines should use the raw constructor.
     Centralizes the guard-bypass so constructor signature changes touch one place.
+
+    Expunges the record if it's still attached to a session (e.g. a test that just
+    flushed its own AgentRecord): deps' invariant is a detached record between
+    scopes, and write_scope's re-attach fails loudly on a doubly-attached record.
     """
+    if (attached_session := object_session(agent_record)) is not None:
+        attached_session.expunge(agent_record)
     return AgentDeps(engine, engine, agent_record, bypass_factory_guard=True)
 
 

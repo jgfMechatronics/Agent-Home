@@ -52,8 +52,8 @@ async def _persist_messages_load_records(
     messages: list[ModelMessage],
 ) -> list[MessageRecord]:
     """Persist messages via the official persist_messages, then load and return the MessageRecords."""
-    await persist_messages(deps, session, messages, [])
-    await session.commit()  # close write transaction so write_scope can write on separate connection
+    await session.commit()  # close any open write transaction so persist_messages' own connection can write (SQLite single-writer)
+    await persist_messages(deps, messages, [])
     return await load_messages(session, deps.agent_id)
 
 
@@ -394,7 +394,7 @@ class TestClearContext:
 
         # New message added after clear IS visible in windowed view
         new_msg = make_request("test message after clear")
-        await persist_messages(agent_deps, session, [new_msg], [])
+        await persist_messages(agent_deps, [new_msg], [])
         visible = await load_messages(session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
         assert len(visible) == 1
 

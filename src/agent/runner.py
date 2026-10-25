@@ -85,8 +85,7 @@ async def _check_and_handle_cancel(
     cancel_notice = ModelRequest(parts=[UserPromptPart(
         content=format_system_alert("Turn cancelled by user.")
     )])
-    async with deps.write_scope() as session:
-        await persist_messages(deps=deps, session=session, messages=[cancel_notice], toolsets=toolsets)
+    await persist_messages(deps=deps, messages=[cancel_notice], toolsets=toolsets)
     return True
 
 
@@ -158,8 +157,7 @@ async def run_stateful_agent(agent: Agent,
                             messages_to_persist = messages[new_message_idx:]
 
                         if messages_to_persist:
-                            async with deps.write_scope() as session:
-                                total_tokens = await persist_messages(deps=deps, session=session, messages=messages_to_persist, toolsets=agent.toolsets)
+                            total_tokens = await persist_messages(deps=deps, messages=messages_to_persist, toolsets=agent.toolsets)
                             new_message_idx += len(messages_to_persist)
                             if total_tokens is not None:
                                 last_total_tokens_value = total_tokens

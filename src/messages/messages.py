@@ -188,7 +188,7 @@ async def _persist_error_warnings(
     errors: list[tuple[datetime | None, str]],
     toolsets: "Sequence[AbstractToolset]",
 ) -> None:
-    """Build and persist error warning messages via recursive call to persist_messages."""
+    """Build and persist error warning messages via recursive call to _persist_messages."""
     warning_messages = [
         ModelResponse(parts=[TextPart(content=format_system_alert(
             f"WARNING: A problem was encountered while persisting messages from the last turn: "
@@ -198,7 +198,7 @@ async def _persist_error_warnings(
         for error_ts, error_text in errors
     ]
     await session.flush()  # Ensure main messages visible to recursive call's MAX query
-    await persist_messages(deps=deps, session=session, messages=warning_messages, toolsets=toolsets, _is_error_pass=True)
+    await _persist_messages(deps=deps, session=session, messages=warning_messages, toolsets=toolsets, _is_error_pass=True)
 
 
 # ---------------------------------------------------------------------------
@@ -207,13 +207,13 @@ async def _persist_error_warnings(
 
 async def persist_messages(
     deps: AgentDeps,
-    session: AsyncSession,
     messages: list[ModelMessage],
     toolsets: "Sequence[AbstractToolset]",
-    *,
-    _is_error_pass: bool = False,
 ) -> int | None:
     """Save each ModelMessage as its own row; set total_tokens from ModelResponse.usage where available.
+
+    Owns its write scope: opens deps.write_scope() and commits on exit. Callers never
+    pass a session — persistence is a self-contained write op.
 
     total_tokens is extracted from each ModelResponse's usage (input + output tokens for that request).
     Set to None for ModelRequests and for ModelResponses with no token data (usage has all-zero fields).
@@ -225,6 +225,37 @@ async def persist_messages(
     - Serialization failures inject an error ModelResponse in place of the bad message.
     - Serialization failures append a summary warning at the END of the chain
       (referencing the original message timestamp) so errors aren't buried in long histories.
+    """
+    # TODO(persist-extraction): eliminate the wrapper/impl indirection and the recursion.
+    # The recursive error-warning pass (_persist_error_warnings → _persist_messages) re-runs
+    # the ENTIRE preprocessing for a handful of guaranteed-clean TextPart warnings: flush +
+    # second MAX(seq_id) query, a second _extract_tool_definitions walk (an MCP list_tools()
+    # round trip per MCPToolset), three idempotent snapshot queries, and a context_window_start
+    # re-resolution — all to reuse the ~35-line record-building loop body.
+    # Plan: extract per-message record construction into a helper (threading the resolved
+    # snapshot hashes, context_window_start_msg_id, and a running next_seq_id), then run the
+    # warning pass as a second inline loop in _persist_messages. Warnings share the batch's
+    # preprocessing; seq_ids continue arithmetically (no flush, no second MAX query);
+    # _is_error_pass collapses into a single raise. Then this wrapper inlines away.
+    if not messages:
+        return None
+    async with deps.write_scope() as session:
+        return await _persist_messages(deps=deps, session=session, messages=messages, toolsets=toolsets)
+
+
+async def _persist_messages(
+    deps: AgentDeps,
+    session: AsyncSession,
+    messages: list[ModelMessage],
+    toolsets: "Sequence[AbstractToolset]",
+    *,
+    _is_error_pass: bool = False,
+) -> int | None:
+    """Implementation of persist_messages with a caller-provided session.
+
+    Private so the error-warning recursion can share the public call's scope (the flush in
+    _persist_error_warnings makes the main batch visible to the recursive MAX(seq_id) query).
+    See persist_messages for the behavioral contract.
     """
     if not messages:
         return None

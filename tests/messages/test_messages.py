@@ -141,7 +141,6 @@ class DBTestBase:
         """Persist messages with real toolset extraction. Defaults to no toolsets."""
         return await persist_messages(
             deps=deps if deps is not None else self.deps,
-            session=self.session,
             messages=messages,
             toolsets=toolsets if toolsets is not None else [],
         )
@@ -279,7 +278,10 @@ class TestPersistMessages(DBTestBase):
             system_instructions="Other agent.",
         )
         self.session.add(other_agent)
-        await self.session.flush()
+        # Commit (not flush): persist_messages writes via its own connection, which can't
+        # write while this session holds an open write transaction (SQLite single-writer).
+        await self.session.commit()
+        await self.session.refresh(other_agent)
         other_deps = make_deps(test_engine, other_agent)
 
         expected_other_msg = make_request("other msg")
@@ -442,7 +444,6 @@ class TestPersistMessagesSnapshots(DBTestBase):
         with patch("messages.messages._extract_tool_definitions", AsyncMock(return_value=schemas)):
             return await persist_messages(
                 deps=deps if deps is not None else self.deps,
-                session=self.session,
                 messages=messages,
                 toolsets=[],
             )
@@ -603,7 +604,10 @@ class TestLoadMessages(DBTestBase):
             system_instructions="Other agent.",
         )
         self.session.add(other_agent)
-        await self.session.flush()
+        # Commit (not flush): persist_messages writes via its own connection, which can't
+        # write while this session holds an open write transaction (SQLite single-writer).
+        await self.session.commit()
+        await self.session.refresh(other_agent)
         other_deps = make_deps(test_engine, other_agent)
 
         await self._persist([make_request(), make_response()])

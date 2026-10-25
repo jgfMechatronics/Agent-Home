@@ -8,6 +8,7 @@ is tangled with the handle_message route. We can improve this if/when we switch 
 # Standard library
 import asyncio
 import importlib.metadata
+import inspect
 import json
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
@@ -41,7 +42,7 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 # Local
-from messages.messages import format_system_alert
+from messages.messages import format_system_alert, persist_messages
 from agent.parallel_tool_call_trimmer import ParallelToolCallTrimmer
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
 from agent.timestamping import add_timestamp_prefix
@@ -55,6 +56,17 @@ from agent.tools import TOOL_REGISTRY
 # Stamp assertions compare against add_timestamp_prefix built at assert time —
 # freeze the clock so runner-stamp and expected-stamp can't straddle a second.
 pytestmark = pytest.mark.usefixtures("frozen_stamp_clock")
+
+_PERSIST_MESSAGES_SIG = inspect.signature(persist_messages)
+
+
+def _persist_call_args(call) -> dict:
+    """Bind an autospec'd persist_messages mock call to the real signature.
+
+    Style-agnostic extraction: works whether the impl passes args positionally or as kwargs.
+    """
+    return _PERSIST_MESSAGES_SIG.bind(*call.args, **call.kwargs).arguments
+
 
 # --- Module-level test data ---
 
@@ -152,7 +164,19 @@ class _BaseRouteTest:
             mock_load.return_value = []
             mock_deserialize.return_value = []
             mock_needs_compact.return_value = False
-            mock_persist_messages.return_value = None  # no token data by default
+
+            async def _persist_noop(*args, **kwargs):
+                # Production persist does real DB I/O, yielding to the event loop many
+                # times. That scheduling window is what lets pydantic-ai's prefetch fire the
+                # (wasteful) post-ToolResultEvent model call before the runner can break for
+                # compaction — compaction-resume tests assert that call happens. An instantly-
+                # returning mock collapses the window; these yields restore production
+                # interleaving (the prefetch involves chained tasks, so one pass isn't enough).
+                for _ in range(10):
+                    await asyncio.sleep(0)
+                return None  # no token data by default
+
+            mock_persist_messages.side_effect = _persist_noop
             self.mock_load_messages = mock_load
             self.mock_deserialize_msgs = mock_deserialize
             self.mock_needs_compact = mock_needs_compact
@@ -556,11 +580,7 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
         """Concatenate messages from all persist_messages calls, in call order."""
         messages = []
         for call in mock_persist_messages.call_args_list:
-            assert "messages" in call.kwargs, (
-                "At time of writing impl only uses kwargs. This will break if impl switches to positional args. "
-                "Update if that issue occurs."
-            )
-            messages.extend(call.kwargs["messages"])
+            messages.extend(_persist_call_args(call)["messages"])
         return messages
 
     @staticmethod
@@ -640,7 +660,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
 
 
     def _get_messages_from_last_persist_call(self) -> list:
-        return self.mock_persist_messages.call_args_list[-1].kwargs["messages"]
+        return _persist_call_args(self.mock_persist_messages.call_args_list[-1])["messages"]
 
     async def test_persists_as_complete_msgs_come_in(self, client: AsyncClient):
         """
@@ -1293,7 +1313,7 @@ class TestMCPTools(_BaseRouteTest):
 
         assert self.mock_persist_messages.called, "persist_messages must be called at least once"
         for call in self.mock_persist_messages.call_args_list:
-            toolsets = call.kwargs["toolsets"]
+            toolsets = _persist_call_args(call)["toolsets"]
             function_toolsets = [ts for ts in toolsets if isinstance(ts, FunctionToolset)]
             mcp_toolsets = [ts for ts in toolsets if isinstance(ts, MCPToolset)]
             assert len(function_toolsets) == 1, "Expected exactly one FunctionToolset"
@@ -1490,7 +1510,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         assert "first insert" in agent_with_block.content
         assert "second insert" not in agent_with_block.content
 
-        persisted = [m for call in self.mock_persist_messages.call_args_list for m in call.kwargs["messages"]]
+        persisted = [m for call in self.mock_persist_messages.call_args_list for m in _persist_call_args(call)["messages"]]
         persisted_calls = [p for m in persisted if isinstance(m, ModelResponse)
                            for p in m.parts if isinstance(p, ToolCallPart)]
         persisted_returns = [p for m in persisted if isinstance(m, ModelRequest)
