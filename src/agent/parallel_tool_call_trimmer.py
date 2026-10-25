@@ -13,7 +13,7 @@ then sees that it made exactly one call, gets its return, and re-issues anything
 Caveat: streamed PartStart/PartDelta events for the dropped calls have already gone out to clients
 by the time this hook runs (it fires after the stream completes). They are never executed or persisted.
 
-REMOVE when the runner refactor handles parallel tool calls in persistence.
+TODO: REMOVE when the runner refactor handles parallel tool calls in persistence.
 """
 import logging
 from dataclasses import dataclass, replace
