@@ -221,11 +221,8 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
 
     @pytest_asyncio.fixture(autouse=True)
     async def setup(self, session: AsyncSession, mocker, test_engine):
-        # Real DB records — only needed for flush (gives us real UUIDs) and
-        # as registry keys. NOT used inside the agent-run path to avoid
-        # ORM attribute access inside pydantic-ai's async context (which
-        # uses anyio greenlets that are not SQLAlchemy greenlets, causing
-        # MissingGreenlet on lazy-load of expired ORM objects).
+        # Real DB records, refreshed and detached by the fixture helper so later
+        # attribute access cannot trigger async lazy loads.
         sender_record = AgentRecord(
             name="sender-agent",
             agent_config=SAMPLE_AGENT_CONFIG,
@@ -236,13 +233,9 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
             agent_config=SAMPLE_AGENT_CONFIG,
             system_instructions="You are the recipient.",
         )
-        session.add_all([sender_record, recipient_record])
-        await session.flush()
-        # Refresh to load all attributes — prevents MissingGreenlet on later access
-        await session.refresh(sender_record)
-        await session.refresh(recipient_record)
+        sender_record = await commit_and_detach_fixture_record(session, sender_record)
+        recipient_record = await commit_and_detach_fixture_record(session, recipient_record)
 
-        # Use real records directly (refresh prevents lazy load issues)
         self.sender_record = sender_record
         self.recipient_record = recipient_record
         sender_id = sender_record.id
@@ -254,12 +247,6 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         self.mock_hub = mocker.MagicMock()
         # Configure IAC module with registry + hub
         configure_iac(self.app_state_reg, self.mock_hub)
-
-        # Detach records from fixture session before using with test_engine
-        session.expunge(sender_record)
-        session.expunge(recipient_record)
-        # Commit fixture session to release locks
-        await session.commit()
 
         # Sender deps: use test_engine (DB access in send_message is bypassed via
         # mocked get_all_agents)
