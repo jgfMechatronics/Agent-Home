@@ -429,7 +429,11 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     await create_block(deps_a, BlockSettings(label="new_block"), content="New for A")
     await delete_block(deps_a, "system")  # Agent A has system block
     await reorder_blocks(deps_a, ["human_renamed", "persona", "new_block"])
-    # Verify Agent B is completely unaffected
+    # Verify Agent B is completely unaffected. Expunge first: the before-snapshot
+    # query populated the session's identity map with B's blocks, and get_blocks
+    # returns those stale objects for already-loaded rows — without expunge the
+    # after-snapshot would compare stale-vs-stale and pass vacuously.
+    data["session"].expunge_all()
     b_blocks_after = await get_blocks(data["session"], deps_b.agent_id)
     b_snapshot_after = [(b.label, b.content, b.position) for b in b_blocks_after]
     
