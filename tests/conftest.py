@@ -190,9 +190,10 @@ def make_deps(engine, agent_record) -> AgentDeps:
     the raw constructor. Centralizes the guard-bypass so constructor signature changes
     touch one place.
 
-    Expunges the record if it's still attached to a session (e.g. a test that just
-    flushed its own AgentRecord): deps' invariant is a detached record between
-    scopes, and write_scope's re-attach fails loudly on a doubly-attached record.
+    Expunges the record if it's still attached to a session (belt-and-suspenders —
+    commit_and_detach_fixture_record already detaches; guards against raw flush+add
+    callers): deps' invariant is a detached record between scopes, and write_scope's
+    re-attach fails loudly on a doubly-attached record.
     """
     ro_engine = make_ro_engine(engine)
     if (attached_session := object_session(agent_record)) is not None:
@@ -299,21 +300,21 @@ async def test_engine():
 async def session(test_engine):
     """Session bound to the test engine, for test setup and assertions.
 
-    Fixture setup that other connections must see: use commit_fixture_record
+    Fixture setup that other connections must see: use commit_and_detach_fixture_record
     (add + commit + refresh — the same idiom as prod write_scope).
     """
     async with AsyncSession(test_engine) as async_session:
         yield async_session
 
 
-async def commit_fixture_record(session: AsyncSession, record):
-    """Fixture setup idiom: add + commit + refresh (mirrors prod write_scope pattern).
-    
-    Commit publishes the record to other connections (read_scope queries) AND 
-    autoflushes any pending inserts (no explicit flush() needed). Refresh reloads 
-    attributes wiped by commit-expiry, so the record stays usable after make_deps 
-    expunges it.
-    
+async def commit_and_detach_fixture_record(session: AsyncSession, record):
+    """Fixture setup idiom: add + commit + refresh + expunge.
+
+    Commit publishes the record to other connections (read_scope queries) AND
+    autoflushes any pending inserts (no explicit flush() needed). Refresh reloads
+    attributes wiped by commit-expiry. Expunge detaches the record so it can be
+    passed to make_deps or write_scope without double-attach errors.
+
     Use this for fixture records accessed via separate sessions (e.g., read_scope
     in tested functions). If you need DB-generated values BEFORE committing (rare),
     do explicit flush+commit by hand instead (see TestListAgents.test_returns_all_agents).
@@ -321,6 +322,7 @@ async def commit_fixture_record(session: AsyncSession, record):
     session.add(record)
     await session.commit()
     await session.refresh(record)
+    session.expunge(record)
     return record
 
 
@@ -329,15 +331,15 @@ async def agent_record(session: AsyncSession) -> AgentRecord:
     """
     A persisted, committed, detached AgentRecord for use in tests.
     Committed so build_deps (which creates its own session) can find it.
-    Refreshed before expunge so attribute reads work on the detached record.
+    Refreshed and expunged by commit_and_detach_fixture_record so attribute
+    reads work on the detached record.
     """
     agent = AgentRecord(
         name="test-agent",
         agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="You are a test agent.",
     )
-    agent = await commit_fixture_record(session, agent)
-    session.expunge(agent)
+    return await commit_and_detach_fixture_record(session, agent)
     return agent
 
 

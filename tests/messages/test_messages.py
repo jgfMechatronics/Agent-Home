@@ -36,7 +36,7 @@ from messages.messages import _extract_tool_definitions, deserialize_messages, l
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
 from conftest import (
-    commit_fixture_record,
+    commit_and_detach_fixture_record,
     make_deps,
     in_process_mcp_toolset_factory,
     local_dummy_tool,
@@ -278,7 +278,7 @@ class TestPersistMessages(DBTestBase):
             agent_config=SAMPLE_AGENT_CONFIG,
             system_instructions="Other agent.",
         )
-        other_agent = await commit_fixture_record(self.session, other_agent)
+        other_agent = await commit_and_detach_fixture_record(self.session, other_agent)
         other_deps = make_deps(test_engine, other_agent)
 
         expected_other_msg = make_request("other msg")
@@ -600,7 +600,7 @@ class TestLoadMessages(DBTestBase):
             agent_config=self.agent.agent_config,
             system_instructions="Other agent.",
         )
-        other_agent = await commit_fixture_record(self.session, other_agent)
+        other_agent = await commit_and_detach_fixture_record(self.session, other_agent)
         other_deps = make_deps(test_engine, other_agent)
 
         await self._persist([make_request(), make_response()])
