@@ -291,8 +291,8 @@ async def test_create_block_inserts_with_defaults(multi_tenant_with_deps: dict):
     session = multi_tenant_with_deps["session"]
     session.expire_all()
     fetched = await get_block(session, deps.agent_id, "notes")
-    assert fetched.content == result.content
-    assert fetched.label == result.label
+    assert fetched.description == result.description
+    assert fetched.char_limit == result.char_limit
 
 
 async def test_create_block_with_duplicate_label_raises(multi_tenant_with_deps: dict):
