@@ -202,8 +202,8 @@ async def test_exact_compiled_format(session: AsyncSession, agent_deps: AgentDep
     session.add_all([block_a, block_b])
     await session.commit()
 
-    async with agent_deps.write_scope() as session:
-        await compile_system_prompt(agent_deps, session)
+    async with agent_deps.write_scope() as ws_session:
+        await compile_system_prompt(agent_deps, ws_session)
 
     expected = (
         f"<system_instructions>\n"
