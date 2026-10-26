@@ -240,13 +240,10 @@ class TestReconstructContextIntegration:
         
         # Configure for integration tests: all tools, known system instructions
         # Must do this inside write_scope per compile_system_prompt requirements
-        async with agent_deps.write_scope() as ws_session:
-            # Reattach the detached record within write_scope
-            record = await ws_session.merge(agent_record)
+        async with agent_deps.write_scope() as session:
+            record = await session.merge(agent_record)
             record.agent_config = INTEGRATION_AGENT_CONFIG
             record.system_instructions = INTEGRATION_SYSTEM_INSTRUCTIONS
-        
-        async with agent_deps.write_scope() as session:
             await compile_system_prompt(agent_deps, session)
 
     async def _run_and_reconstruct(
@@ -334,12 +331,10 @@ class TestReconstructContextIntegration:
         
         # Update record and compile within write_scope
         mutated_deps = make_deps(test_engine, self.agent_record)
-        async with mutated_deps.write_scope() as ws_session:
-            record = await ws_session.merge(self.agent_record)
+        async with mutated_deps.write_scope() as session:
+            record = await session.merge(self.agent_record)
             record.system_instructions = new_instructions
             record.agent_config = mutated_config
-        
-        async with mutated_deps.write_scope() as session:
             await compile_system_prompt(mutated_deps, session)
 
         # Second run with mutated config
