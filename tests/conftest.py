@@ -1,6 +1,5 @@
 import hashlib
 import os
-import shutil
 import tempfile
 import uuid
 from pathlib import Path
@@ -267,19 +266,19 @@ async def test_engine():
     File-backed + create_sqlite_engine gives tests the exact production SQLite
     configuration (WAL, busy_timeout, foreign_keys): committed-visibility and
     snapshot semantics, with no read_uncommitted divergence. The directory
-    lives under /dev/shm (tmpfs) — RAM speed, no disk wear. Per-test directory
-    gives isolation (including across xdist workers); removed at teardown.
+    lives under /dev/shm (tmpfs) — RAM speed, no disk wear. TemporaryDirectory
+    gives a unique per-test dir (isolation incl. xdist workers) and removes it
+    automatically on teardown; the engine is disposed first.
     """
     tmpfs = "/dev/shm" if Path("/dev/shm").is_dir() else None
-    db_dir = Path(tempfile.mkdtemp(prefix="agent-home-test-", dir=tmpfs))
-    engine = create_sqlite_engine(str(db_dir / "test.db"))
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        yield engine
-    finally:
-        await engine.dispose()
-        shutil.rmtree(db_dir, ignore_errors=True)
+    with tempfile.TemporaryDirectory(prefix="agent-home-test-", dir=tmpfs, ignore_cleanup_errors=True) as db_dir:
+        engine = create_sqlite_engine(str(Path(db_dir) / "test.db"))
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            yield engine
+        finally:
+            await engine.dispose()
 
 
 @pytest_asyncio.fixture
