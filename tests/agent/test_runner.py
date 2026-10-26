@@ -3,6 +3,12 @@ Tests for agent runner, our loop on top of the pyantic AI loop (IE what recieves
 
 TODO: This is currently inappropriately tangled with the handle_message route test because the implementation itself 
 is tangled with the handle_message route. We can improve this if/when we switch to the StatefulAgent pattern
+
+TODO(runner-refactor): pydantic-ai prefetches the model step after ToolResultEvent; when compaction
+breaks the run, that response is discarded. The runner refactor and agentic compaction should be able
+to eliminate this wasted call. Once they do, remove the scheduling yields in _BaseRouteTest._persist_noop
+and update the prefetch-dependent expectations in TestRunStatefulAgentCompaction:
+test_only_interrupts_directly_after_tool_return and test_resumed_run_persists_new_messages_not_stale.
 """
 
 # Standard library
