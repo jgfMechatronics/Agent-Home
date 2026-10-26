@@ -279,11 +279,11 @@ async def test_agentdeps_holds_expected_fields(agent_deps, agent_record):
     assert agent_deps.system_instructions == agent_record.system_instructions
 
 
-def test_agentdeps_setters_all_require_write_scope(agent_with_blocks: dict):
+async def test_agentdeps_setters_all_require_write_scope(agent_with_blocks: dict, test_engine):
     """All AgentDeps setters require write_scope context."""
     agent_record = agent_with_blocks["agent"]  # already detached (conftest expunges)
 
-    deps = make_deps(MagicMock(), agent_record)
+    deps = make_deps(test_engine, agent_record)
 
     setters_to_test = [
         ("config", agent_record.agent_config),

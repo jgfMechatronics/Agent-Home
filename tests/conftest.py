@@ -184,20 +184,17 @@ def make_ro_engine(engine) -> AsyncEngine:
 def make_deps(engine, agent_record) -> AgentDeps:
     """Test-side factory for AgentDeps — bypasses the factory guard (valid in tests only).
 
-    Real engines get a genuine mode=ro ro engine (see make_ro_engine) so the
-    rw/ro split is enforced in tests as in prod; mocked engines pass through
-    unchanged (nothing real to derive). Sites explicitly testing the rw/ro split
-    itself use the raw constructor. Centralizes the guard-bypass so constructor
-    signature changes touch one place.
+    Requires a real SQLAlchemy engine (will fail loudly on engine.url if passed a mock).
+    Derives a genuine mode=ro ro engine (see make_ro_engine) so the rw/ro split is
+    enforced in tests as in prod. Sites explicitly testing the rw/ro split itself use
+    the raw constructor. Centralizes the guard-bypass so constructor signature changes
+    touch one place.
 
     Expunges the record if it's still attached to a session (e.g. a test that just
     flushed its own AgentRecord): deps' invariant is a detached record between
     scopes, and write_scope's re-attach fails loudly on a doubly-attached record.
     """
-    if isinstance(engine, AsyncEngine) and engine.url.get_backend_name() == "sqlite":
-        ro_engine = make_ro_engine(engine)
-    else:
-        ro_engine = engine
+    ro_engine = make_ro_engine(engine)
     if (attached_session := object_session(agent_record)) is not None:
         attached_session.expunge(agent_record)
     return AgentDeps(engine, ro_engine, agent_record, bypass_factory_guard=True)
