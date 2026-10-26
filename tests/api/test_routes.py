@@ -31,7 +31,7 @@ from agent.deps import AgentDeps
 from agent.types import AgentAppState, AgentConfig, BlockSettings
 from api.fastapi_deps import get_agent_deps
 from agent.crud import create_agent_record
-from conftest import SAMPLE_AGENT_CONFIG
+from conftest import SAMPLE_AGENT_CONFIG, make_deps
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError
@@ -520,7 +520,7 @@ class _MemoryBlockEndpointBase:
         self.blocks = agent_with_blocks["blocks"]
 
         async def _mock_dep():
-            yield AgentDeps(app.state.rw_engine, app.state.ro_engine, self.agent_record, bypass_factory_guard=True)
+            yield make_deps(app.state.rw_engine, self.agent_record)
 
         app.dependency_overrides[get_agent_deps] = _mock_dep
 
