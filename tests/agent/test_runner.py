@@ -6,9 +6,10 @@ is tangled with the handle_message route. We can improve this if/when we switch 
 
 TODO(runner-refactor): pydantic-ai prefetches the model step after ToolResultEvent; when compaction
 breaks the run, that response is discarded. The runner refactor and agentic compaction should be able
-to eliminate this wasted call. Once they do, remove the scheduling yields in _BaseRouteTest._persist_noop
-and update the prefetch-dependent expectations in TestRunStatefulAgentCompaction:
-test_only_interrupts_directly_after_tool_return and test_resumed_run_persists_new_messages_not_stale.
+to eliminate this wasted call. Keep _BaseRouteTest._persist_noop's scheduling yields (they simulate
+production DB I/O regardless), but update the prefetch-dependent expectations in
+TestRunStatefulAgentCompaction: test_only_interrupts_directly_after_tool_return and
+test_resumed_run_persists_new_messages_not_stale. Unchanged assertions would mean the waste remains.
 """
 
 # Standard library

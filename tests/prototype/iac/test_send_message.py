@@ -3,9 +3,10 @@
 Prototype-quality tests for the IAC implementation.
 
 TODO(runner-refactor): Companion to test_runner.py's post-ToolResultEvent prefetch TODO. Once the
-runner refactor and agentic compaction eliminate that discarded model call, remove the scheduling
-yields in TestSendMessageContextIsolation's _persist_side_effect and update the prefetch-dependent
-expectations in test_recipient_messages_persisted_after_compaction.
+runner refactor and agentic compaction eliminate that discarded model call, keep the scheduling
+yields in TestSendMessageContextIsolation's _persist_side_effect (they simulate production DB I/O
+regardless), but update the prefetch-dependent expectations in
+test_recipient_messages_persisted_after_compaction. Unchanged assertions would mean the waste remains.
 """
 import asyncio
 import json
