@@ -46,15 +46,15 @@ class TestGetMessages:
             self.mock_load_messages = mock_load
             yield
 
-    def _assert_load_called(self, agent_record: AgentRecord, *, start_seq_id: int) -> None:
+    def _assert_load_called(self, agent_record: AgentRecord, app, *, start_seq_id: int) -> None:
         self.mock_load_messages.assert_called_once()
         call = self.mock_load_messages.call_args
         loaded_session, loaded_agent_id = call.args
-        assert isinstance(loaded_session, AsyncSession)
+        assert loaded_session.bind is app.state.ro_engine
         assert loaded_agent_id == agent_record.id
         assert call.kwargs == {"start_seq_id": start_seq_id}
 
-    async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord):
+    async def test_default_loads_context_window_and_returns_messages(self, client: AsyncClient, agent_record: AgentRecord, app):
         """Without ?full=true: calls load_messages with context_window_start as start_seq_id."""
         self.mock_load_messages.return_value = [
             self._make_message_record(id="msg-1", seq_id=0, content='{"kind": "response", "parts": []}')
@@ -63,9 +63,9 @@ class TestGetMessages:
         response = await client.get(f"/agents/{agent_record.id}/messages")
 
         assert response.status_code == 200
-        self._assert_load_called(agent_record, start_seq_id=agent_record.context_window_start)
+        self._assert_load_called(agent_record, app, start_seq_id=agent_record.context_window_start)
 
-    async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord):
+    async def test_full_true_returns_complete_history(self, client: AsyncClient, agent_record: AgentRecord, app):
         """With ?full=true: calls load_messages with start_seq_id=0 for full history."""
         self.mock_load_messages.return_value = [
             self._make_message_record(id="msg-1", seq_id=0),
@@ -76,7 +76,7 @@ class TestGetMessages:
 
         assert response.status_code == 200
         assert len(response.json()["messages"]) == 2
-        self._assert_load_called(agent_record, start_seq_id=0)
+        self._assert_load_called(agent_record, app, start_seq_id=0)
 
     async def test_response_uses_message_item_format(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
         """Response items use MessageItem format: id, seq_id, type, content (raw JSON string), timestamp (ISO string)."""
