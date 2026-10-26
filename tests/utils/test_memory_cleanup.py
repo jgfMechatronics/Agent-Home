@@ -184,9 +184,7 @@ class TestRunCleanupFlowIntegration:
         # Add skill block for cleanup flow
         self.skill_label = "active-skill"
         self.skill_content = "Original skill content"
-        
-        # Commit current session to release locks before using test_engine
-        await session.commit()
+
         deps = make_deps(test_engine, self.agent)
         await create_block(deps, BlockSettings(label=self.skill_label), self.skill_content)
         
