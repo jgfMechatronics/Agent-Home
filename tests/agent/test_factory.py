@@ -63,6 +63,7 @@ from conftest import (
     assert_ModelMessage_list_eq,
     local_dummy_tool,
     commit_fixture_record,
+    make_ro_engine,
 )
 from db.models import AgentRecord
 
@@ -112,7 +113,7 @@ def agent_app_state_reg() -> dict[str, AgentAppState]:
 @pytest.fixture
 def agent_factory(agent_record: AgentRecord, agent_app_state_reg: dict, test_engine) -> AgentFactory:
     """Per-agent, per-request AgentFactory with agent_id, agent_app_state_reg, and engines bound."""
-    return AgentFactory(agent_record.id, agent_app_state_reg, test_engine, test_engine)
+    return AgentFactory(agent_record.id, agent_app_state_reg, test_engine, make_ro_engine(test_engine))
 
 
 @pytest.fixture
@@ -157,7 +158,7 @@ async def test_build_deps_yields_deps_with_expected_fields(
     test_engine,
 ):
     """build_deps should yield AgentDeps with agent_id and config populated."""
-    async with build_deps(agent_record.id, agent_app_state, test_engine, test_engine) as deps:
+    async with build_deps(agent_record.id, agent_app_state, test_engine, make_ro_engine(test_engine)) as deps:
         assert isinstance(deps, AgentDeps)
         assert deps.agent_id == agent_record.id
         assert deps.config == agent_record.agent_config
@@ -174,7 +175,7 @@ async def test_build_deps_creates_acquires_and_releases_lock(
     lock = agent_app_state.lock
     assert not lock.locked()
 
-    async with build_deps(agent_record.id, agent_app_state, test_engine, test_engine) as deps:
+    async with build_deps(agent_record.id, agent_app_state, test_engine, make_ro_engine(test_engine)) as deps:
         assert lock.locked()
 
     # After exiting, lock should be released
@@ -207,7 +208,7 @@ class TestBuildDepsLockAndCancelBehavior:
         """build_deps should release the lock and clear a pending cancel on normal exit."""
         self.cancel_requested.set()
 
-        async with build_deps(self.agent_id, self.agent_app_state, self.test_engine, self.test_engine):
+        async with build_deps(self.agent_id, self.agent_app_state, self.test_engine, make_ro_engine(self.test_engine)):
             assert self.lock.locked()
 
         assert_lock_acquired_and_released(self.lock)
@@ -219,7 +220,7 @@ class TestBuildDepsLockAndCancelBehavior:
         self.cancel_requested.set()
 
         with pytest.raises(RuntimeError):
-            async with build_deps(self.agent_id, self.agent_app_state, self.test_engine, self.test_engine):
+            async with build_deps(self.agent_id, self.agent_app_state, self.test_engine, make_ro_engine(self.test_engine)):
                 raise RuntimeError("Intentional test error")
 
         assert_lock_acquired_and_released(self.lock)
@@ -246,7 +247,7 @@ async def test_build_deps_raises_releases_lock_and_clears_cancel_on_fetch_failur
     cancel_requested.set()
 
     with pytest.raises(AgentNotFoundError):
-        async with build_deps(NONEXISTENT_AGENT_ID, app_state, test_engine, test_engine) as deps:
+        async with build_deps(NONEXISTENT_AGENT_ID, app_state, test_engine, make_ro_engine(test_engine)) as deps:
             pass
 
     assert_lock_acquired_and_released(lock)
@@ -265,14 +266,14 @@ async def test_build_deps_concurrent_same_agent_blocks(
     execution_order = []
 
     async def first_caller():
-        async with build_deps(agent_record.id, agent_app_state, test_engine, test_engine):
+        async with build_deps(agent_record.id, agent_app_state, test_engine, make_ro_engine(test_engine)):
             execution_order.append("first_entered")
             await asyncio.sleep(0.05)  # Hold lock briefly
             execution_order.append("first_exiting")
 
     async def second_caller():
         await asyncio.sleep(0.01)  # Ensure first_caller enters first
-        async with build_deps(agent_record.id, agent_app_state, test_engine, test_engine):
+        async with build_deps(agent_record.id, agent_app_state, test_engine, make_ro_engine(test_engine)):
             execution_order.append("second_entered")
 
     await asyncio.gather(first_caller(), second_caller())
@@ -312,14 +313,14 @@ async def test_build_deps_concurrent_different_agents_no_block(
     execution_order = []
 
     async def caller_a():
-        async with build_deps(agent_a.id, app_state_a, test_engine, test_engine):
+        async with build_deps(agent_a.id, app_state_a, test_engine, make_ro_engine(test_engine)):
             execution_order.append("a_entered")
             await asyncio.sleep(0.05)
             execution_order.append("a_exiting")
 
     async def caller_b():
         await asyncio.sleep(0.01)  # Small delay so A enters first
-        async with build_deps(agent_b.id, app_state_b, test_engine, test_engine):
+        async with build_deps(agent_b.id, app_state_b, test_engine, make_ro_engine(test_engine)):
             execution_order.append("b_entered")
             await asyncio.sleep(0.01)
             execution_order.append("b_exiting")
@@ -349,7 +350,7 @@ async def test_build_deps_timeout_raises_agent_locked_error(
 
     start = time.monotonic()
     with pytest.raises(AgentLockedError):
-        async with build_deps(agent_record.id, agent_app_state, test_engine, test_engine, timeout=timeout):
+        async with build_deps(agent_record.id, agent_app_state, test_engine, make_ro_engine(test_engine), timeout=timeout):
             pass  # should not reach here
     elapsed = time.monotonic() - start
 
@@ -769,7 +770,7 @@ class TestToolsetConditionalAttachment:
         agent_app_state_reg: dict,
     ):
         """When toolset_names is empty, MCPToolset should not be instantiated."""
-        factory = AgentFactory(agent_record_no_toolsets.id, agent_app_state_reg, test_engine, test_engine)
+        factory = AgentFactory(agent_record_no_toolsets.id, agent_app_state_reg, test_engine, make_ro_engine(test_engine))
         
         async with factory.build_agent_and_deps() as (agent, deps):
             self.mock_mcp.assert_not_called()
@@ -783,7 +784,7 @@ class TestToolsetConditionalAttachment:
         agent_app_state_reg: dict,
     ):
         """When toolset_names includes 'mcp_filesystem', MCPToolset should be instantiated."""
-        factory = AgentFactory(agent_record_with_mcp.id, agent_app_state_reg, test_engine, test_engine)
+        factory = AgentFactory(agent_record_with_mcp.id, agent_app_state_reg, test_engine, make_ro_engine(test_engine))
         
         async with factory.build_agent_and_deps() as (agent, deps):
             self.mock_mcp.assert_called_once_with("http://host.docker.internal:8080/mcp")

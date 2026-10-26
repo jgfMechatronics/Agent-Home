@@ -29,7 +29,7 @@ from db.models import (
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import _compute_sha256, deserialize_messages, load_messages
 from utils.ctx_reconstructor import ReconstructedContext, reconstruct_context
-from conftest import make_deps
+from conftest import make_deps, make_ro_engine
 
 
 UNIT_TEST_TOOL_DEF = ToolDefinition(
@@ -260,7 +260,7 @@ class TestReconstructContextIntegration:
         """
         agent_app_state_reg: dict[str, AgentAppState] = {}
 
-        factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.test_engine, self.test_engine)
+        factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.test_engine, make_ro_engine(self.test_engine))
         async with factory.build_agent_and_deps() as (pydantic_agent, deps):
             # Capture expected tool definitions from the live agent (ground truth)
             expected_tool_definitions = await _extract_tool_definitions(pydantic_agent.toolsets, self.agent_record.id)

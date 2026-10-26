@@ -2,6 +2,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from conftest import make_ro_engine
 import pytest_asyncio
 from pydantic_ai.messages import (
     ModelMessage,
@@ -95,7 +96,7 @@ class TestCompactionWarnerIntegration:
 
         agent_app_state_reg: dict[str, AgentAppState] = {}
         with patch("agent.runner.is_compaction_needed", return_value=False):
-            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.test_engine, self.test_engine)
+            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.test_engine, make_ro_engine(self.test_engine))
             async with factory.build_agent_and_deps() as (agent, deps):
                 with agent.override(model=model):
                     events = [e async for e in run_stateful_agent(
