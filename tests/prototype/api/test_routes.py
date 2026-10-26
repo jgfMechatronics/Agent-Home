@@ -55,7 +55,7 @@ class TestGetMessages:
         response = await client.get(f"/agents/{agent_record.id}/messages")
 
         assert response.status_code == 200
-        # Session is ANY: routes get a fresh per-request session (see override_db_session).
+        # Session is ANY: real get_ro_session_dep gives a fresh per-request session on app.state.ro_engine.
         # What matters here is the loader routing (agent_id, start_seq_id).
         self.mock_load_messages.assert_called_once_with(
             ANY, agent_record.id, start_seq_id=agent_record.context_window_start

@@ -19,7 +19,7 @@ import time_machine
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.orm import object_session
-from db.connection import create_sqlite_engine, ReadOnlySession
+from db.connection import create_sqlite_engine
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -28,7 +28,6 @@ from agent.types import AgentConfig
 from agent.broadcast_streaming import BroadcastHub
 from pydantic import ConfigDict
 from api.app import _create_app
-from api.fastapi_deps import get_ro_session_dep
 from db.models import (
     AgentConfigSnapshot,
     AgentRecord,
@@ -483,7 +482,7 @@ async def app(test_engine) -> FastAPI:
     app = _create_app()
     app.state.broadcast_hub = BroadcastHub()
     app.state.rw_engine = test_engine
-    app.state.ro_engine = test_engine
+    app.state.ro_engine = make_ro_engine(test_engine)
     return app
 
 
@@ -499,23 +498,6 @@ async def client(app: FastAPI) -> AsyncClient:
         base_url=TEST_BASE_URL,
     ) as c:
         yield c
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def override_db_session(app: FastAPI, test_engine):
-    """Route read-only sessions to fresh per-request sessions on the test engine.
-
-    Can't use the real get_ro_session_dep path: get_session() requires a mode=ro engine,
-    and the test engine is rw. Fresh session per request (not a shared one) avoids
-    identity-map staleness against write_scope commits.
-    """
-    async def _get_test_session():
-        async with AsyncSession(test_engine) as session:
-            yield ReadOnlySession(session)
-
-    app.dependency_overrides[get_ro_session_dep] = _get_test_session
-    yield
-    app.dependency_overrides.pop(get_ro_session_dep)
 
 
 # ---------------------------------------------------------------------------

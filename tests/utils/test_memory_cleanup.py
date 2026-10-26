@@ -166,8 +166,8 @@ class TestRunCleanupFlowIntegration:
     """Integration test for full cleanup flow against real app.
     
     Key insight: TestClient only runs lifespan when used as context manager.
-    Without context manager, it skips lifespan — we rely on override_db_session
-    fixture (autouse) to inject the test session into routes.
+    Without context manager, it skips lifespan — the app fixture sets rw/ro engines
+    on app.state directly, so routes use the real get_ro_session_dep.
     """
     
     @pytest_asyncio.fixture(autouse=True)
@@ -191,7 +191,7 @@ class TestRunCleanupFlowIntegration:
         await create_block(deps, BlockSettings(label=self.skill_label), self.skill_content)
         
         # TestClient WITHOUT context manager = no lifespan run
-        # override_db_session fixture handles routing to test session
+        # app fixture supplies app.state.ro_engine; routes use real get_ro_session_dep
         # base_url required for TrustedHostMiddleware validation
         self.test_client = TestClient(app, base_url="http://localhost")
     
@@ -228,7 +228,7 @@ class TestRunCleanupFlowIntegration:
                     )
         
         # Verify blocks were updated (read routes get fresh sessions per request —
-        # see override_db_session in conftest)
+        # real get_ro_session_dep on app.state.ro_engine)
         for label in self.cleanup_labels:
             resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/{label}")
             assert resp.json()["content"] == f"Edited {label}"
