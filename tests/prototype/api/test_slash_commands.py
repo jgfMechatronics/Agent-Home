@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from fastapi.sse import ServerSentEvent
 
-from conftest import AsyncNoOpContextManager
 from prototype.api.slash_commands import (
     _handle_clear,
     _handle_compact,
@@ -94,7 +93,7 @@ class TestHandleRecompile:
 
     async def test_calls_compile_and_commit_then_returns_success_sse(self):
         deps = Mock()
-        deps.write_scope = Mock(return_value=AsyncNoOpContextManager())
+        deps.write_scope = Mock(return_value=AsyncMock())
 
         with patch("prototype.api.slash_commands.compile_system_prompt", new_callable=AsyncMock) as mock_compile:
             result = await _handle_recompile(deps)
