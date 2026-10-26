@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.pool import NullPool
 
 from conftest import SAMPLE_AGENT_CONFIG
-from db.connection import create_sqlite_engine, get_session, init_db
+from db.connection import create_readonly_sqlite_engine, create_sqlite_engine, get_session, init_db
 from db.models import AgentRecord, MessageRecord, MemoryBlockRecord
 
 TABLE_NAMES = [AgentRecord.__tablename__, MessageRecord.__tablename__, MemoryBlockRecord.__tablename__]
@@ -22,13 +22,6 @@ async def raw_engine(tmp_path):
     assert str(engine.url) == f"sqlite+aiosqlite:///{db_path}"
     yield engine
     await engine.dispose()
-
-
-@pytest_asyncio.fixture
-async def initialized_engine(raw_engine):
-    """raw_engine with the full schema created via init_db."""
-    await init_db(raw_engine)
-    yield raw_engine
 
 
 # --- create_sqlite_engine ---
@@ -49,10 +42,10 @@ async def test_create_sqlite_engine_enables_foreign_keys(raw_engine):
         assert result.scalar() == 1
 
 
-# --- create_sqlite_engine readonly mode ---
+# --- create_readonly_sqlite_engine ---
 
-class TestCreateSqliteEngineReadonly:
-    """readonly=True opens the DB in read-only mode — reads succeed, writes are rejected."""
+class TestCreateReadonlySqliteEngine:
+    """Read-only engines use SQLite mode=ro: reads succeed and writes are rejected."""
 
     @pytest_asyncio.fixture(autouse=True)
     async def setup(self, tmp_path):
@@ -62,9 +55,13 @@ class TestCreateSqliteEngineReadonly:
         await init_db(writable)
         await writable.dispose()
 
-        self.engine = create_sqlite_engine(db_path, readonly=True)
+        self.engine = create_readonly_sqlite_engine(db_path)
         yield
         await self.engine.dispose()
+
+    async def test_uses_readonly_sqlite_uri(self):
+        assert self.engine.url.query["mode"] == "ro"
+        assert self.engine.url.query["uri"] == "true"
 
     async def test_can_read(self):
         async with self.engine.connect() as conn:
@@ -103,7 +100,7 @@ async def ro_engine(tmp_path):
     rw = create_sqlite_engine(db_path)
     await init_db(rw)
     await rw.dispose()
-    engine = create_sqlite_engine(db_path, readonly=True)
+    engine = create_readonly_sqlite_engine(db_path)
     yield engine
     await engine.dispose()
 
@@ -111,13 +108,6 @@ async def ro_engine(tmp_path):
 async def test_get_session_yields_async_session(ro_engine):
     async with get_session(ro_engine) as session:
         assert isinstance(session, AsyncSession)
-
-
-async def test_get_session_rejects_non_readonly_engine(initialized_engine):
-    """get_session requires a read-only engine (mode=ro in URL)."""
-    with pytest.raises(ValueError, match="mode=ro"):
-        async with get_session(initialized_engine):
-            pass
 
 
 async def test_get_session_bound_to_provided_engine(tmp_path):
@@ -136,8 +126,8 @@ async def test_get_session_bound_to_provided_engine(tmp_path):
                 )
         await rw.dispose()
 
-    ro_a = create_sqlite_engine(str(tmp_path / "a.db"), readonly=True)
-    ro_b = create_sqlite_engine(str(tmp_path / "b.db"), readonly=True)
+    ro_a = create_readonly_sqlite_engine(str(tmp_path / "a.db"))
+    ro_b = create_readonly_sqlite_engine(str(tmp_path / "b.db"))
     try:
         async with get_session(ro_a) as session:
             result = await session.execute(text("SELECT COUNT(*) FROM agent"))

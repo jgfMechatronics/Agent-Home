@@ -41,13 +41,13 @@ class TestLifespan:
         self.mock_broadcast_hub = MagicMock()
         self.mock_broadcast_hub.shutdown = AsyncMock()
 
-        with (patch('api.app.create_sqlite_engine') as mock_create_engine,  # sync function
+        with (patch('api.app.create_sqlite_engine', return_value=self.mock_rw_engine) as mock_create_rw_engine,
+              patch('api.app.create_readonly_sqlite_engine', return_value=self.mock_ro_engine) as mock_create_ro_engine,
               patch('api.app.init_db', new_callable=AsyncMock) as mock_init_db,
               patch('api.app.BroadcastHub', return_value=self.mock_broadcast_hub)):
-            self.mock_create_engine = mock_create_engine
+            self.mock_create_rw_engine = mock_create_rw_engine
+            self.mock_create_ro_engine = mock_create_ro_engine
             self.mock_init_db = mock_init_db
-            # First call returns rw_engine, second returns ro_engine
-            self.mock_create_engine.side_effect = [self.mock_rw_engine, self.mock_ro_engine]
             yield
 
     async def startup_and_shutdown_lifespan(self) -> None:
@@ -65,9 +65,8 @@ class TestLifespan:
 
         expected_db_path = os.environ["AGENT_HOME_DB_PATH"]
 
-        assert self.mock_create_engine.call_count == 2
-        self.mock_create_engine.assert_any_call(expected_db_path)
-        self.mock_create_engine.assert_any_call(expected_db_path, readonly=True)
+        self.mock_create_rw_engine.assert_called_once_with(expected_db_path)
+        self.mock_create_ro_engine.assert_called_once_with(expected_db_path)
         self.mock_init_db.assert_called_once_with(self.mock_rw_engine)
 
         assert self.app.state.rw_engine is self.mock_rw_engine

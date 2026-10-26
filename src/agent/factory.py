@@ -40,6 +40,7 @@ from agent.timestamping import ToolReturnTimestamper
 from agent.types import AgentAppState, AgentConfig, AgentOutput
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
+from db.connection import ReadOnlyEngine
 
 
 LOCK_TIMEOUT_FAST: int = 2
@@ -204,7 +205,7 @@ class AgentFactory:
     For deps-only access (no Agent), use build_deps from agent.deps directly.
     """
 
-    def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState], rw_engine: AsyncEngine, ro_engine: AsyncEngine):
+    def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState], rw_engine: AsyncEngine, ro_engine: ReadOnlyEngine):
         """Resolve (or create) the agent slot from the registry, then discard the registry ref."""
         self._agent_id = agent_id
         self._agent_app_state = get_or_create_agent_app_state(agent_app_state_reg, agent_id)

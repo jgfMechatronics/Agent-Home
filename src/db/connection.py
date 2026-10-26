@@ -7,6 +7,10 @@ from sqlalchemy.pool import NullPool
 
 from db.models import Base
 
+ReadOnlyEngine = NewType("ReadOnlyEngine", AsyncEngine)
+"""Nominal type for an engine whose connections are read-only. Created only by
+create_readonly_sqlite_engine(); lets static analysis catch rw/ro wiring mistakes."""
+
 ReadOnlySession = NewType("ReadOnlySession", AsyncSession)
 """Type alias for sessions bound to a read-only engine. Type-level only — communicates
 intent in function signatures and lets type checkers catch passing a rw session where
@@ -28,14 +32,19 @@ def _configure_sqlite_conn(dbapi_conn, _) -> None:
     cursor.close()
 
 
-def create_sqlite_engine(db_path: str, readonly: bool = False) -> AsyncEngine:
-    if readonly:
-        url = f"sqlite+aiosqlite:///file:{db_path}?mode=ro&uri=true"
-    else:
-        url = f"sqlite+aiosqlite:///{db_path}"
+def _create_sqlite_engine_from_url(url: str) -> AsyncEngine:
     engine = create_async_engine(url=url, poolclass=NullPool)
     event.listens_for(engine.sync_engine, "connect")(_configure_sqlite_conn)
     return engine
+
+
+def create_sqlite_engine(db_path: str) -> AsyncEngine:
+    return _create_sqlite_engine_from_url(f"sqlite+aiosqlite:///{db_path}")
+
+
+def create_readonly_sqlite_engine(db_path: str) -> ReadOnlyEngine:
+    url = f"sqlite+aiosqlite:///file:{db_path}?mode=ro&uri=true"
+    return ReadOnlyEngine(_create_sqlite_engine_from_url(url))
 
 
 async def init_db(engine: AsyncEngine) -> None:
@@ -45,14 +54,8 @@ async def init_db(engine: AsyncEngine) -> None:
 
 
 @asynccontextmanager
-async def get_session(engine: AsyncEngine) -> AsyncIterator[ReadOnlySession]:
-    """Yield a read-only session. No commit/rollback — callers must not write.
-
-    Raises ValueError if the engine is not read-only (mode=ro).
-    TODO: Unit test for above functionality
-    """
-    if "mode=ro" not in str(engine.url):
-        raise ValueError("get_session requires a read-only engine (mode=ro)")
+async def get_session(engine: ReadOnlyEngine) -> AsyncIterator[ReadOnlySession]:
+    """Yield a read-only session. No commit/rollback — callers must not write."""
     session = AsyncSession(engine)
     try:
         yield ReadOnlySession(session)

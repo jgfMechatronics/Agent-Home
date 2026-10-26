@@ -19,7 +19,7 @@ import time_machine
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.orm import object_session
-from db.connection import create_sqlite_engine
+from db.connection import ReadOnlyEngine, create_readonly_sqlite_engine, create_sqlite_engine
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -169,7 +169,7 @@ async def seed_stub_snapshots(session: AsyncSession):
     await session.flush()
 
 
-def make_ro_engine(engine) -> AsyncEngine:
+def make_ro_engine(engine) -> ReadOnlyEngine:
     """Derive a genuine read-only engine (SQLite mode=ro) from a test RW engine.
 
     Same DB file, exact prod constructor: writes through the ro side fail in
@@ -178,7 +178,7 @@ def make_ro_engine(engine) -> AsyncEngine:
     is the ONLY runtime write protection on the read path. NullPool: no teardown
     needed. Used by make_deps and by sites building build_deps/AgentFactory directly.
     """
-    return create_sqlite_engine(engine.url.database, readonly=True)
+    return create_readonly_sqlite_engine(engine.url.database)
 
 
 def make_deps(engine, agent_record) -> AgentDeps:

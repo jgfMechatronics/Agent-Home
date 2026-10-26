@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import object_session
 
 from agent.types import AgentAppState, AgentConfig, AgentLockedError, AgentNotFoundError
-from db.connection import ReadOnlySession
+from db.connection import ReadOnlyEngine, ReadOnlySession
 from db.models import AgentRecord
 
 LOCK_TIMEOUT_SECONDS: int = 60
@@ -53,7 +53,7 @@ class AgentDeps:
     def __init__(
         self,
         rw_engine: AsyncEngine,
-        ro_engine: AsyncEngine,
+        ro_engine: ReadOnlyEngine,
         agent_record: "AgentRecord",
         *,
         _token: object | None = None,
@@ -195,7 +195,7 @@ async def build_deps(
     agent_id: str,
     agent_app_state: AgentAppState,
     rw_engine: AsyncEngine,
-    ro_engine: AsyncEngine,
+    ro_engine: ReadOnlyEngine,
     timeout: float = LOCK_TIMEOUT_SECONDS,
 ) -> AsyncIterator[AgentDeps]:
     """Async context manager that acquires the agent lock and yields AgentDeps.

@@ -18,7 +18,7 @@ from memory.block_crud import BlockNotFoundError, DuplicateBlockError, Duplicate
 from api.routes import router
 from prototype.iac.send_message import configure_iac  # TODO: Remove with IAC redesign
 from api.schemas import HealthResponse
-from db.connection import create_sqlite_engine, init_db
+from db.connection import create_readonly_sqlite_engine, create_sqlite_engine, init_db
 from common.constants import INTEGRITY_LOCKFILE_NAME
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
         logger.critical(msg)
         raise RuntimeError(msg)
     rw_engine = create_sqlite_engine(DB_PATH)
-    ro_engine = create_sqlite_engine(DB_PATH, readonly=True)
+    ro_engine = create_readonly_sqlite_engine(DB_PATH)
     hub = BroadcastHub()
     try:
         await init_db(rw_engine)

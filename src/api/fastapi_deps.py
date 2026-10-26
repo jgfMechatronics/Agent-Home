@@ -13,7 +13,7 @@ from fastapi import Depends, Request
 from agent.deps import AgentDeps, build_deps
 from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST, get_or_create_agent_app_state
 from agent.types import AgentAppState
-from db.connection import ReadOnlySession, get_session
+from db.connection import ReadOnlyEngine, ReadOnlySession, get_session
 from agent.broadcast_streaming import BroadcastHub
 
 from pydantic_ai import Agent
@@ -31,7 +31,8 @@ def get_broadcast_hub(request: Request) -> BroadcastHub:
 
 async def get_ro_session_dep(request: Request) -> AsyncIterator[ReadOnlySession]:
     """FastAPI dependency: yields a read-only session bound to app.state.ro_engine."""
-    async with get_session(request.app.state.ro_engine) as session:
+    ro_engine: ReadOnlyEngine = request.app.state.ro_engine
+    async with get_session(ro_engine) as session:
         yield session
 
 
