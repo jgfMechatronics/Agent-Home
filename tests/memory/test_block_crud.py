@@ -19,6 +19,7 @@ from conftest import SAMPLE_AGENT_CONFIG, make_deps, commit_and_detach_fixture_r
 from db.models import AgentRecord, MemoryBlockRecord
 
 from memory.block_crud import (
+    MemoryBlock,
     get_blocks,
     get_block,
     update_block,
@@ -449,16 +450,18 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     pytest.param(delete_block, ("persona",), False, id="delete_block"),
     pytest.param(reorder_blocks, (["system", "human", "persona"],), False, id="reorder_blocks"),
 ])
-async def test_write_ops_return_dtos_usable_after_scope_close(multi_tenant_with_deps, write_op, call_args, returns_record):
-    """Write ops return MemoryBlock DTOs that stay usable after the write scope closes.
+async def test_write_ops_return_dtos_not_orm_records(multi_tenant_with_deps, write_op, call_args, returns_record):
+    """Write ops must return MemoryBlock DTOs, never ORM records.
 
-    DTOs are plain data, not ORM records — attribute access can never trigger a lazy load.
-    (Commit itself is structural: write_scope always commits on clean exit.)
+    Guards the DTO boundary: a MemoryBlockRecord returned past the write scope
+    would leak session-bound state into caller code — exactly what the DTO
+    pattern (and the "ORM objects never outlive their session" rule) prevents.
     """
     deps = multi_tenant_with_deps["deps_a"]
 
     result = await write_op(deps, *call_args)
 
     if returns_record:
-        _ = result.label
-        _ = result.content
+        assert isinstance(result, MemoryBlock)
+    else:
+        assert result is None
