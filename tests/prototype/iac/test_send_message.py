@@ -384,7 +384,6 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
 
         # Flatten all messages persisted by B across all persist_messages calls.
         # Use _agent_record identity (not .id) to avoid ORM lazy-load outside async context.
-        # persist_messages signature: (deps, session, messages, toolsets, ...)
         b_persisted = [
             msg
             for call in self.mock_persist_messages.call_args_list
