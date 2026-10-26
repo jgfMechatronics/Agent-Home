@@ -246,10 +246,8 @@ class TestReconstructContextIntegration:
             record.agent_config = INTEGRATION_AGENT_CONFIG
             record.system_instructions = INTEGRATION_SYSTEM_INSTRUCTIONS
         
-        # Now compile system prompt - requires write_scope but uses read_scope internally
-        # So we nest: outer write_scope for the deps setters, inner read_scope for fetching blocks
-        async with agent_deps.write_scope():
-            await compile_system_prompt(agent_deps)
+        async with agent_deps.write_scope() as session:
+            await compile_system_prompt(agent_deps, session)
 
     async def _run_and_reconstruct(
         self, prompt: str, test_model: TestModel
@@ -341,9 +339,8 @@ class TestReconstructContextIntegration:
             record.system_instructions = new_instructions
             record.agent_config = mutated_config
         
-        # Now compile with the mutated record within a new write_scope
-        async with mutated_deps.write_scope():
-            await compile_system_prompt(mutated_deps)
+        async with mutated_deps.write_scope() as session:
+            await compile_system_prompt(mutated_deps, session)
 
         # Second run with mutated config
         second, second_expected_tools, second_msgs = await self._run_and_reconstruct("Second", model)

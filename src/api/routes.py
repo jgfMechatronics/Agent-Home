@@ -190,8 +190,8 @@ async def recompile_system_prompt_route_handler(
     if we do, need to design proper and unit test
     """
 
-    async with deps.write_scope():
-        await compile_system_prompt(deps)
+    async with deps.write_scope() as session:
+        await compile_system_prompt(deps, session)
     return True
 
 
@@ -229,7 +229,7 @@ async def create_agent(
                 request.app.state.rw_engine, request.app.state.ro_engine, record,
                 bypass_factory_guard=True,  # Bootstrap: no lock exists yet for a brand-new agent
             )
-            await compile_system_prompt(deps)
+            await compile_system_prompt(deps, session)
             await session.commit()
             await session.refresh(record)
             session.expunge(record)

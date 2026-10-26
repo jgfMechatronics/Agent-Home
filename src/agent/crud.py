@@ -56,9 +56,9 @@ async def replace_agent_config(deps: AgentDeps, config: AgentConfig) -> AgentCon
 
 async def replace_system_instructions(deps: AgentDeps, instructions: str) -> str:
     """Replace system instructions in DB and recompile. Agent is already verified to exist via deps."""
-    async with deps.write_scope():
+    async with deps.write_scope() as session:
         deps.system_instructions = instructions
-        await compile_system_prompt(deps)
+        await compile_system_prompt(deps, session)
     return deps.system_instructions
 
 

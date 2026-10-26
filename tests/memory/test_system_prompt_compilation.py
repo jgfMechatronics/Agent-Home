@@ -77,8 +77,8 @@ class TestCompileSystemPrompt:
         self.agent = agent_with_blocks_and_deps["agent"]
         self.blocks = agent_with_blocks_and_deps["blocks"]
         self.session = agent_with_blocks_and_deps["session"]
-        async with self.deps.write_scope():
-            await compile_system_prompt(self.deps)
+        async with self.deps.write_scope() as session:
+            await compile_system_prompt(self.deps, session)
         self.compiled = self.agent.compiled_system_prompt
 
     async def test_assembles_blocks_in_position_order(self):
@@ -156,8 +156,8 @@ class TestCompileSystemPrompt:
         """Compiling the same blocks twice should produce identical output."""
         first_compile = self.compiled
 
-        async with self.deps.write_scope():
-            await compile_system_prompt(self.deps)
+        async with self.deps.write_scope() as session:
+            await compile_system_prompt(self.deps, session)
         second_compile = self.agent.compiled_system_prompt
 
         assert first_compile == second_compile, "Compilation should be deterministic"
@@ -168,8 +168,8 @@ class TestCompileSystemPrompt:
         await self.session.merge(self.blocks[0])
         await self.session.commit()
 
-        async with self.deps.write_scope():
-            await compile_system_prompt(self.deps)
+        async with self.deps.write_scope() as session:
+            await compile_system_prompt(self.deps, session)
 
         assert "Updated persona content after first compile." in self.agent.compiled_system_prompt
 
@@ -202,8 +202,8 @@ async def test_exact_compiled_format(session: AsyncSession, agent_deps: AgentDep
     session.add_all([block_a, block_b])
     await session.commit()
 
-    async with agent_deps.write_scope():
-        await compile_system_prompt(agent_deps)
+    async with agent_deps.write_scope() as session:
+        await compile_system_prompt(agent_deps, session)
 
     expected = (
         f"<system_instructions>\n"
@@ -228,8 +228,8 @@ async def test_compile_handles_agent_with_no_blocks(agent_no_blocks_with_deps: d
     deps = agent_no_blocks_with_deps["deps"]
     agent = agent_no_blocks_with_deps["agent"]
 
-    async with deps.write_scope():
-        await compile_system_prompt(deps)
+    async with deps.write_scope() as session:
+        await compile_system_prompt(deps, session)
     compiled = agent.compiled_system_prompt
 
     assert f"<system_instructions>\n{agent.system_instructions}\n</system_instructions>" == compiled
@@ -245,8 +245,8 @@ async def test_compile_updates_sys_prompt_compiled_at(agent_with_blocks_and_deps
     # SQLite stores naive datetimes — sys_prompt_compiled_at round-trips naive-UTC,
     # so compare against naive now() values.
     before = datetime.now(UTC).replace(tzinfo=None)
-    async with deps.write_scope():
-        await compile_system_prompt(deps)
+    async with deps.write_scope() as session:
+        await compile_system_prompt(deps, session)
     after = datetime.now(UTC).replace(tzinfo=None)
 
     assert agent.sys_prompt_compiled_at is not None
@@ -285,8 +285,8 @@ async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession
     fresh_agent_a = await session.get(AgentRecord, agent_a_id)
     session.expunge(fresh_agent_a)
     deps_a = make_deps(test_engine, fresh_agent_a)
-    async with deps_a.write_scope():
-        await compile_system_prompt(deps_a)
+    async with deps_a.write_scope() as session:
+        await compile_system_prompt(deps_a, session)
 
     # Re-fetch to see compiled prompt (write_scope committed on separate session)
     compiled_a = (await session.get(AgentRecord, agent_a_id)).compiled_system_prompt
@@ -356,8 +356,8 @@ async def test_get_returns_stale_prompt_after_block_edit(agent_with_blocks_and_d
     ctx = mock_run_context(deps)
 
     # Compile initial prompt
-    async with deps.write_scope():
-        await compile_system_prompt(deps)
+    async with deps.write_scope() as session:
+        await compile_system_prompt(deps, session)
     original_compiled = agent.compiled_system_prompt
 
     # Modify a block directly (simulating what memory tools would do)

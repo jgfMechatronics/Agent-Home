@@ -98,7 +98,8 @@ class TestHandleRecompile:
         with patch("prototype.api.slash_commands.compile_system_prompt", new_callable=AsyncMock) as mock_compile:
             result = await _handle_recompile(deps)
 
-        mock_compile.assert_awaited_once_with(deps)
+        mock_compile.assert_awaited_once()
+        assert mock_compile.await_args.args[0] is deps  # session is second arg
         assert result.event == "SlashCommandResult"
         assert result.data["name"] == "user_recompile"
         assert result.data["status"] == "success"

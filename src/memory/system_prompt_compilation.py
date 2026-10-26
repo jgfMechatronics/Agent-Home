@@ -1,11 +1,13 @@
 """
 System prompt compilation — assembles memory blocks into the full system prompt.
 
-compile_system_prompt(deps) — builds prompt from blocks, stores in agent.compiled_system_prompt
+compile_system_prompt(deps, session) — builds prompt from blocks, stores in agent.compiled_system_prompt
 get_system_prompt(ctx) — returns cached prompt for Pydantic AI instructions param
 TODO: More instances of accessing db directly rather than going through the agent_record on deps.
 """
 from datetime import datetime, UTC
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.deps import AgentDeps
 from db.models import MemoryBlockRecord
@@ -28,21 +30,20 @@ def _format_block(block: MemoryBlockRecord) -> str:
     )
 
 
-async def compile_system_prompt(deps: AgentDeps) -> None:
+async def compile_system_prompt(deps: AgentDeps, session: AsyncSession) -> None:
     """
     Assemble memory blocks into compiled_system_prompt.
 
-    - Fetches all blocks for deps.agent_id via internal read_scope
+    - Fetches all blocks for deps.agent_id via the provided session
     - Formats each block as XML with label, description, metadata, content
     - Prepends system_instructions wrapped in XML
     - Stores result in agent.compiled_system_prompt
     - Updates agent.sys_prompt_compiled_at
 
-    Caller must be inside a write_scope — record setters require session attachment.
+    Caller is responsible for providing a session (typically from write_scope) —
+    the signature makes this explicit and ensures reads and writes share a transaction.
     """
-    # Load blocks in position order (detached after scope exits; simple column access only)
-    async with deps.read_scope() as session:
-        blocks = await get_blocks(session, deps.agent_id)
+    blocks = await get_blocks(session, deps.agent_id)
 
     # Build prompt: system_instructions first, then blocks
     parts = [f"<system_instructions>\n{deps.system_instructions}\n</system_instructions>"]

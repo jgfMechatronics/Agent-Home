@@ -204,7 +204,8 @@ class TestCompactCommon(CompactTestBase):
         
         await compact(self.deps)
         
-        spy.assert_called_once_with(self.deps)
+        spy.assert_called_once()
+        assert spy.call_args.args[0] is self.deps  # session is second arg, any AsyncSession
 
 
 class TestCompactReturnValue(CompactTestBase):
