@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.deps import AgentDeps
 from agent.types import BlockSettings
-from conftest import SAMPLE_AGENT_CONFIG, make_deps
+from conftest import SAMPLE_AGENT_CONFIG, make_deps, commit_and_detach_fixture_record
 from db.models import AgentRecord, MemoryBlockRecord
 
 from memory.block_crud import (
@@ -46,12 +46,12 @@ async def multi_tenant_agents_with_core_memory(session: AsyncSession):
     
     Returns dict with agents and their blocks for easy test access.
     """
-    # Create two agents
-    agent_a = AgentRecord(name="agent-a", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Agent A instructions")
-    agent_b = AgentRecord(name="agent-b", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Agent B instructions")
-    session.add_all([agent_a, agent_b])
-    await session.flush()
-    
+    # Create two agents (detached — they get passed to make_deps/write_scope)
+    agent_a = await commit_and_detach_fixture_record(
+        session, AgentRecord(name="agent-a", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Agent A instructions"))
+    agent_b = await commit_and_detach_fixture_record(
+        session, AgentRecord(name="agent-b", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Agent B instructions"))
+
     # Agent A's blocks (out of order to verify position sorting, varied char_limits for limit tests)
     block_a_human = MemoryBlockRecord(agent_id=agent_a.id, label="human", content="Human info for A", description="", char_limit=500, position=1)
     block_a_persona = MemoryBlockRecord(agent_id=agent_a.id, label="persona", content="Persona for A", description="", char_limit=1000, position=0)
@@ -65,15 +65,10 @@ async def multi_tenant_agents_with_core_memory(session: AsyncSession):
     session.add_all(all_blocks)
     await session.commit()
 
-    # Refresh to get server-generated values (created_at, updated_at)
+    # Refresh blocks to get server-generated values (created_at, updated_at).
+    # Blocks stay session-attached — read-only test data, never passed to deps.
     for block in all_blocks:
         await session.refresh(block)
-    await session.refresh(agent_a)
-    await session.refresh(agent_b)
-
-    # Detach agents so write_scope's session.add() can re-attach
-    session.expunge(agent_a)
-    session.expunge(agent_b)
 
     return {
         "agent_a": agent_a,
