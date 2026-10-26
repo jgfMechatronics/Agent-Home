@@ -31,7 +31,7 @@ from agent.deps import AgentDeps
 from agent.types import AgentAppState, AgentConfig, BlockSettings
 from api.fastapi_deps import get_agent_deps
 from agent.crud import create_agent_record
-from conftest import AsyncNoOpSession, SAMPLE_AGENT_CONFIG
+from conftest import SAMPLE_AGENT_CONFIG
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError
@@ -520,15 +520,11 @@ class _MemoryBlockEndpointBase:
         self.blocks = agent_with_blocks["blocks"]
 
         async def _mock_dep():
-            mock_rw_engine = Mock()
-            mock_ro_engine = Mock()
-
-            yield AgentDeps(mock_rw_engine, mock_ro_engine, self.agent_record, bypass_factory_guard=True)
+            yield AgentDeps(app.state.rw_engine, app.state.ro_engine, self.agent_record, bypass_factory_guard=True)
 
         app.dependency_overrides[get_agent_deps] = _mock_dep
 
-        with patch(self.crud_patch_target, new_callable=AsyncMock) as mock_crud, \
-             patch("agent.deps.AsyncSession", return_value=AsyncNoOpSession()):
+        with patch(self.crud_patch_target, new_callable=AsyncMock) as mock_crud:
             setattr(self, self.crud_attr_name, mock_crud)
             yield
 

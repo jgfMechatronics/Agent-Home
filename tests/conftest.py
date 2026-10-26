@@ -442,36 +442,6 @@ def _make_mock_session() -> Mock:
     return session
 
 
-class AsyncNoOpContextManager:
-    """Generic no-op async context manager for tests — __aenter__ returns None."""
-    async def __aenter__(self):
-        return None
-    async def __aexit__(self, *args):
-        return None
-
-
-class AsyncNoOpSession(AsyncNoOpContextManager):
-    """No-op AsyncSession stand-in for tests where write_scope/read_scope sessions
-    must exist but do nothing (real DB operations mocked elsewhere).
-
-    __aenter__ returns self so `async with AsyncSession(...) as session` works.
-    """
-    async def __aenter__(self):
-        return self
-    async def commit(self):
-        pass
-    async def refresh(self, obj):
-        pass
-    async def close(self):
-        pass
-    def add(self, obj):
-        pass
-    def expunge(self, obj):
-        pass
-    def expire(self, obj, *args, **kwargs):
-        pass
-
-
 @pytest_asyncio.fixture
 async def app(test_engine) -> FastAPI:
     """Fresh app instance per test — avoids state contamination.
