@@ -10,7 +10,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from conftest import mock_run_context, SAMPLE_AGENT_CONFIG, make_deps
+from conftest import (
+    mock_run_context, SAMPLE_AGENT_CONFIG, make_deps, commit_and_detach_fixture_record
+)
 from agent.deps import AgentDeps
 from db.models import AgentRecord, MemoryBlockRecord
 
@@ -255,41 +257,35 @@ async def test_compile_updates_sys_prompt_compiled_at(agent_with_blocks_and_deps
 
 async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession, test_engine):
     """Compilation should only include blocks belonging to the target agent."""
-    agent_a = AgentRecord(
+    agent_a = await commit_and_detach_fixture_record(session, AgentRecord(
         name="agent-a",
         agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Agent A instructions",
-    )
-    agent_b = AgentRecord(
+    ))
+    agent_b = await commit_and_detach_fixture_record(session, AgentRecord(
         name="agent-b",
         agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Agent B instructions",
-    )
-    session.add_all([agent_a, agent_b])
-    await session.flush()
-    agent_a_id = agent_a.id
-    agent_b_id = agent_b.id
+    ))
 
-    block_a = MemoryBlockRecord(
-        agent_id=agent_a_id, label="a_block", description="",
-        content="A's secret content", char_limit=1000, position=0
-    )
-    block_b = MemoryBlockRecord(
-        agent_id=agent_b_id, label="b_block", description="",
-        content="B's secret content", char_limit=1000, position=0
-    )
-    session.add_all([block_a, block_b])
+    session.add_all([
+        MemoryBlockRecord(
+            agent_id=agent_a.id, label="a_block", description="",
+            content="A's secret content", char_limit=1000, position=0
+        ),
+        MemoryBlockRecord(
+            agent_id=agent_b.id, label="b_block", description="",
+            content="B's secret content", char_limit=1000, position=0
+        ),
+    ])
     await session.commit()
 
-    # Fetch fresh agent_a for deps, expunge so write_scope can attach it
-    fresh_agent_a = await session.get(AgentRecord, agent_a_id)
-    session.expunge(fresh_agent_a)
-    deps_a = make_deps(test_engine, fresh_agent_a)
-    async with deps_a.write_scope() as session:
-        await compile_system_prompt(deps_a, session)
+    deps_a = make_deps(test_engine, agent_a)
+    async with deps_a.write_scope() as write_session:
+        await compile_system_prompt(deps_a, write_session)
 
-    # Re-fetch to see compiled prompt (write_scope committed on separate session)
-    compiled_a = (await session.get(AgentRecord, agent_a_id)).compiled_system_prompt
+    # write_scope refreshes the deps record (agent_a) on exit — readable directly
+    compiled_a = agent_a.compiled_system_prompt
 
     assert "A's secret content" in compiled_a
     assert "B's secret content" not in compiled_a
