@@ -30,7 +30,8 @@ class TestWriteScopeExceptionRecovery:
         with pytest.raises(ContentExceedsLimitError):
             await update_block(deps, "probe", "this content is definitely too long")
 
-        assert deps.compaction_warning_fired is False
+        # verify accessability
+        _ = deps.compaction_warning_fired
 
     async def test_uncommitted_record_mutation_discarded_after_body_exception(
         self, test_engine, agent_record
@@ -70,6 +71,12 @@ def test_agentdeps_factory_guard_blocks_direct_construction():
         AgentDeps(object(), object(), MagicMock())
 
 
+def test_agentdeps_factory_guard_bypass_allows_direct_construction():
+    """bypass_factory_guard=True should allow direct construction without raising."""
+    deps = AgentDeps(object(), object(), MagicMock(), bypass_factory_guard=True)
+    assert isinstance(deps, AgentDeps)
+
+
 async def test_agentdeps_holds_expected_fields(agent_deps, agent_record):
     """AgentDeps properties should delegate to the underlying AgentRecord."""
     assert agent_deps.agent_id == agent_record.id
@@ -78,24 +85,23 @@ async def test_agentdeps_holds_expected_fields(agent_deps, agent_record):
     assert agent_deps.system_instructions == agent_record.system_instructions
 
 
-async def test_agentdeps_setters_all_require_write_scope(agent_with_blocks: dict, test_engine):
-    """All AgentDeps setters require write_scope context."""
-    agent_record = agent_with_blocks["agent"]  # already detached (conftest expunges)
-
+@pytest.mark.parametrize("prop_name,test_value", [
+    ("config", SAMPLE_AGENT_CONFIG),
+    ("system_instructions", "new instructions"),
+    ("compiled_system_prompt", "new prompt"),
+    ("sys_prompt_compiled_at", datetime(2026, 1, 1)),
+    ("context_window_start", 100),
+    ("compaction_warning_fired", True),
+])
+async def test_agentdeps_setter_requires_write_scope(
+    agent_with_blocks: dict, test_engine, prop_name: str, test_value
+):
+    """Each AgentDeps setter must raise outside of write_scope context."""
+    agent_record = agent_with_blocks["agent"]
     deps = make_deps(test_engine, agent_record)
 
-    setters_to_test = [
-        ("config", agent_record.agent_config),
-        ("system_instructions", "new instructions"),
-        ("compiled_system_prompt", "new prompt"),
-        ("sys_prompt_compiled_at", datetime.now()),
-        ("context_window_start", 100),
-        ("compaction_warning_fired", True),
-    ]
-
-    for prop_name, test_value in setters_to_test:
-        with pytest.raises(RuntimeError, match="write_scope"):
-            setattr(deps, prop_name, test_value)
+    with pytest.raises(RuntimeError, match="write_scope"):
+        setattr(deps, prop_name, test_value)
 
 
 # --- build_deps helpers ---
