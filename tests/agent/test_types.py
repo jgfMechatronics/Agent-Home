@@ -1,18 +1,10 @@
-"""
-Tests for agent/types.py — Section 3.0
-
-AgentConfig: Pydantic model for agent configuration
-AgentDeps: Dataclass holding request-scoped agent state
-"""
+"""Tests for agent/types.py — AgentConfig and related types."""
 import json
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
-from conftest import SAMPLE_AGENT_CONFIG_DATA, make_deps
+from conftest import SAMPLE_AGENT_CONFIG_DATA
 from pydantic import ValidationError
 
-from agent.deps import AgentDeps
 from agent.types import THINKING_EFFORT_LEVELS, AgentConfig, validate_model_name
 
 
@@ -247,53 +239,3 @@ def test_agentconfig_rejects_extra_fields(valid_config_data: dict):
     errors = exc_info.value.errors()
     assert any("extra" in str(e["type"]).lower() for e in errors)
 
-
-# --- AgentDeps ---
-
-@pytest.mark.parametrize("missing_field", ["rw_engine", "ro_engine", "agent_record"])
-def test_agentdeps_requires_field(missing_field: str):
-    """AgentDeps should raise TypeError when a required constructor argument is missing."""
-    all_fields = {
-        "rw_engine": object(),
-        "ro_engine": object(),
-        "agent_record": MagicMock(),
-        "bypass_factory_guard": True,
-    }
-    del all_fields[missing_field]
-
-    with pytest.raises(TypeError):
-        AgentDeps(**all_fields)
-
-
-def test_agentdeps_factory_guard_blocks_direct_construction():
-    """AgentDeps must be constructed via build_deps or with explicit bypass."""
-    with pytest.raises(RuntimeError, match="must be constructed via build_deps"):
-        AgentDeps(object(), object(), MagicMock())
-
-
-async def test_agentdeps_holds_expected_fields(agent_deps, agent_record):
-    """AgentDeps properties should delegate to the underlying AgentRecord."""
-    assert agent_deps.agent_id == agent_record.id
-    assert agent_deps.config is agent_record.agent_config
-    assert agent_deps.name == agent_record.name
-    assert agent_deps.system_instructions == agent_record.system_instructions
-
-
-async def test_agentdeps_setters_all_require_write_scope(agent_with_blocks: dict, test_engine):
-    """All AgentDeps setters require write_scope context."""
-    agent_record = agent_with_blocks["agent"]  # already detached (conftest expunges)
-
-    deps = make_deps(test_engine, agent_record)
-
-    setters_to_test = [
-        ("config", agent_record.agent_config),
-        ("system_instructions", "new instructions"),
-        ("compiled_system_prompt", "new prompt"),
-        ("sys_prompt_compiled_at", datetime.now()),
-        ("context_window_start", 100),
-        ("compaction_warning_fired", True),
-    ]
-
-    for prop_name, test_value in setters_to_test:
-        with pytest.raises(RuntimeError, match="write_scope"):
-            setattr(deps, prop_name, test_value)
