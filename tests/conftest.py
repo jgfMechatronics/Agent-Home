@@ -24,7 +24,7 @@ from db.connection import ReadOnlyEngine, create_readonly_sqlite_engine, create_
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agent.deps import AgentDeps
-from agent.types import AgentConfig
+from agent.types import AgentAppState, AgentConfig
 from agent.broadcast_streaming import BroadcastHub
 from pydantic import ConfigDict
 from api.app import _create_app
@@ -324,6 +324,12 @@ async def commit_and_detach_fixture_record(session: AsyncSession, record):
     await session.refresh(record)
     session.expunge(record)
     return record
+
+
+@pytest.fixture
+def agent_app_state_reg() -> dict[str, AgentAppState]:
+    """Fresh agent state registry for each test. Must be an empty dict."""
+    return {}
 
 
 @pytest_asyncio.fixture
