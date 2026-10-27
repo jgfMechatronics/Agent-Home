@@ -20,6 +20,7 @@ from agent.compaction import clear_context, compact, is_compaction_needed
 from agent.deps import AgentDeps
 from agent.types import AgentConfig
 from conftest import (
+    commit_and_detach_fixture_record,
     make_deps,
     SAMPLE_AGENT_CONFIG,
     make_alternating_messages,
@@ -82,10 +83,7 @@ async def _make_agent_with_messages(
         system_instructions="Test agent",
         compiled_system_prompt="x" * system_prompt_chars,
     )
-    session.add(agent)
-    await session.commit()
-    await session.refresh(agent)
-    session.expunge(agent)
+    await commit_and_detach_fixture_record(session, agent)
 
     deps = make_deps(test_engine, agent)
     pydantic_msgs = make_alternating_messages(message_count)
