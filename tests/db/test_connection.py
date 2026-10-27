@@ -110,35 +110,10 @@ async def test_get_session_yields_async_session(ro_engine):
         assert isinstance(session, AsyncSession)
 
 
-async def test_get_session_bound_to_provided_engine(tmp_path):
+async def test_get_session_bound_to_provided_engine(ro_engine):
     """Sessions are bound to the engine they were created from, not a global engine."""
-    # Init two DBs with different data
-    for name, agent_name in [("a.db", "agent-a"), ("b.db", None)]:
-        rw = create_sqlite_engine(str(tmp_path / name))
-        await init_db(rw)
-        if agent_name:
-            async with rw.begin() as conn:
-                await conn.execute(
-                    AgentRecord.__table__.insert().values(
-                        id="test-id", name=agent_name, agent_config=SAMPLE_AGENT_CONFIG,
-                        system_instructions="test", compiled_system_prompt="",
-                    )
-                )
-        await rw.dispose()
-
-    ro_a = create_readonly_sqlite_engine(str(tmp_path / "a.db"))
-    ro_b = create_readonly_sqlite_engine(str(tmp_path / "b.db"))
-    try:
-        async with get_session(ro_a) as session:
-            result = await session.execute(text("SELECT COUNT(*) FROM agent"))
-            assert result.scalar() == 1
-
-        async with get_session(ro_b) as session:
-            result = await session.execute(text("SELECT COUNT(*) FROM agent"))
-            assert result.scalar() == 0
-    finally:
-        await ro_a.dispose()
-        await ro_b.dispose()
+    async with get_session(ro_engine) as session:
+        assert session.bind is ro_engine
 
 
 async def test_get_session_closes_on_context_exit(ro_engine):
