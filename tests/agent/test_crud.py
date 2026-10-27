@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agent.crud import create_agent_record, get_agent_record, get_agent_record_by_name, replace_agent_config, replace_system_instructions
 from agent.deps import AgentDeps
 from conftest import SAMPLE_AGENT_CONFIG
+from db.models import AgentRecord
 from messages.messages import load_messages
 
 
@@ -72,7 +73,11 @@ class TestGetAgentRecordFunctions:
 
     async def test_returns_record_for_known_key(self, session: AsyncSession, agent_record, get_fn, key_extractor, unknown_key):
         result = await get_fn(session, key_extractor(agent_record))
+        assert isinstance(result, AgentRecord)
         assert result.id == agent_record.id
+        assert result.name == agent_record.name
+        assert result.agent_config == agent_record.agent_config
+        assert result.system_instructions == agent_record.system_instructions
 
     async def test_returns_none_for_unknown_key(self, session: AsyncSession, get_fn, key_extractor, unknown_key):
         result = await get_fn(session, unknown_key)
