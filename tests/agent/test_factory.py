@@ -64,11 +64,6 @@ from conftest import (
 from db.models import AgentRecord
 
 
-# --- Constants ---
-
-# --- Helpers ---
-
-
 # --- Fixtures ---
 
 @pytest.fixture(autouse=True)
@@ -81,7 +76,6 @@ def _fake_provider_keys(fake_provider_keys):
 def agent_factory(agent_record: AgentRecord, agent_app_state_reg: dict, test_engine) -> AgentFactory:
     """Per-agent, per-request AgentFactory with agent_id, agent_app_state_reg, and engines bound."""
     return AgentFactory(agent_record.id, agent_app_state_reg, test_engine, make_ro_engine(test_engine))
-
 
 
 # --- AgentFactory._get_or_create_agent_app_state tests ---
