@@ -34,7 +34,7 @@ from agent.crud import create_agent_record
 from conftest import SAMPLE_AGENT_CONFIG, make_deps
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
-from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError
+from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError, MemoryBlock
 
 
 # --- Test Classes ---
@@ -533,7 +533,6 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
 
     async def test_calls_create_block_and_returns_201(self, client: AsyncClient):
         """Successful creation calls create_block and returns 201 with block data."""
-        from memory.block_crud import MemoryBlock
         mock_block = MemoryBlock(
             id=str(uuid4()), agent_id="dummy", position=0,
             created_at=self._MOCK_UPDATED_AT, updated_at=self._MOCK_UPDATED_AT,
@@ -548,11 +547,7 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
 
         assert response.status_code == 201
         self.mock_create_block.assert_called_once()
-        assert MemoryBlockResponse.model_validate(response.json()) == MemoryBlockResponse(
-            label=mock_block.label, description=mock_block.description,
-            content=mock_block.content, char_limit=mock_block.char_limit,
-            updated_at=mock_block.updated_at,
-        )
+        assert MemoryBlock.model_validate(response.json()) == mock_block
 
     # 404 tested via parametrized TestNotFound
     # 422 for Duplicate block handled by app level handler + test
