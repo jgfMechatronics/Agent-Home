@@ -20,7 +20,7 @@ import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agent.factory import AgentFactory
 from agent.deps import AgentDeps
@@ -53,7 +53,7 @@ async def _build_test_client(
     route,
     session: AsyncSession,
     agent_app_state_reg: dict,
-    test_engine=None,
+    test_engine: AsyncEngine,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Minimal FastAPI test app with session and agent state registry overridden, as an AsyncClient.
 
@@ -65,9 +65,8 @@ async def _build_test_client(
     """
     app = FastAPI()
     app.get("/test/{agent_id}")(route)
-    if test_engine is not None:
-        app.state.rw_engine = test_engine
-        app.state.ro_engine = test_engine
+    app.state.rw_engine = test_engine
+    app.state.ro_engine = test_engine
 
     async def _override_session():
         yield session
