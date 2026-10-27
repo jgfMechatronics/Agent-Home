@@ -5,7 +5,6 @@ Tests the tool registry, lookup, and memory editing tools (memory_replace, memor
 import pytest
 import pytest_asyncio
 from pydantic_ai.exceptions import ModelRetry
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.tools import (
@@ -16,7 +15,6 @@ from agent.tools import (
     memory_read,
     memory_replace,
 )
-from agent.deps import AgentDeps
 from conftest import SAMPLE_AGENT_CONFIG, mock_run_context, make_deps
 from db.models import AgentRecord, MemoryBlockRecord
 
