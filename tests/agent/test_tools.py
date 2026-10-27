@@ -15,9 +15,9 @@ from agent.tools import (
     memory_read,
     memory_replace,
 )
-from conftest import SAMPLE_AGENT_CONFIG, mock_run_context, make_deps
+from conftest import SAMPLE_AGENT_CONFIG, commit_and_detach_fixture_record, mock_run_context, make_deps
 from db.models import AgentRecord, MemoryBlockRecord
-
+from memory.block_crud import get_block
 
 # --- Fixtures ---
 
@@ -42,8 +42,7 @@ async def _make_agent_with_block(
         agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Test agent",
     )
-    session.add(agent)
-    await session.flush()
+    await commit_and_detach_fixture_record(session, agent)
 
     block = MemoryBlockRecord(
         agent_id=agent.id,
@@ -53,12 +52,7 @@ async def _make_agent_with_block(
         char_limit=char_limit,
         position=0,
     )
-    session.add(block)
-    await session.commit()
-    await session.refresh(agent)
-    await session.refresh(block)
-    session.expunge(agent)  # Detach so write_scope's session.add() can re-attach
-    session.expunge(block)  # Same — fixtures hand out detached records; mutate via merge + commit
+    await commit_and_detach_fixture_record(session, block)
 
     deps = make_deps(test_engine, agent)
     ctx = mock_run_context(deps)
@@ -584,9 +578,8 @@ class TestMemoryInsertLineBoundary(UsesEditableBlock):
         # Fetch fresh content using deps's read_scope to get a clean read
         deps = self.ctx.deps
         async with deps.read_scope() as session:
-            from memory.block_crud import get_block
             fresh_block = await get_block(session, deps.agent_id, self.block.label)
-            return fresh_block.content if fresh_block else self.block.content
+            return fresh_block.content
 
     @pytest.mark.parametrize(
         "block_content, content, after, expected",
