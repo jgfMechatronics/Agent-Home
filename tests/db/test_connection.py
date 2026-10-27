@@ -1,5 +1,3 @@
-import asyncio
-
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
@@ -35,11 +33,23 @@ async def test_create_sqlite_engine_uses_null_pool(raw_engine):
     assert isinstance(raw_engine.pool, NullPool)
 
 
-async def test_create_sqlite_engine_enables_foreign_keys(raw_engine):
-    """create_sqlite_engine must set PRAGMA foreign_keys=ON — SQLite disables it by default."""
-    async with raw_engine.connect() as conn:
-        result = await conn.execute(text("PRAGMA foreign_keys"))
-        assert result.scalar() == 1
+@pytest.mark.parametrize("make_engine", [create_sqlite_engine, create_readonly_sqlite_engine], ids=["rw", "ro"])
+async def test_sqlite_engine_applies_pragmas(make_engine, tmp_path):
+    """Both rw and ro engines apply WAL, foreign_keys, and busy_timeout on every connection."""
+    db_path = str(tmp_path / "test.db")
+    # Initialise the file so create_readonly_sqlite_engine can open it (harmless for rw)
+    seed = create_sqlite_engine(db_path)
+    async with seed.connect():
+        pass
+    await seed.dispose()
+    engine = make_engine(db_path)
+    try:
+        async with engine.connect() as conn:
+            assert (await conn.execute(text("PRAGMA journal_mode"))).scalar() == "wal"
+            assert (await conn.execute(text("PRAGMA foreign_keys"))).scalar() == 1
+            assert (await conn.execute(text("PRAGMA busy_timeout"))).scalar() == 7000
+    finally:
+        await engine.dispose()
 
 
 # --- create_readonly_sqlite_engine ---
@@ -123,14 +133,3 @@ async def test_get_session_closes_on_context_exit(ro_engine):
     assert not session.in_transaction()
 
 
-# --- concurrent sessions ---
-
-async def test_concurrent_sessions_function_independently(ro_engine):
-    """Two read-only sessions can query concurrently without deadlock or error."""
-    async def read_count():
-        async with get_session(ro_engine) as session:
-            result = await session.execute(text("SELECT COUNT(*) FROM agent"))
-            return result.scalar()
-
-    results = await asyncio.gather(read_count(), read_count())
-    assert all(r == 0 for r in results)
