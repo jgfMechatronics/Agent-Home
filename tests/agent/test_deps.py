@@ -133,34 +133,75 @@ def agent_app_state(agent_record: AgentRecord, agent_app_state_reg: dict) -> Age
 # --- build_deps tests ---
 
 @pytest.mark.asyncio
-async def test_build_deps_yields_deps_with_expected_fields(
-    agent_record: AgentRecord,
-    agent_app_state: AgentAppState,
-    test_engine,
-):
-    """build_deps should yield AgentDeps with agent_id and config populated."""
-    async with build_deps(agent_record.id, agent_app_state, test_engine, make_ro_engine(test_engine)) as deps:
-        assert isinstance(deps, AgentDeps)
-        assert deps.agent_id == agent_record.id
-        assert deps.config == agent_record.agent_config
-        assert deps.name == agent_record.name
+class TestBuildDeps:
+    """Standard-args build_deps tests (single agent, agent_record + agent_app_state fixtures)."""
 
+    @pytest.fixture(autouse=True)
+    def _setup(self, agent_record: AgentRecord, agent_app_state: AgentAppState, test_engine):
+        self.agent_record = agent_record
+        self.agent_app_state = agent_app_state
+        self.test_engine = test_engine
 
-@pytest.mark.asyncio
-async def test_build_deps_creates_acquires_and_releases_lock(
-    agent_record: AgentRecord,
-    agent_app_state: AgentAppState,
-    test_engine,
-):
-    """build_deps should acquire lock before yield, release after exit."""
-    lock = agent_app_state.lock
-    assert not lock.locked()
+    def _deps(self, **kwargs):
+        """build_deps with this test's standard args."""
+        return build_deps(
+            self.agent_record.id, self.agent_app_state,
+            self.test_engine, make_ro_engine(self.test_engine),
+            **kwargs,
+        )
 
-    async with build_deps(agent_record.id, agent_app_state, test_engine, make_ro_engine(test_engine)) as deps:
-        assert lock.locked()
+    async def test_yields_deps_with_expected_fields(self):
+        """build_deps should yield AgentDeps with agent_id and config populated."""
+        async with self._deps() as deps:
+            assert isinstance(deps, AgentDeps)
+            assert deps.agent_id == self.agent_record.id
+            assert deps.config == self.agent_record.agent_config
+            assert deps.name == self.agent_record.name
 
-    # After exiting, lock should be released
-    assert not lock.locked()
+    async def test_acquires_and_releases_lock(self):
+        """build_deps should acquire lock before yield, release after exit."""
+        lock = self.agent_app_state.lock
+        assert not lock.locked()
+
+        async with self._deps():
+            assert lock.locked()
+
+        assert not lock.locked()
+
+    async def test_concurrent_same_agent_blocks(self):
+        """Second concurrent call on same agent_id should block until first exits."""
+        execution_order = []
+
+        async def first_caller():
+            async with self._deps():
+                execution_order.append("first_entered")
+                await asyncio.sleep(0.05)
+                execution_order.append("first_exiting")
+
+        async def second_caller():
+            await asyncio.sleep(0.01)
+            async with self._deps():
+                execution_order.append("second_entered")
+
+        await asyncio.gather(first_caller(), second_caller())
+        assert execution_order == ["first_entered", "first_exiting", "second_entered"]
+
+    @pytest.mark.parametrize("timeout,min_elapsed,max_elapsed", [
+        (0.01, 0.0, 0.5),   # fast — just assert it doesn't block
+        (1.0,  0.8, 2.5),   # roughly a second
+    ])
+    async def test_timeout_raises_agent_locked_error(self, timeout, min_elapsed, max_elapsed):
+        """build_deps raises AgentLockedError after approximately the requested timeout."""
+        await self.agent_app_state.lock.acquire()
+
+        start = time.monotonic()
+        with pytest.raises(AgentLockedError):
+            async with self._deps(timeout=timeout):
+                pass
+        elapsed = time.monotonic() - start
+
+        assert elapsed >= min_elapsed, f"Timed out too fast: {elapsed:.3f}s < {min_elapsed}s"
+        assert elapsed < max_elapsed, f"Timed out too slow: {elapsed:.3f}s >= {max_elapsed}s"
 
 
 class TestBuildDepsLockAndCancelBehavior:
@@ -235,34 +276,6 @@ async def test_build_deps_raises_releases_lock_and_clears_cancel_on_fetch_failur
     assert not cancel_requested.is_set()
 
 
-# --- build_deps concurrency tests ---
-
-@pytest.mark.asyncio
-async def test_build_deps_concurrent_same_agent_blocks(
-    agent_record: AgentRecord,
-    agent_app_state: AgentAppState,
-    test_engine,
-):
-    """Second concurrent call on same agent_id should block until first exits."""
-    execution_order = []
-
-    async def first_caller():
-        async with build_deps(agent_record.id, agent_app_state, test_engine, make_ro_engine(test_engine)):
-            execution_order.append("first_entered")
-            await asyncio.sleep(0.05)  # Hold lock briefly
-            execution_order.append("first_exiting")
-
-    async def second_caller():
-        await asyncio.sleep(0.01)  # Ensure first_caller enters first
-        async with build_deps(agent_record.id, agent_app_state, test_engine, make_ro_engine(test_engine)):
-            execution_order.append("second_entered")
-
-    await asyncio.gather(first_caller(), second_caller())
-
-    # Second should only enter after first exits
-    assert execution_order == ["first_entered", "first_exiting", "second_entered"]
-
-
 @pytest.mark.asyncio
 async def test_build_deps_concurrent_different_agents_no_block(
     agent_app_state_reg: dict,
@@ -311,31 +324,5 @@ async def test_build_deps_concurrent_different_agents_no_block(
     # B should enter while A is still holding its lock (different agents, no blocking)
     assert execution_order.index("b_entered") < execution_order.index("a_exiting")
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("timeout,min_elapsed,max_elapsed", [
-    (0.01, 0.0, 0.5),   # fast — just assert it doesn't block
-    (1.0,  0.8, 2.5),   # roughly a second
-])
-async def test_build_deps_timeout_raises_agent_locked_error(
-    agent_app_state: AgentAppState,
-    agent_record: AgentRecord,
-    test_engine,
-    timeout: float,
-    min_elapsed: float,
-    max_elapsed: float,
-):
-    """build_deps raises AgentLockedError after approximately the requested timeout."""
-    # Hold the lock so the second acquire times out
-    await agent_app_state.lock.acquire()
-
-    start = time.monotonic()
-    with pytest.raises(AgentLockedError):
-        async with build_deps(agent_record.id, agent_app_state, test_engine, make_ro_engine(test_engine), timeout=timeout):
-            pass  # should not reach here
-    elapsed = time.monotonic() - start
-
-    assert elapsed >= min_elapsed, f"Timed out too fast: {elapsed:.3f}s < {min_elapsed}s"
-    assert elapsed < max_elapsed, f"Timed out too slow: {elapsed:.3f}s >= {max_elapsed}s"
 
 # --- end build_deps tests ---
