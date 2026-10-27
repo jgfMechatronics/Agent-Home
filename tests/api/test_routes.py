@@ -56,17 +56,11 @@ class TestCreateAgent:
 
     @pytest.fixture(autouse=True)
     def mock_create_agent_deps(self):
-        mock_session = AsyncMock()
-        mock_session_cm = AsyncMock()
-        mock_session_cm.__aenter__.return_value = mock_session
-        mock_session_cm.__aexit__.return_value = None
-
         with patch("api.routes.create_agent_record", new_callable=AsyncMock) as mock_create, \
              patch("api.routes.compile_system_prompt", new_callable=AsyncMock) as mock_compile, \
-             patch("api.routes.AsyncSession", return_value=mock_session_cm):
+             patch("api.routes.AsyncSession", return_value=AsyncMock()):
             self.mock_create_agent_record = mock_create
             self.mock_compile_system_prompt = mock_compile
-            self.mock_session = mock_session
             yield
 
     async def test_creates_agent_and_returns_metadata(self, client: AsyncClient) -> None:
@@ -114,13 +108,6 @@ class TestCreateAgent:
 
 class TestCreateAgentNameUniqueness:
     """POST /agents — duplicate name handling."""
-
-    @pytest.fixture(autouse=True)
-    def _mock_compile(self):
-        """Mock compile_system_prompt — this test is about name uniqueness, not prompt compilation.
-        Also avoids the session conflict between route-managed session and write_scope."""
-        with patch("api.routes.compile_system_prompt", new_callable=AsyncMock):
-            yield
 
     async def test_returns_409_for_duplicate_name(self, client: AsyncClient):
         """Creating a second agent with an already-used name returns 409."""
