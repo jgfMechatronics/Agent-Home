@@ -740,7 +740,9 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         event_types = [e["event"] for e in events]
         assert "Error" in event_types, "Expected Error SSE after mid-run exception"
 
-        assert self.mock_persist_messages.call_count >= 1
+        assert self.mock_persist_messages.call_count >= 1, (
+            "persist_messages must be called even when the run crashes mid-stream"
+        )
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
@@ -1059,7 +1061,11 @@ async def test_rendezvous_tool_does_not_start_before_event_consumed():
             await asyncio.wait_for(test_agent.tool_entered.wait(), timeout=2) # Tool should execute now that we popped the ToolCallEvent off
             test_agent.resume_tool_exec.set()
 
-            assert pre_tool_event_seen, "No events appeared before ToolCallEvent"
+            assert pre_tool_event_seen, (
+                "No events appeared before ToolCallEvent — "
+                "the rendezvous invariant was never exercised. "
+                "Check whether pydantic-ai changed its event ordering."
+            )
 
             # ToolCallEvent consumed: tool is now allowed to start.
             # Drain remaining events to allow clean context-manager teardown.
@@ -1083,7 +1089,7 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
     def _setup(self, agent_record, test_engine):
         self.test_agent = FunctionModelTestAgent()
         # Extra COMPLETION_TEXT step for compaction resume (pydantic-ai calls model
-        # to process tool result, then resume needs another step)
+        # to process tool result, then resume needs another step) TODO: Remove when refactor to elim wasteful call complete (I think)
         self.test_agent.set_steps(FunctionModelTestAgent.DEFAULT_STEPS + [FunctionModelTestAgent.COMPLETION_TEXT])
         self.agent_app_state = AgentAppState()
         self._deps = make_deps(test_engine, agent_record)
