@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import object_session
 
 from agent.types import AgentAppState, AgentConfig, AgentLockedError, AgentNotFoundError
-from db.connection import ReadOnlyEngine, ReadOnlySession
+from db.connection import ReadOnlyEngine, ReadOnlySession, get_session
 from db.models import AgentRecord
 
 LOCK_TIMEOUT_SECONDS: int = 60
@@ -123,8 +123,8 @@ class AgentDeps:
 
         Not needed for record property reads — the detached record is always readable.
         """
-        async with AsyncSession(self._ro_engine) as session:
-            yield ReadOnlySession(session)
+        async with get_session(self._ro_engine) as session:
+            yield session
 
     @property
     def agent_id(self) -> str:
