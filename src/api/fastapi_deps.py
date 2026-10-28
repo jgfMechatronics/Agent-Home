@@ -9,14 +9,13 @@ by app-level exception handlers registered in api/app.py — not caught here.
 from typing import AsyncIterator
 
 from fastapi import Depends, Request
+from pydantic_ai import Agent
 
 from agent.deps import AgentDeps, build_deps
 from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST, get_or_create_agent_app_state
 from agent.types import AgentAppState
 from db.connection import ReadOnlyEngine, ReadOnlySession, get_session
 from agent.broadcast_streaming import BroadcastHub
-
-from pydantic_ai import Agent
 
 
 def get_agent_app_state_reg(request: Request) -> dict[str, AgentAppState]:
