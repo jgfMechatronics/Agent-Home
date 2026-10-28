@@ -15,11 +15,12 @@ attributes are never expired — they stay populated on the detached object. The
 hazard the rule guards against is any access that triggers a lazy load (expired
 attributes, unloaded relationships), which needs a live session and fails outside
 one (DetachedInstanceError, or MissingGreenlet in async context).
+TODO: Consider making remaining read ops also return DTO
 """
 from collections.abc import Sequence
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +37,8 @@ class MemoryBlock(BaseModel):
 
     Built inside write_scope after flush (which populates Python-side defaults).
     """
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     agent_id: str
     label: str
@@ -45,22 +48,6 @@ class MemoryBlock(BaseModel):
     position: int
     created_at: datetime
     updated_at: datetime
-
-    @classmethod
-    def from_record(cls, block: MemoryBlockRecord) -> "MemoryBlock":
-        """Build from ORM record. Must be called inside session scope after flush —
-        attributes must be loaded (not expired)."""
-        return cls(
-            id=block.id,
-            agent_id=block.agent_id,
-            label=block.label,
-            description=block.description,
-            content=block.content,
-            char_limit=block.char_limit,
-            position=block.position,
-            created_at=block.created_at,
-            updated_at=block.updated_at,
-        )
 
 
 # --- Exceptions ---
@@ -144,7 +131,7 @@ async def update_block(
 
         block.content = content
         await session.flush()
-        return MemoryBlock.from_record(block)
+        return MemoryBlock.model_validate(block)
 
 
 async def create_block(
@@ -181,7 +168,7 @@ async def create_block(
         )
         session.add(block)
         await session.flush()
-        return MemoryBlock.from_record(block)
+        return MemoryBlock.model_validate(block)
 
 
 async def delete_block(deps: AgentDeps, label: str) -> None:
@@ -273,4 +260,4 @@ async def update_block_settings(
                 ) from e
             raise  # Re-raise unexpected IntegrityErrors
 
-        return MemoryBlock.from_record(block)
+        return MemoryBlock.model_validate(block)
