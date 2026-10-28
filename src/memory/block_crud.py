@@ -17,8 +17,11 @@ attributes, unloaded relationships), which needs a live session and fails outsid
 one (DetachedInstanceError, or MissingGreenlet in async context).
 TODO: Consider making remaining read ops also return DTO
 """
+from __future__ import annotations
+
 from collections.abc import Sequence
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
@@ -27,7 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.connection import ReadOnlySession
 
-from agent.deps import AgentDeps
+if TYPE_CHECKING:
+    from agent.deps import AgentDeps
 from agent.types import BlockSettings
 from db.models import MemoryBlockRecord
 

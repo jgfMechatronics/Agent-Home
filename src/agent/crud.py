@@ -1,12 +1,17 @@
 """
 Agent CRUD operations
 """
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.connection import ReadOnlySession
 
-from agent.deps import AgentDeps
+if TYPE_CHECKING:
+    from agent.deps import AgentDeps
 from agent.types import AgentConfig
 from db.models import AgentRecord
 from memory.system_prompt_compilation import compile_system_prompt

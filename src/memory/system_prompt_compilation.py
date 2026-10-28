@@ -5,11 +5,15 @@ compile_system_prompt(deps, session) — builds prompt from blocks, stores in ag
 get_system_prompt(ctx) — returns cached prompt for Pydantic AI instructions param
 TODO: More instances of accessing db directly rather than going through the agent_record on deps.
 """
+from __future__ import annotations
+
 from datetime import datetime, UTC
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.deps import AgentDeps
+if TYPE_CHECKING:
+    from agent.deps import AgentDeps
 from db.models import MemoryBlockRecord
 from db.connection import ReadOnlySession
 from memory.block_crud import get_blocks
@@ -59,20 +63,14 @@ async def compile_system_prompt(deps: AgentDeps, session: AsyncSession) -> None:
     deps.sys_prompt_compiled_at = datetime.now(UTC)
 
 
-async def get_system_prompt(ctx_or_deps : RunContext[AgentDeps] | AgentDeps) -> str:
+async def get_system_prompt(ctx: RunContext[AgentDeps]) -> str:
     """
     Return cached compiled_system_prompt for Pydantic AI instructions param.
-    
-    - Extracts agent from ctx.deps OR from deps depending on what is provided.
-      Needs to be able to accept ctx so pydantic AI can call it
+
+    Registered as the pydantic-ai instructions callback — always called with RunContext.
+    For direct access, use deps.compiled_system_prompt instead.
+
     - Returns agent.compiled_system_prompt (empty string if NULL/empty)
     - Does NOT recompile — that's deferred compilation
     """
-    if isinstance(ctx_or_deps, RunContext):
-        deps = ctx_or_deps.deps
-    elif isinstance(ctx_or_deps, AgentDeps):
-        deps = ctx_or_deps
-    else:
-        raise TypeError("ctx_or_deps must be of type RunContext[AgentDeps] or AgentDeps")
-
-    return deps.compiled_system_prompt or ""
+    return ctx.deps.compiled_system_prompt or ""
