@@ -160,6 +160,7 @@ async def memory_replace(
         raise ModelRetry("old_string cannot be empty")
     
     async with deps.read_scope() as session:
+        # TODO: once get_block returns DTO, this read_scope can be greatly shrunk
         block = await get_block(session, deps.agent_id, label)
         if block is None:
             raise ModelRetry(f"block '{label}' not found")
