@@ -29,11 +29,10 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.connection import ReadOnlySession
-
 from agent.deps import AgentDeps
 from agent.types import AgentConfig
 from db.models import AgentConfigSnapshot, BaseSnapshot, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
+from db.connection import ReadOnlySession
 
 if TYPE_CHECKING:
     from pydantic_ai.toolsets import AbstractToolset
