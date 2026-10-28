@@ -232,13 +232,12 @@ async def create_agent(
             await compile_system_prompt(deps, session)
             await session.commit()
             await session.refresh(record)
-            session.expunge(record)
+            return AgentMetadataResponse.from_record(record)
         except IntegrityError as e:
             if "UNIQUE constraint failed: agent.name" in str(e.orig):
                 # SQLite-specific string check. This is brittle but worst case user just gets a less helpful but still helpful error msg
                 raise HTTPException(status_code=409, detail=f"Agent name already in use: {body.name!r}")
             raise
-    return AgentMetadataResponse.from_record(record)
 
 
 @router.get("/{agent_id}/system-instructions")
