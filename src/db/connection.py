@@ -16,7 +16,7 @@ ReadOnlySession = NewType("ReadOnlySession", AsyncSession)
 intent in function signatures and lets type checkers catch passing a rw session where
 read-only is expected. Yielded by AgentDeps.read_scope() and get_session()."""
 
-_DB_BUSY_TIMEOUT_MS = 7000
+_DB_BUSY_TIMEOUT_MS = 5000
 
 
 def _configure_sqlite_conn(dbapi_conn, _) -> None:

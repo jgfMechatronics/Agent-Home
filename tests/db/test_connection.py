@@ -47,7 +47,7 @@ async def test_sqlite_engine_applies_pragmas(make_engine, tmp_path):
         async with engine.connect() as conn:
             assert (await conn.execute(text("PRAGMA journal_mode"))).scalar() == "wal"
             assert (await conn.execute(text("PRAGMA foreign_keys"))).scalar() == 1
-            assert (await conn.execute(text("PRAGMA busy_timeout"))).scalar() == 7000
+            assert (await conn.execute(text("PRAGMA busy_timeout"))).scalar() == 5000
     finally:
         await engine.dispose()
 
