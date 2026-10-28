@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import object_session
 
 from agent.types import AgentAppState, AgentConfig, AgentLockedError, AgentNotFoundError
+from agent.crud import get_agent_record
 from db.connection import ReadOnlyEngine, ReadOnlySession, get_session
 from db.models import AgentRecord
 
@@ -25,15 +26,15 @@ Not importable by convention — only this module should use it."""
 
 class AgentDeps:
     """
-    Dependency bundle for agent operations. Outside tests, should only be constructed by build_deps.
-    This enforces the connection between AgentDeps and the lock that build_deps holds,
-    making it so deps proves caller holds the per-agent lock.
+    Dependency bundle for stateful agents. When constructed without bypass_factory_guard=True,
+    agent is write locked for anyone who doesn't hold the single deps instance associated with said
+    agent. 
 
     Construction is guarded: callers must either pass the private _deps_token (from
     build_deps) or explicitly pass bypass_factory_guard=True (for bootstrap cases like
     create_agent_record, and tests).
 
-    _agent_record is private by convention — access via properties.
+    _agent_record intended to be accessed via properties.
 
     The record is detached from any session between write operations. Property reads
     work on the detached record (simple columns, no lazy loading needed). Property
@@ -42,19 +43,21 @@ class AgentDeps:
     Session lifecycle is fully internal:
     - write_scope(): re-attaches record, yields session for DB work, commits + refreshes
       + detaches on exit. All record mutations must happen inside a write_scope.
+      Mutations to _agent_record must be done through setters inside write_scope.
     - read_scope(): yields a read-only session for DB reads (blocks, messages, etc.).
       Record properties do NOT require a read_scope — the detached record is always
       readable (the agent lock guarantees no concurrent writes).
 
     TODO: Add a test that programmatically iterates all property setters on this class
     and verifies each one calls _require_write_scope (not a hardcoded list).
+    (see test_agentdeps_setter_requires_write_scope, needs update)
     """
 
     def __init__(
         self,
         rw_engine: AsyncEngine,
         ro_engine: ReadOnlyEngine,
-        agent_record: "AgentRecord",
+        agent_record: AgentRecord,
         *,
         _token: object | None = None,
         bypass_factory_guard: bool = False,
@@ -91,7 +94,8 @@ class AgentDeps:
         Usage:
             async with deps.write_scope() as session:
                 deps.compiled_system_prompt = new_value
-                await session.execute(...)  # other DB work if needed
+                await session.execute(...)  # other DB work if needed.
+                                            # Can discard "session" if only using deps setters
         """
         async with AsyncSession(self._rw_engine) as session:
             session.add(self._agent_record)
@@ -209,11 +213,10 @@ async def build_deps(
         raise AgentLockedError(f"Agent {agent_id!r} did not become available within {timeout}s")
 
     try:
-        async with AsyncSession(ro_engine) as session:
-            agent_record = await session.get(AgentRecord, agent_id)
-            if agent_record is None:
-                raise AgentNotFoundError(f"Agent {agent_id!r} not found")
-            session.expunge(agent_record)
+        async with get_session(ro_engine) as session:
+            agent_record = await get_agent_record(session, agent_id)
+        if agent_record is None:
+            raise AgentNotFoundError(f"Agent {agent_id!r} not found")
 
         deps = AgentDeps(rw_engine, ro_engine, agent_record, _token=_deps_token)
         yield deps
