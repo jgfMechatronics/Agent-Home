@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.deps import AgentDeps
 from db.models import MemoryBlockRecord
+from db.connection import ReadOnlySession
 from memory.block_crud import get_blocks
 from pydantic_ai import RunContext
 
@@ -41,9 +42,11 @@ async def compile_system_prompt(deps: AgentDeps, session: AsyncSession) -> None:
     - Updates agent.sys_prompt_compiled_at
 
     Caller is responsible for providing a session (typically from write_scope) —
-    the signature makes this explicit and ensures reads and writes share a transaction.
+    the signature makes this explicit and ensures reads and writes share a transaction
+    and that any uncommitted changes in caller's session are reflected here
     """
-    blocks = await get_blocks(session, deps.agent_id)
+    # Cast to ReadOnlySession even though its not, only way to use caller's session is violate RO rule here.
+    blocks = await get_blocks(ReadOnlySession(session), deps.agent_id)
 
     # Build prompt: system_instructions first, then blocks
     parts = [f"<system_instructions>\n{deps.system_instructions}\n</system_instructions>"]
