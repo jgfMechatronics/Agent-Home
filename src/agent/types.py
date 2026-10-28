@@ -6,7 +6,7 @@ not the reverse.
 """
 import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, get_args, get_origin
+from typing import Literal, get_args, get_origin
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from pydantic_ai import DeferredToolRequests
@@ -22,8 +22,6 @@ from pydantic_ai.settings import ThinkingLevel
 AgentOutput = str | DeferredToolRequests | None
 
 
-if TYPE_CHECKING:
-    from db.models import AgentRecord, MemoryBlockRecord
 
 
 def validate_model_name(model_name: str) -> str:
@@ -171,16 +169,9 @@ class BlockSettings(BaseModel):
     Defaults align with create_block's defaults so BlockSettings() with just a label
     produces the same behavior as the old create_block(label=...) call.
     """
+    model_config = ConfigDict(from_attributes=True)
+
     label: str = Field(min_length=1)
     description: str = ""
     char_limit: int = Field(default=20000, gt=0)
     position: int | None = Field(default=None, ge=0)
-
-    @classmethod
-    def from_record(cls, block: "MemoryBlockRecord") -> "BlockSettings":
-        return cls(
-            label=block.label,
-            description=block.description,
-            char_limit=block.char_limit,
-            position=block.position,
-        )

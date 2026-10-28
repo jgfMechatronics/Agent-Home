@@ -711,7 +711,7 @@ class TestUpdateBlockSettings(_MemoryBlockEndpointBase):
         assert call_args.args[1] == original_label  # current label from URL
         assert call_args.args[2] == BlockSettings(**request_settings)  # settings object
         # Verify route returns helper's output (which differs from request)
-        assert response.json() == BlockSettings.from_record(target_block).model_dump()
+        assert response.json() == BlockSettings.model_validate(target_block).model_dump()
 
     async def test_returns_404_for_unknown_label(self, client: AsyncClient):
         """Returns 404 when block label doesn't exist for this agent."""

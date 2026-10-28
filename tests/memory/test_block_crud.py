@@ -211,13 +211,13 @@ class TestUpdateBlockSettings:
         result = await update_block_settings(self.deps, original_label, new_settings)
         
         # Return value matches expected settings
-        assert BlockSettings.from_record(result) == new_settings
+        assert BlockSettings.model_validate(result) == new_settings
         
         # Old label gone, new label exists with correct settings
         self.session.expire_all()  # Clear identity map cache for fresh reads
         assert await get_block(self.session, self.deps.agent_id, original_label) is None
         fetched = await get_block(self.session, self.deps.agent_id, "persona_renamed")
-        assert BlockSettings.from_record(fetched) == new_settings
+        assert BlockSettings.model_validate(fetched) == new_settings
 
     async def test_position_none_keeps_current(self):
         """When settings.position is None, should keep the block's current position."""
@@ -233,13 +233,13 @@ class TestUpdateBlockSettings:
         
         # Position preserved, other fields updated
         expected = new_settings.model_copy(update={"position": original_position})
-        assert BlockSettings.from_record(result) == expected
+        assert BlockSettings.model_validate(result) == expected
         
         # DB matches
         label = self.target.label
         self.session.expire_all()
         fetched = await get_block(self.session, self.deps.agent_id, label)
-        assert BlockSettings.from_record(fetched) == expected
+        assert BlockSettings.model_validate(fetched) == expected
 
     async def test_duplicate_label_raises(self):
         """Renaming to an existing label should raise DuplicateBlockError."""

@@ -368,7 +368,7 @@ async def get_block_settings(
     block = await get_block(session, agent_id, label)
     if block is None:
         raise HTTPException(status_code=404, detail=f"Block {label!r} not found")
-    return BlockSettings.from_record(block)
+    return BlockSettings.model_validate(block)
 
 
 @router.put("/{agent_id}/memory/blocks/{label}/settings")
@@ -380,7 +380,7 @@ async def put_block_settings(
 ) -> BlockSettings:
     """Update settings/metadata for a memory block."""
     block = await update_block_settings(deps, label, settings)
-    return BlockSettings(label=block.label, description=block.description, char_limit=block.char_limit, position=block.position)
+    return BlockSettings.model_validate(block)
 
 
 @router.put("/{agent_id}/memory/blocks/order", status_code=204)
