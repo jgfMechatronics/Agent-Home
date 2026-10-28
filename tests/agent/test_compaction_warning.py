@@ -2,8 +2,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from conftest import make_ro_engine
 import pytest_asyncio
+from conftest import make_ro_engine
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -70,12 +70,11 @@ class TestCompactionWarnerIntegration:
         self.session = session
         self.agent_record = agent_record
         self.test_engine = test_engine
-        self.rw_engine = test_engine
-        self.ro_engine = test_engine
+        self.ro_engine = make_ro_engine(test_engine)
 
     async def _update_record(self, **fields) -> None:
         """Update agent record fields directly in the DB (test setup)."""
-        async with AsyncSession(self.rw_engine) as update_session:
+        async with AsyncSession(self.test_engine) as update_session:
             record = await update_session.get(AgentRecord, self.agent_record.id)
             for key, value in fields.items():
                 setattr(record, key, value)
@@ -96,7 +95,7 @@ class TestCompactionWarnerIntegration:
 
         agent_app_state_reg: dict[str, AgentAppState] = {}
         with patch("agent.runner.is_compaction_needed", return_value=False):
-            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.test_engine, make_ro_engine(self.test_engine))
+            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.test_engine, self.ro_engine)
             async with factory.build_agent_and_deps() as (agent, deps):
                 with agent.override(model=model):
                     events = [e async for e in run_stateful_agent(
