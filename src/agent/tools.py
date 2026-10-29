@@ -133,6 +133,14 @@ def _insert_at_line_boundary(content: str, insert_pos: int, new_text: str) -> tu
 
 
 # TODO: Eyeballing, there's likely room to commonize some stuff between memory_replace and ..._insert
+# TODO (before removing ParallelToolCallTrimmer): lost-update race in memory_replace / memory_insert.
+# Both read the block in read_scope, compute new_content from that read, then hand the precomputed
+# content to update_block, which re-reads the block but overwrites it wholesale. With parallel tool
+# calls on the same block, both calls compute from version N and the second write silently discards
+# the first edit. The agent lock doesn't help (both calls share one deps). Fix: do the
+# read-modify-write inside a single write_scope, e.g. update_block taking a transform
+# fn(old_content) -> new_content, or the tools opening the write_scope themselves. Requires the
+# per-deps write lock from the task-safety TODO at the end of agent/deps.py to be fully correct.
 async def memory_replace(
     ctx: RunContext[AgentDeps],
     label: str,

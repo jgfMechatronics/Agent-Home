@@ -13,7 +13,9 @@ then sees that it made exactly one call, gets its return, and re-issues anything
 Caveat: streamed PartStart/PartDelta events for the dropped calls have already gone out to clients
 by the time this hook runs (it fires after the stream completes). They are never executed or persisted.
 
-TODO: REMOVE when the runner refactor handles parallel tool calls in persistence.
+TODO: REMOVE when the runner refactor handles parallel tool calls in persistence, AND AgentDeps is
+made task-safe (see the task-safety TODO at the end of agent/deps.py and the lost-update TODO above
+memory_replace in agent/tools.py). Concurrent tool calls currently crash or corrupt state via deps.
 """
 import logging
 from dataclasses import dataclass, replace

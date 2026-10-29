@@ -83,8 +83,8 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     # OpenRouter providers ignore it, and pydantic-ai runs any multiple calls it receives
     # concurrently. ParallelToolCallTrimmer (in _build_capabilities) is what actually guarantees
     # one call per response. Required because run_stateful_agent's persistence can't handle
-    # parallel calls and shares a session with tool execution.
-    # Safe to remove after session factory refactor.
+    # parallel calls, and AgentDeps is not task-safe for concurrent tool calls (see the
+    # task-safety TODO at the end of agent/deps.py). Not safe to remove until both are fixed.
     settings = ModelSettings(
         thinking=config.thinking_mode,
         max_tokens=36864,
