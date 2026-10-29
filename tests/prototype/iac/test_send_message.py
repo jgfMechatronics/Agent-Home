@@ -121,16 +121,7 @@ class TestSendMessage:
 class TestDeliverMessage:
     """_deliver_message: background task for inter-agent delivery."""
 
-    @pytest.fixture
-    def mock_session(self, mocker):
-        """Mock get_session context manager (patch at source — imports are deferred)."""
-        mock_cm = mocker.AsyncMock()
-        mock_cm.__aenter__.return_value = mocker.MagicMock()
-        mock_cm.__aexit__.return_value = None
-        mocker.patch("db.connection.get_session", return_value=mock_cm)
-        return mock_cm
-
-    async def test_lock_unavailable_signals_false(self, mocker, mock_session):
+    async def test_lock_unavailable_signals_false(self, mocker):
         """Future receives False when AgentLockedError."""
         from agent.types import AgentLockedError
 
@@ -139,13 +130,14 @@ class TestDeliverMessage:
 
         mock_factory = mocker.MagicMock()
         mock_factory.build_agent_and_deps.return_value = mock_factory_cm
-        mocker.patch("agent.factory.AgentFactory", return_value=mock_factory)
+        mocker.patch("agent.factory.AgentFactory", autospec=True, return_value=mock_factory)
 
         future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         await _deliver_message(
             agent_id="test-agent-id",
             user_prompt="hello",
-            engine=mocker.MagicMock(),
+            rw_engine=mocker.MagicMock(),
+            ro_engine=mocker.MagicMock(),
             agent_app_state_reg={"test-agent-id": mocker.MagicMock()},
             broadcast_hub=mocker.MagicMock(),
             delivery_future=future,
@@ -153,7 +145,7 @@ class TestDeliverMessage:
 
         assert future.done() and future.result() is False
 
-    async def test_lock_acquired_signals_true_and_uses_broadcast_runner(self, mocker, mock_session):
+    async def test_lock_acquired_signals_true_and_uses_broadcast_runner(self, mocker):
         """Lock acquired: future receives True and run_agent_with_broadcast is called."""
         mock_agent = mocker.MagicMock()
         mock_deps = mocker.MagicMock()
@@ -170,7 +162,7 @@ class TestDeliverMessage:
 
         mock_factory = mocker.MagicMock()
         mock_factory.build_agent_and_deps.return_value = mock_factory_cm
-        mocker.patch("agent.factory.AgentFactory", return_value=mock_factory)
+        mocker.patch("agent.factory.AgentFactory", autospec=True, return_value=mock_factory)
 
         mock_app_state = mocker.MagicMock()
         mock_hub = mocker.MagicMock()
@@ -178,7 +170,8 @@ class TestDeliverMessage:
         await _deliver_message(
             agent_id="test-agent-id",
             user_prompt="hello",
-            engine=mocker.MagicMock(),
+            rw_engine=mocker.MagicMock(),
+            ro_engine=mocker.MagicMock(),
             agent_app_state_reg={"test-agent-id": mock_app_state},
             broadcast_hub=mock_hub,
             delivery_future=future,
@@ -287,12 +280,6 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         mock_factory = mocker.MagicMock()
         mock_factory.build_agent_and_deps.return_value = mock_cm
         mocker.patch("agent.factory.AgentFactory", return_value=mock_factory)
-
-        # Mock get_session in _deliver_message (engine from session.bind isn't real in tests)
-        mock_sess_cm = mocker.AsyncMock()
-        mock_sess_cm.__aenter__.return_value = mocker.MagicMock()
-        mock_sess_cm.__aexit__.return_value = None
-        mocker.patch("db.connection.get_session", return_value=mock_sess_cm)
 
         # Use real is_compaction_needed so token values drive compaction, not call ordering.
         # _real_is_compaction_needed is captured at module import time, before _BaseRouteTest
