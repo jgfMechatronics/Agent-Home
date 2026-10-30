@@ -74,6 +74,32 @@ async def lifespan(app: FastAPI):
     hub = BroadcastHub()
     try:
         await init_db(rw_engine)
+        # TODO: rw/ro engine wiring through app.state is invisible to static type checking.
+        # Starlette's State.__getattr__ returns Any, so these two assignments and every
+        # `request.app.state.{rw,ro}_engine` read (fastapi_deps.py x4, routes.py create_agent x2)
+        # accept a swapped engine without complaint, even with an annotated target
+        # (`x: ReadOnlyEngine = request.app.state.rw_engine` type-checks). Everything downstream is
+        # typed, but the checker trusts the declared types and nothing verifies them at runtime
+        # (NewType is erased). A rw engine in the ro slot is the silent failure: reads work, the ro
+        # protection is just gone. (ro in the rw slot fails loudly on first write.)
+        # Fix: store one typed object and read it through one accessor, like get_broadcast_hub:
+        #     @dataclass(frozen=True)
+        #     class Engines:              # probably in db/connection.py, next to ReadOnlyEngine
+        #         rw: AsyncEngine
+        #         ro: ReadOnlyEngine
+        #         def __post_init__(self):  # runtime check, once at startup
+        #             if self.ro.url.query.get("mode") != "ro":
+        #                 raise RuntimeError("Engines.ro is not a mode=ro engine")
+        #     app.state._engines = Engines(rw=rw_engine, ro=ro_engine)  # keyword args: typed
+        #     def get_engines(request: Request) -> Engines:
+        #         # app.state._engines is private on purpose: this function is meant to be the only
+        #         # reader, so all engine access goes through one typed (and checked) accessor.
+        #         return request.app.state._engines
+        # Then forbid `app.state.*engine` access outside that accessor. The test fixtures that set
+        # app.state.rw_engine/ro_engine (conftest, api/test_routes, api/test_fastapi_deps,
+        # api/test_app, prototype/api/test_routes, utils/test_memory_cleanup) move to a shared
+        # helper. Known remaining gap: ReadOnlyEngine is a NewType of AsyncEngine, so
+        # Engines(rw=ro_engine, ...) still type-checks, but that fails loudly on first write.
         app.state.rw_engine = rw_engine
         app.state.ro_engine = ro_engine
         app.state.broadcast_hub = hub
