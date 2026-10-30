@@ -235,7 +235,11 @@ async def import_to_database(
     
     engine = create_sqlite_engine(db_path)
     await init_db(engine)  # Creates tables if needed
-    
+
+    # TODO: get_session is read-only (takes ReadOnlyEngine, yields ReadOnlySession, no commit).
+    # This works only because we pass a rw engine and commit explicitly below; the type checker
+    # will flag it. Fix: replace with `async with AsyncSession(engine) as session:` (keeping the
+    # explicit commit), the same pattern as the create_agent route.
     async with get_session(engine) as session:
         # Check if agent already exists
         result = await session.execute(
@@ -293,6 +297,9 @@ async def export_messages(engine, agent_id: str) -> list[dict]:
     from db.models import MessageRecord
     from sqlalchemy import select
     
+    # TODO: Same type mismatch as in import_to_database: engine is the rw engine, get_session expects
+    # a ReadOnlyEngine. Harmless here (read only), but the type checker will flag it. Fix: pass in a
+    # ro engine from create_readonly_sqlite_engine() for the export.
     async with get_session(engine) as session:
         result = await session.execute(
             select(MessageRecord)
@@ -565,7 +572,7 @@ async def async_main(args):
         
         print(f"\nDone! Agent ID: {agent_id}")
         print(f"To interact via CLI: python cli/cli.py  (then select '{args.agent_name}')")
-        print(f"To interact via Toad: connect to the agent")
+        print("To interact via Toad: connect to the agent")
     
     elif args.output:
         # Just output converted JSON

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from pydantic_ai import Agent
 
     from agent.runner import AgentAppState
-    from agent.types import AgentDeps
+    from agent.deps import AgentDeps
 
 # ---------------------------------------------------------------------------
 # Synthetic event types (not emitted by pydantic-ai)

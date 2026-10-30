@@ -15,7 +15,7 @@ from agent.compaction import clear_context, compact
 from memory.system_prompt_compilation import compile_system_prompt
 
 if TYPE_CHECKING:
-    from agent.types import AgentDeps
+    from agent.deps import AgentDeps
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +47,8 @@ class SlashCommandDef:
 
 async def _handle_recompile(deps: "AgentDeps") -> ServerSentEvent:
     """Handler for /recompile command. Recompiles the system prompt from current memory blocks."""
-    await compile_system_prompt(deps)
-    await deps.commit_changes_refresh_agent_record()
+    async with deps.write_scope() as session:
+        await compile_system_prompt(deps, session)
     return ServerSentEvent(
         data={"name": "user_recompile", "result": "System prompt recompiled successfully", "status": "success"},
         event="SlashCommandResult",

@@ -1,13 +1,10 @@
-import asyncio
-
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.pool import NullPool
 
-from conftest import SAMPLE_AGENT_CONFIG
-from db.connection import create_sqlite_engine, get_session, init_db
+from db.connection import create_readonly_sqlite_engine, create_sqlite_engine, get_session, init_db
 from db.models import AgentRecord, MessageRecord, MemoryBlockRecord
 
 TABLE_NAMES = [AgentRecord.__tablename__, MessageRecord.__tablename__, MemoryBlockRecord.__tablename__]
@@ -24,13 +21,6 @@ async def raw_engine(tmp_path):
     await engine.dispose()
 
 
-@pytest_asyncio.fixture
-async def initialized_engine(raw_engine):
-    """raw_engine with the full schema created via init_db."""
-    await init_db(raw_engine)
-    yield raw_engine
-
-
 # --- create_sqlite_engine ---
 
 async def test_create_sqlite_engine_returns_async_engine(raw_engine):
@@ -42,17 +32,29 @@ async def test_create_sqlite_engine_uses_null_pool(raw_engine):
     assert isinstance(raw_engine.pool, NullPool)
 
 
-async def test_create_sqlite_engine_enables_foreign_keys(raw_engine):
-    """create_sqlite_engine must set PRAGMA foreign_keys=ON — SQLite disables it by default."""
-    async with raw_engine.connect() as conn:
-        result = await conn.execute(text("PRAGMA foreign_keys"))
-        assert result.scalar() == 1
+@pytest.mark.parametrize("make_engine", [create_sqlite_engine, create_readonly_sqlite_engine], ids=["rw", "ro"])
+async def test_sqlite_engine_applies_pragmas(make_engine, tmp_path):
+    """Both rw and ro engines apply WAL, foreign_keys, and busy_timeout on every connection."""
+    db_path = str(tmp_path / "test.db")
+    # Initialise the file so create_readonly_sqlite_engine can open it (harmless for rw)
+    seed = create_sqlite_engine(db_path)
+    async with seed.connect():
+        pass
+    await seed.dispose()
+    engine = make_engine(db_path)
+    try:
+        async with engine.connect() as conn:
+            assert (await conn.execute(text("PRAGMA journal_mode"))).scalar() == "wal"
+            assert (await conn.execute(text("PRAGMA foreign_keys"))).scalar() == 1
+            assert (await conn.execute(text("PRAGMA busy_timeout"))).scalar() == 5000
+    finally:
+        await engine.dispose()
 
 
-# --- create_sqlite_engine readonly mode ---
+# --- create_readonly_sqlite_engine ---
 
-class TestCreateSqliteEngineReadonly:
-    """readonly=True opens the DB in read-only mode — reads succeed, writes are rejected."""
+class TestCreateReadonlySqliteEngine:
+    """Read-only engines use SQLite mode=ro: reads succeed and writes are rejected."""
 
     @pytest_asyncio.fixture(autouse=True)
     async def setup(self, tmp_path):
@@ -62,9 +64,13 @@ class TestCreateSqliteEngineReadonly:
         await init_db(writable)
         await writable.dispose()
 
-        self.engine = create_sqlite_engine(db_path, readonly=True)
+        self.engine = create_readonly_sqlite_engine(db_path)
         yield
         await self.engine.dispose()
+
+    async def test_uses_readonly_sqlite_uri(self):
+        assert self.engine.url.query["mode"] == "ro"
+        assert self.engine.url.query["uri"] == "true"
 
     async def test_can_read(self):
         async with self.engine.connect() as conn:
@@ -93,90 +99,34 @@ async def test_init_db_creates_tables(raw_engine):
             await conn.execute(text("SELECT 1 FROM " + table_name))  # no error = table exists
 
 
-# --- get_session ---
+# --- get_session (read-only) ---
 
-async def test_get_session_yields_async_session(initialized_engine):
-    async with get_session(initialized_engine) as session:
+@pytest_asyncio.fixture
+async def ro_engine(tmp_path):
+    """Read-only engine with schema initialised. File-based SQLite with mode=ro."""
+    db_path = str(tmp_path / "test.db")
+    # Create and init with a rw engine first (readonly can't create schema)
+    rw = create_sqlite_engine(db_path)
+    await init_db(rw)
+    await rw.dispose()
+    engine = create_readonly_sqlite_engine(db_path)
+    yield engine
+    await engine.dispose()
+
+
+async def test_get_session_yields_async_session(ro_engine):
+    async with get_session(ro_engine) as session:
         assert isinstance(session, AsyncSession)
 
 
-async def test_get_session_bound_to_provided_engine(tmp_path):
+async def test_get_session_bound_to_provided_engine(ro_engine):
     """Sessions are bound to the engine they were created from, not a global engine."""
-    engine_a = create_sqlite_engine(str(tmp_path / "a.db"))
-    engine_b = create_sqlite_engine(str(tmp_path / "b.db"))
-    try:
-        await init_db(engine_a)
-        await init_db(engine_b)
-
-        async with get_session(engine_a) as session:
-            session.add(AgentRecord(name="agent-a", agent_config=SAMPLE_AGENT_CONFIG))
-            await session.commit()
-
-        async with get_session(engine_b) as session:
-            result = await session.execute(text("SELECT COUNT(*) FROM agent"))
-            assert result.scalar() == 0
-    finally:
-        await engine_a.dispose()
-        await engine_b.dispose()
+    async with get_session(ro_engine) as session:
+        assert session.bind is ro_engine
 
 
-class TestGetSessionTransactionBehavior:
-    """get_session commit/rollback/close semantics on context exit."""
-
-    @pytest.fixture(autouse=True)
-    async def setup(self, initialized_engine):
-        self.engine = initialized_engine
-
-    async def _count_agents(self) -> int:
-        """Read agent count via raw connection — bypasses get_session to avoid masking bugs in it."""
-        async with self.engine.connect() as conn:
-            result = await conn.execute(text("SELECT COUNT(*) FROM agent"))
-            return result.scalar()
-
-    async def test_commits_on_clean_exit(self):
-        """Data written in the block persists after a clean exit (implicit commit)."""
-        async with get_session(self.engine) as session:
-            session.add(AgentRecord(name="test", agent_config=SAMPLE_AGENT_CONFIG))
-
-        assert await self._count_agents() == 1
-
-    async def test_rollbacks_and_reraises_on_exception(self):
-        """Unhandled exception rolls back writes and propagates."""
-        with pytest.raises(RuntimeError, match="boom"):
-            async with get_session(self.engine) as session:
-                session.add(AgentRecord(name="test", agent_config=SAMPLE_AGENT_CONFIG))
-                raise RuntimeError("boom")
-
-        assert await self._count_agents() == 0
-
-    async def test_close_always_called_on_exception(self):
-        """Session is closed even when an exception is raised."""
-        with pytest.raises(RuntimeError):
-            async with get_session(self.engine) as session:
-                await session.execute(text("SELECT 1"))  # triggers autobegin
-                raise RuntimeError("oops")
-        assert not session.in_transaction()
-
-
-async def test_get_session_closes_on_context_exit(initialized_engine):
-    async with get_session(initialized_engine) as session:
+async def test_get_session_closes_on_context_exit(ro_engine):
+    async with get_session(ro_engine) as session:
         await session.execute(text("SELECT 1"))  # triggers autobegin
         assert session.in_transaction()
     assert not session.in_transaction()
-
-
-# --- concurrent sessions ---
-
-async def test_concurrent_sessions_function_independently(initialized_engine):
-    """Two sessions can write and commit concurrently without deadlock or error.
-    Catches misconfigured pool settings (e.g. StaticPool)."""
-    async def write_agent(name: str):
-        async with get_session(initialized_engine) as session:
-            session.add(AgentRecord(name=name, agent_config=SAMPLE_AGENT_CONFIG))
-            await session.commit()
-
-    await asyncio.gather(write_agent("agent-1"), write_agent("agent-2"))
-
-    async with get_session(initialized_engine) as session:
-        result = await session.execute(text("SELECT COUNT(*) FROM agent"))
-        assert result.scalar() == 2

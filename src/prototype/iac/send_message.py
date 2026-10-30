@@ -15,7 +15,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 
 from agent.crud import get_all_agents
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 
 if TYPE_CHECKING:
     from agent.types import AgentAppState
@@ -73,7 +73,8 @@ async def send_message(
     deps = ctx.deps
 
     # Resolve target name → agent_id
-    agents = await get_all_agents(deps.session)
+    async with deps.read_scope() as session:
+        agents = await get_all_agents(session)
     target_record = next((a for a in agents if a.name == target_name), None)
     if target_record is None:
         raise ModelRetry(f"Agent {target_name!r} not found.")
@@ -89,9 +90,10 @@ async def send_message(
     if _agent_app_state_reg_IAC_ref is None or _broadcast_hub_IAC_ref is None:
         raise ModelRetry("send_message is not configured (call configure_iac at startup).")
 
-    # Extract engine from session — always available via session.bind
-    # This is intended to avoid passing engine down on deps. Eventually we hope to not need the engine at this level at all.
-    engine = deps.session.bind
+    # Extract engines from deps — needed for the background delivery task which runs
+    # outside the current request scope. Eventually we hope to not need the engine at this level at all.
+    rw_engine = deps._rw_engine
+    ro_engine = deps._ro_engine
 
     # Spawn background task with delivery confirmation via Future
     loop = asyncio.get_running_loop()
@@ -101,7 +103,8 @@ async def send_message(
         _deliver_message(
             agent_id=target_record.id,
             user_prompt=formatted_content,
-            engine=engine,
+            rw_engine=rw_engine,
+            ro_engine=ro_engine,
             agent_app_state_reg=_agent_app_state_reg_IAC_ref,
             broadcast_hub=_broadcast_hub_IAC_ref,
             delivery_future=future,
@@ -122,7 +125,8 @@ async def send_message(
 async def _deliver_message(
     agent_id: str,
     user_prompt: str,
-    engine: object,
+    rw_engine: object,
+    ro_engine: object,
     agent_app_state_reg: dict,
     broadcast_hub: "BroadcastHub",
     delivery_future: "asyncio.Future[bool]",
@@ -139,21 +143,19 @@ async def _deliver_message(
     from agent.broadcast_streaming import run_agent_with_broadcast
     from agent.factory import AgentFactory
     from agent.types import AgentLockedError
-    from db.connection import get_session
     try:
-        async with get_session(engine) as session:
-            factory = AgentFactory(agent_id, agent_app_state_reg, session)
-            try:
-                async with factory.build_agent_and_deps() as (agent, deps):
-                    # Lock is held — signal delivery confirmation
-                    delivery_future.set_result(True)
-                    async for _ in run_agent_with_broadcast(
-                        agent, deps, agent_app_state_reg[agent_id], user_prompt, broadcast_hub
-                    ):
-                        pass
-            except AgentLockedError:
-                if not delivery_future.done():
-                    delivery_future.set_result(False)
+        factory = AgentFactory(agent_id, agent_app_state_reg, rw_engine, ro_engine)
+        try:
+            async with factory.build_agent_and_deps() as (agent, deps):
+                # Lock is held — signal delivery confirmation
+                delivery_future.set_result(True)
+                async for _ in run_agent_with_broadcast(
+                    agent, deps, agent_app_state_reg[agent_id], user_prompt, broadcast_hub
+                ):
+                    pass
+        except AgentLockedError:
+            if not delivery_future.done():
+                delivery_future.set_result(False)
     except Exception as e:
         logger.error("send_message background task failed for agent %r: %s", agent_id, e)
         if not delivery_future.done():

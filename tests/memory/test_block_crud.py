@@ -13,12 +13,13 @@ import pytest_asyncio
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import BlockSettings, AgentDeps
-from conftest import SAMPLE_AGENT_CONFIG
+from agent.deps import AgentDeps
+from agent.types import BlockSettings
+from conftest import SAMPLE_AGENT_CONFIG, make_deps, commit_and_detach_fixture_record
 from db.models import AgentRecord, MemoryBlockRecord
 
-from memory import block_crud
 from memory.block_crud import (
+    MemoryBlock,
     get_blocks,
     get_block,
     update_block,
@@ -46,12 +47,12 @@ async def multi_tenant_agents_with_core_memory(session: AsyncSession):
     
     Returns dict with agents and their blocks for easy test access.
     """
-    # Create two agents
-    agent_a = AgentRecord(name="agent-a", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Agent A instructions")
-    agent_b = AgentRecord(name="agent-b", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Agent B instructions")
-    session.add_all([agent_a, agent_b])
-    await session.flush()
-    
+    # Create two agents (detached — they get passed to make_deps/write_scope)
+    agent_a = await commit_and_detach_fixture_record(
+        session, AgentRecord(name="agent-a", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Agent A instructions"))
+    agent_b = await commit_and_detach_fixture_record(
+        session, AgentRecord(name="agent-b", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Agent B instructions"))
+
     # Agent A's blocks (out of order to verify position sorting, varied char_limits for limit tests)
     block_a_human = MemoryBlockRecord(agent_id=agent_a.id, label="human", content="Human info for A", description="", char_limit=500, position=1)
     block_a_persona = MemoryBlockRecord(agent_id=agent_a.id, label="persona", content="Persona for A", description="", char_limit=1000, position=0)
@@ -63,12 +64,13 @@ async def multi_tenant_agents_with_core_memory(session: AsyncSession):
     
     all_blocks = [block_a_human, block_a_persona, block_a_system, block_b_persona, block_b_notes]
     session.add_all(all_blocks)
-    await session.flush()
-    
-    # Refresh to get server-generated values (created_at, updated_at)
+    await session.commit()
+
+    # Refresh blocks to get server-generated values (created_at, updated_at).
+    # Blocks stay session-attached — read-only test data, never passed to deps.
     for block in all_blocks:
         await session.refresh(block)
-    
+
     return {
         "agent_a": agent_a,
         "agent_b": agent_b,
@@ -78,16 +80,16 @@ async def multi_tenant_agents_with_core_memory(session: AsyncSession):
 
 
 @pytest_asyncio.fixture
-async def multi_tenant_with_deps(session: AsyncSession, multi_tenant_agents_with_core_memory: dict):
+async def multi_tenant_with_deps(session: AsyncSession, test_engine, multi_tenant_agents_with_core_memory: dict):
     """
     Extends multi_tenant fixture with AgentDeps for both agents.
     
     For testing that write operations respect agent_id boundaries.
     """
     data = multi_tenant_agents_with_core_memory
-    deps_a = AgentDeps(session=session, agent_record=data["agent_a"])
-    deps_b = AgentDeps(session=session, agent_record=data["agent_b"])
-    return {**data, "deps_a": deps_a, "deps_b": deps_b}
+    deps_a = make_deps(test_engine, data["agent_a"])
+    deps_b = make_deps(test_engine, data["agent_b"])
+    return {**data, "deps_a": deps_a, "deps_b": deps_b, "session": session}
 
 
 # --- Shared read operation tests ---
@@ -165,7 +167,11 @@ async def test_update_block_modifies_content_and_updated_at(multi_tenant_with_de
 
     assert result.content == new_content
     assert result.updated_at > original_updated_at
-    assert (await get_block(deps.session, deps.agent_id, persona.label)) == result # sanity check
+    # Expire cached blocks so get_block hits the DB for fresh data
+    session = multi_tenant_with_deps["session"]
+    session.expire_all()
+    fetched = await get_block(session, deps.agent_id, "persona")
+    assert fetched.content == result.content  # sanity check: DB has the new content
 
 
 async def test_update_block_enforces_char_limit(multi_tenant_with_deps: dict):
@@ -179,19 +185,6 @@ async def test_update_block_enforces_char_limit(multi_tenant_with_deps: dict):
         await update_block(deps, "human", oversized_content)
 
 
-async def test_update_block_accepts_prefetched_block(multi_tenant_with_deps: dict, mocker):
-    """update_block with block param skips fetch and uses provided block."""
-    deps = multi_tenant_with_deps["deps_a"]
-    persona = multi_tenant_with_deps["blocks_a"][0]
-    
-    spy = mocker.spy(block_crud, "get_block")
-    
-    new_content = "Updated via prefetched block."
-    result = await update_block(deps, "persona", new_content, block=persona)
-    
-    assert result.content == new_content
-    assert result is persona  # Same object, not a fresh fetch
-    spy.assert_not_called()
 
 
 class TestUpdateBlockSettings:
@@ -203,6 +196,7 @@ class TestUpdateBlockSettings:
         self.deps = multi_tenant_with_deps["deps_a"]
         self.blocks = multi_tenant_with_deps["blocks_a"]
         self.target = self.blocks[0]  # persona at position 0
+        self.session = multi_tenant_with_deps["session"]
     
     async def test_modifies_all_fields(self):
         """update_block_settings should update label, description, char_limit, and position."""
@@ -217,12 +211,13 @@ class TestUpdateBlockSettings:
         result = await update_block_settings(self.deps, original_label, new_settings)
         
         # Return value matches expected settings
-        assert BlockSettings.from_record(result) == new_settings
+        assert BlockSettings.model_validate(result) == new_settings
         
         # Old label gone, new label exists with correct settings
-        assert await get_block(self.deps.session, self.deps.agent_id, original_label) is None
-        fetched = await get_block(self.deps.session, self.deps.agent_id, "persona_renamed")
-        assert BlockSettings.from_record(fetched) == new_settings
+        self.session.expire_all()  # Clear identity map cache for fresh reads
+        assert await get_block(self.session, self.deps.agent_id, original_label) is None
+        fetched = await get_block(self.session, self.deps.agent_id, "persona_renamed")
+        assert BlockSettings.model_validate(fetched) == new_settings
 
     async def test_position_none_keeps_current(self):
         """When settings.position is None, should keep the block's current position."""
@@ -238,11 +233,13 @@ class TestUpdateBlockSettings:
         
         # Position preserved, other fields updated
         expected = new_settings.model_copy(update={"position": original_position})
-        assert BlockSettings.from_record(result) == expected
+        assert BlockSettings.model_validate(result) == expected
         
         # DB matches
-        fetched = await get_block(self.deps.session, self.deps.agent_id, self.target.label)
-        assert BlockSettings.from_record(fetched) == expected
+        label = self.target.label
+        self.session.expire_all()
+        fetched = await get_block(self.session, self.deps.agent_id, label)
+        assert BlockSettings.model_validate(fetched) == expected
 
     async def test_duplicate_label_raises(self):
         """Renaming to an existing label should raise DuplicateBlockError."""
@@ -292,8 +289,11 @@ async def test_create_block_inserts_with_defaults(multi_tenant_with_deps: dict):
     assert result.agent_id == deps.agent_id
     
     # Verify it's actually in the database
-    fetched = await get_block(deps.session, deps.agent_id, "notes")
-    assert result == fetched
+    session = multi_tenant_with_deps["session"]
+    session.expire_all()
+    fetched = await get_block(session, deps.agent_id, "notes")
+    assert fetched.description == result.description
+    assert fetched.char_limit == result.char_limit
 
 
 async def test_create_block_with_duplicate_label_raises(multi_tenant_with_deps: dict):
@@ -347,13 +347,13 @@ async def test_delete_block_removes_block(multi_tenant_with_deps: dict):
     deps = multi_tenant_with_deps["deps_a"]
     
     # Verify block exists before delete
-    before = await get_block(deps.session, deps.agent_id, "persona")
+    before = await get_block(multi_tenant_with_deps["session"], deps.agent_id, "persona")
     assert before is not None
     
     await delete_block(deps, "persona")
 
     # Verify block is gone
-    after = await get_block(deps.session, deps.agent_id, "persona")
+    after = await get_block(multi_tenant_with_deps["session"], deps.agent_id, "persona")
     assert after is None
 
 
@@ -383,7 +383,9 @@ async def test_reorder_blocks_assigns_positions_by_list_order(multi_tenant_with_
     await reorder_blocks(deps, intended_order)
 
     # Fetch fresh from DB to verify
-    blocks = await get_blocks(deps.session, deps.agent_id)
+    session = multi_tenant_with_deps["session"]
+    session.expire_all()
+    blocks = await get_blocks(session, deps.agent_id)
     labels_in_order = [b.label for b in blocks]
     
     assert labels_in_order == intended_order
@@ -419,7 +421,7 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     deps_b = data["deps_b"]
     
     # Snapshot Agent B's state before we modify Agent A
-    b_blocks_before = await get_blocks(deps_b.session, deps_b.agent_id)
+    b_blocks_before = await get_blocks(data["session"], deps_b.agent_id)
     b_snapshot_before = [(b.label, b.content, b.position) for b in b_blocks_before]
     
     # Perform all write operations on Agent A
@@ -428,18 +430,18 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     await create_block(deps_a, BlockSettings(label="new_block"), content="New for A")
     await delete_block(deps_a, "system")  # Agent A has system block
     await reorder_blocks(deps_a, ["human_renamed", "persona", "new_block"])
-    # All writes commit via deps_a's session, which expires ALL records in the session (including deps_b's)
-    # In prod, seperate agents have seperate sessions
-    await deps_b.session.refresh(deps_b._agent_record)
-
-    # Verify Agent B is completely unaffected
-    b_blocks_after = await get_blocks(deps_b.session, deps_b.agent_id)
+    # Verify Agent B is completely unaffected. Expunge first: the before-snapshot
+    # query populated the session's identity map with B's blocks, and get_blocks
+    # returns those stale objects for already-loaded rows — without expunge the
+    # after-snapshot would compare stale-vs-stale and pass vacuously.
+    data["session"].expunge_all()
+    b_blocks_after = await get_blocks(data["session"], deps_b.agent_id)
     b_snapshot_after = [(b.label, b.content, b.position) for b in b_blocks_after]
     
     assert b_snapshot_after == b_snapshot_before, "Agent B was modified by operations on Agent A"
 
 
-# --- Commit behavior (common to all write ops) ---
+# --- DTO safety (common to all write ops) ---
 
 @pytest.mark.parametrize("write_op,call_args,returns_record", [
     pytest.param(update_block, ("persona", "new content"), True, id="update_block"),
@@ -448,18 +450,18 @@ async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: 
     pytest.param(delete_block, ("persona",), False, id="delete_block"),
     pytest.param(reorder_blocks, (["system", "human", "persona"],), False, id="reorder_blocks"),
 ])
-async def test_write_ops_commit_and_refresh(multi_tenant_with_deps, write_op, call_args, returns_record):
-    """Write ops with commit=True (default) should commit and refresh returned objects."""
+async def test_write_ops_return_dtos_not_orm_records(multi_tenant_with_deps, write_op, call_args, returns_record):
+    """Write ops must return MemoryBlock DTOs, never ORM records.
+
+    Guards the DTO boundary: a MemoryBlockRecord returned past the write scope
+    would leak session-bound state into caller code — exactly what the DTO
+    pattern (and the "ORM objects never outlive their session" rule) prevents.
+    """
     deps = multi_tenant_with_deps["deps_a"]
 
     result = await write_op(deps, *call_args)
 
     if returns_record:
-        # Accessing attributes proves refresh happened (would raise MissingGreenlet otherwise)
-        _ = result.label
-        _ = result.content
-
-    # No pending changes proves commit happened
-    assert not deps.session.new
-    assert not deps.session.dirty
-    assert not deps.session.deleted
+        assert isinstance(result, MemoryBlock)
+    else:
+        assert result is None

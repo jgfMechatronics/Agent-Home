@@ -3,11 +3,19 @@ Tests for agent runner, our loop on top of the pyantic AI loop (IE what recieves
 
 TODO: This is currently inappropriately tangled with the handle_message route test because the implementation itself 
 is tangled with the handle_message route. We can improve this if/when we switch to the StatefulAgent pattern
+
+TODO(runner-refactor): pydantic-ai prefetches the model step after ToolResultEvent; when compaction
+breaks the run, that response is discarded. The runner refactor and agentic compaction should be able
+to eliminate this wasted call. Keep _BaseRouteTest._persist_noop's scheduling yields (they simulate
+production DB I/O regardless), but update the prefetch-dependent expectations in
+TestRunStatefulAgentCompaction: test_only_interrupts_directly_after_tool_return and
+test_resumed_run_persists_new_messages_not_stale. Unchanged assertions would mean the waste remains.
 """
 
 # Standard library
 import asyncio
 import importlib.metadata
+import inspect
 import json
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
@@ -41,19 +49,30 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThinkingCalls, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 # Local
-from messages.messages import format_system_alert
+from messages.messages import format_system_alert, persist_messages
 from agent.parallel_tool_call_trimmer import ParallelToolCallTrimmer
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
 from agent.timestamping import add_timestamp_prefix
-from agent.types import AgentAppState, MCPConnError, AgentDeps
+from agent.types import AgentAppState, MCPConnError
 from api.fastapi_deps import get_agent_and_deps
-from conftest import make_mock_agent, _make_mock_session, local_dummy_tool, assert_ModelMessage_list_eq
+from conftest import make_mock_agent, local_dummy_tool, assert_ModelMessage_list_eq, make_deps
 from db.models import AgentRecord, MemoryBlockRecord
 from agent.tools import TOOL_REGISTRY
 
 # Stamp assertions compare against add_timestamp_prefix built at assert time —
 # freeze the clock so runner-stamp and expected-stamp can't straddle a second.
 pytestmark = pytest.mark.usefixtures("frozen_stamp_clock")
+
+_PERSIST_MESSAGES_SIG = inspect.signature(persist_messages)
+
+
+def _persist_call_args(call) -> dict:
+    """Bind an autospec'd persist_messages mock call to the real signature.
+
+    Style-agnostic extraction: works whether the impl passes args positionally or as kwargs.
+    """
+    return _PERSIST_MESSAGES_SIG.bind(*call.args, **call.kwargs).arguments
+
 
 # --- Module-level test data ---
 
@@ -151,6 +170,19 @@ class _BaseRouteTest:
             mock_load.return_value = []
             mock_deserialize.return_value = []
             mock_needs_compact.return_value = False
+
+            async def _persist_noop(*args, **kwargs):
+                # Production persist does real DB I/O, yielding to the event loop many
+                # times. That scheduling window is what lets pydantic-ai's prefetch fire the
+                # (wasteful) post-ToolResultEvent model call before the runner can break for
+                # compaction — compaction-resume tests assert that call happens. An instantly-
+                # returning mock collapses the window; these yields restore production
+                # interleaving (the prefetch involves chained tasks, so one pass isn't enough).
+                for _ in range(10):
+                    await asyncio.sleep(0)
+                return None  # no token data by default
+
+            mock_persist_messages.side_effect = _persist_noop
             self.mock_load_messages = mock_load
             self.mock_deserialize_msgs = mock_deserialize
             self.mock_needs_compact = mock_needs_compact
@@ -166,30 +198,26 @@ class TestHandleMessage(_BaseRouteTest):
     """
 
     @pytest.fixture(autouse=True)
-    def mock_agent_dep(self, app: FastAPI, agent_record: AgentRecord):
-        """Provides self.agent_record, self.mock_session, and self.configure_mock_get_agent_and_deps.
-
-        self.mock_session is a Mock with commit/rollback/refresh as AsyncMocks. The route calls
-        session.commit() and session.rollback() — using the real AsyncSession inside httpx's
-        ASGITransport would trigger MissingGreenlet (SQLAlchemy's greenlet bridge isn't set up there).
+    def mock_agent_dep(self, app: FastAPI, agent_record: AgentRecord, test_engine):
+        """Provides self.agent_record, self.test_engine, and self.configure_mock_get_agent_and_deps.
 
         A MINIMAL_STREAM() default is installed automatically. Tests that need specific events,
         exceptions, or mid-stream failures call self.configure_mock_get_agent_and_deps() to override.
-        TODO: Test gap, we don't actually test that the pyddantic AI agent is contructed for the loop with the expected inputs
+        TODO: Test gap, we don't actually test that the pydantic AI agent is constructed for the loop with the expected inputs
         IE we could not pass the right deps, pass the wrong message history, etc. Pretty sure we also don't check that the right
         method is called on the agent. We already have a mock agent so we can just use that.
         TODO: This is a cleanup for when we refactor this test suite, its disjointed with how we mock the agent in persistence
         and cancellation tests. Can we just use the FunctionModelTestAgent for everything?
         """
         self.agent_record = agent_record
-        self.mock_session = _make_mock_session()
+        self.test_engine = test_engine
         app.state.agent_app_state_reg[agent_record.id] = AgentAppState()
 
         def _configure(events=None, raise_exc=None, raises_mid_stream=None):
             async def _mock_dep():
                 if raise_exc is not None:
                     raise raise_exc
-                yield make_mock_agent(events, raises_mid_stream), AgentDeps(session=self.mock_session, agent_record=agent_record)
+                yield make_mock_agent(events, raises_mid_stream), make_deps(test_engine, agent_record)
 
             app.dependency_overrides[get_agent_and_deps] = _mock_dep
 
@@ -455,10 +483,9 @@ class FunctionModelTestAgent:
         return self._agent
 
     @contextmanager
-    def override_agent_and_deps_factory(self, app: FastAPI, agent_record):
+    def override_agent_and_deps_factory(self, app: FastAPI, agent_record, test_engine):
         """
         Install this agent in app's dep overrides; restore previous override on exit.
-        Yields the mock_session used to construct the agent and deps.
 
         Also creates an AgentAppState and injects it into app.state.agent_app_state_reg,
         and acquires the lock for the dep lifetime — mirroring what AgentFactory does.
@@ -466,21 +493,21 @@ class FunctionModelTestAgent:
         If we need to emulate more of the actual thing we're overriding than this,
         we should just make the override use a real factory with a FunctionModelAgent model or something.
         """
-        mock_session = _make_mock_session()
         agent_app_state = AgentAppState()
-        app.state.agent_app_state_reg[agent_record.id] = agent_app_state
+        agent_id = agent_record.id  # capture eagerly — write_scope falls back to expiring record attrs if its rollback/refresh fails
+        app.state.agent_app_state_reg[agent_id] = agent_app_state
 
         async def _make_agent_and_deps():
             async with agent_app_state.lock:
-                yield self._agent, AgentDeps(session=mock_session, agent_record=agent_record)
+                yield self._agent, make_deps(test_engine, agent_record)
                 agent_app_state.cancel_requested.clear()
 
         app.dependency_overrides[get_agent_and_deps] = _make_agent_and_deps
         try:
-            yield mock_session
+            yield
         finally:
             app.dependency_overrides.pop(get_agent_and_deps)
-            del app.state.agent_app_state_reg[agent_record.id]
+            del app.state.agent_app_state_reg[agent_id]
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -544,15 +571,14 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
     """
 
     @pytest.fixture(autouse=True)
-    def real_agent_dep(self, app, agent_record):
+    def real_agent_dep(self, app, agent_record, test_engine):
         """Construct a FunctionModelTestAgent and install it via get_agent_and_deps override.
 
-        Exposes self.agent_record, self.mock_session, self.function_agent.
+        Exposes self.agent_record and self.function_agent.
         """
         self.agent_record = agent_record
         self.function_agent = FunctionModelTestAgent()
-        with self.function_agent.override_agent_and_deps_factory(app, agent_record) as mock_session:
-            self.mock_session = mock_session
+        with self.function_agent.override_agent_and_deps_factory(app, agent_record, test_engine):
             yield
 
     @staticmethod
@@ -560,11 +586,7 @@ class _PersistenceAndCancellationTestBase(_BaseRouteTest):
         """Concatenate messages from all persist_messages calls, in call order."""
         messages = []
         for call in mock_persist_messages.call_args_list:
-            assert "messages" in call.kwargs, (
-                "At time of writing impl only uses kwargs. This will break if impl switches to positional args. "
-                "Update if that issue occurs."
-            )
-            messages.extend(call.kwargs["messages"])
+            messages.extend(_persist_call_args(call)["messages"])
         return messages
 
     @staticmethod
@@ -642,10 +664,9 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         self._assert_no_duplicates(persisted_msgs_list)
         self._assert_no_orphans(persisted_msgs_list)
 
-        assert not self.mock_session.rollback.called, "Session must NOT be rolled back on happy path"
 
     def _get_messages_from_last_persist_call(self) -> list:
-        return self.mock_persist_messages.call_args_list[-1].kwargs["messages"]
+        return _persist_call_args(self.mock_persist_messages.call_args_list[-1])["messages"]
 
     async def test_persists_as_complete_msgs_come_in(self, client: AsyncClient):
         """
@@ -668,10 +689,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         await asyncio.wait_for(self.function_agent.tool_entered.wait(), timeout=5.0)
         # NOTE: user message may end up persisted together with first tool pair — adjust counts
         # below if implementation batches them rather than persisting user message upfront.
-        assert self.mock_persist_messages.call_count == 1, (
-            "User message should be persisted before (or as) the first tool call completes"
-        )
-        assert self.mock_session.commit.call_count == 1, "Route must commit after persisting user message"
+        assert self.mock_persist_messages.call_count == 1
         assert_ModelMessage_list_eq(
             self._get_messages_from_last_persist_call(),
             [ModelRequest(parts=[UserPromptPart(content=add_timestamp_prefix(DEFAULT_USER_MESSAGE))])],
@@ -687,7 +705,6 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
             assert self.mock_persist_messages.call_count == i, (
                 f"Tool call/return pair {i} should be persisted as soon as the return is available"
             )
-            assert self.mock_session.commit.call_count == i, "Route must commit after each persist"
             assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), FunctionModelTestAgent.EXPECTED_TOOL_PAIR)
             self.function_agent.tool_entered.clear()  # consume signal before resuming to avoid stale wait
             self.function_agent.resume_tool_exec.set()
@@ -699,10 +716,7 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         events = await asyncio.wait_for(stream_task, timeout=5.0)
         assert "Error" not in [e["event"] for e in events], f"Unexpected Error event: {events}"
 
-        assert self.mock_persist_messages.call_count == 5, (
-            "Final model response must be persisted"
-        )
-        assert self.mock_session.commit.call_count == 5, "Each persist must have been committed"
+        assert self.mock_persist_messages.call_count == 5
         assert_ModelMessage_list_eq(self._get_messages_from_last_persist_call(), [FunctionModelTestAgent.THREE_TOOL_CALL_EXPECTED_MSGS[-1]])
 
         # Aggregate: full flattened message list must be complete and well-formed (sanity check)
@@ -712,7 +726,6 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
         ] + FunctionModelTestAgent.THREE_TOOL_CALL_EXPECTED_MSGS
         assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
         self._assert_no_orphans(persisted_msgs_list)
-        assert not self.mock_session.rollback.called, "Session must NOT be rolled back on happy path"
 
     async def test_persist_survives_mid_run_exception(self, client: AsyncClient):
         """
@@ -739,24 +752,19 @@ class TestHandleMessagePersistenceBehavior(_PersistenceAndCancellationTestBase):
 
         self._assert_no_orphans(persisted_msgs_list)  # sanity check
 
-        # Completed work is committed before the crash, confirmed by "persist as you go test"; rollback clears any uncommitted state
-        assert self.mock_session.rollback.called, (
-            "Route must call rollback on exception to clear any uncommitted state"
-        )
 
-    async def test_rollback_and_error_sse_on_persist_failure(self, client: AsyncClient):
-        """persist_messages failure triggers rollback and yields Error SSE. Session is not committed.
+    async def test_error_sse_on_persist_failure(self, client: AsyncClient):
+        """persist_messages failure aborts the stream and yields Error SSE.
 
         Uses a real pydantic-ai Agent (default steps) so capture_run_messages populates
         and the incremental persist path is exercised. The first persist call raises,
-        which should propagate out of the stream loop, trigger rollback, and emit Error SSE.
+        which should propagate out of the stream loop and emit Error SSE. (Uncommitted
+        state is discarded structurally — write_scope rolls back on exception.)
         """
         self.mock_persist_messages.side_effect = RuntimeError("DB write failed")
 
         sse_events = await stream_and_collect(client, self.agent_record.id)
 
-        self.mock_session.rollback.assert_called_once()
-        self.mock_session.commit.assert_not_called()
         assert sse_events[-1]["event"] == "Error"
 
     async def test_enqueued_message_is_persisted(self, client: AsyncClient):
@@ -931,13 +939,6 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
         self._assert_no_orphans(persisted_msgs_list)
 
-        assert self.mock_session.commit.call_count == self.mock_persist_messages.call_count, (
-            "Every persist call must be followed by a commit — including cancel code path"
-        )
-        assert not self.mock_session.rollback.called, (
-            "Must not rollback completed work on graceful cancel"
-        )
-
     async def test_cancel_during_tool_exec(self, client: AsyncClient):
         """
         CONTRACT: graceful cancel lets the in-flight tool complete, persists the
@@ -964,7 +965,6 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
             post_cancel_history.extend(self._list_persisted_messages(self.mock_persist_messages))
 
             self.mock_persist_messages.reset_mock()
-            self.mock_session.reset_mock()
             self.function_agent.reset_for_new_run()
             self.mock_deserialize_msgs.return_value = post_cancel_history
 
@@ -998,7 +998,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         self.function_agent.chunk_emitted.clear()
         self.function_agent.resume_stream.set()  # unblock so route can service the cancel
 
-        events = await asyncio.wait_for(stream_task, timeout=5.0)
+        await asyncio.wait_for(stream_task, timeout=5.0)
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 
@@ -1009,12 +1009,6 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
             self.CANCEL_NOTICE,
         ]
         assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
-        assert self.mock_session.commit.call_count == self.mock_persist_messages.call_count, (
-            "Every persist call must be followed by a commit — including cancel code path"
-        )
-        assert not self.mock_session.rollback.called, (
-            "Must not rollback completed work on graceful cancel"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1092,10 +1086,13 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
     """
 
     @pytest.fixture(autouse=True)
-    def _setup(self, agent_record):
+    def _setup(self, agent_record, test_engine):
         self.test_agent = FunctionModelTestAgent()
+        # Extra COMPLETION_TEXT step for compaction resume (pydantic-ai calls model
+        # to process tool result, then resume needs another step) TODO: Remove when refactor to elim wasteful call complete (I think)
+        self.test_agent.set_steps(FunctionModelTestAgent.DEFAULT_STEPS + [FunctionModelTestAgent.COMPLETION_TEXT])
         self.agent_app_state = AgentAppState()
-        self._deps = AgentDeps(session=_make_mock_session(), agent_record=agent_record)
+        self._deps = make_deps(test_engine, agent_record)
 
     async def _run_agent_to_completion(self, user_prompt: str = "test") -> list:
         return [event async for event in run_stateful_agent(
@@ -1115,7 +1112,7 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
         events = await self._run_agent_to_completion()
 
         self.mock_compact.assert_called_once()
-        assert len(self.test_agent.calls) == 2, "agent should run twice: initial turn + one resume"
+        assert len(self.test_agent.calls) == 3, "agent should run 3x: initial tool call + tool result processing + one resume"
         assert isinstance(events[-1], AgentRunResultEvent)
 
     async def test_only_interrupts_directly_after_tool_return(self):
@@ -1221,13 +1218,16 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
 
         # Basic flow assertions
         self.mock_compact.assert_called_once()
-        # 4 steps total: iter1 does step 1, iter2 does steps 2-4
+        # 4 model calls total: iter1 makes 2 (step 0 + pydantic-ai prefetches step 1 when the
+        # ToolResultEvent is pulled off the iterator — its response is discarded on compaction
+        # break; known wastefulness documented in test_only_interrupts_directly_after_tool_return).
+        # iter2 therefore runs steps 2-3, not 1-3.
         assert len(self.test_agent.calls) == 4, "agent should be called 4 times across both iterations"
         assert isinstance(events[-1], AgentRunResultEvent)
 
         # Expected: only newly generated messages, not loaded history
         # Iter 1: user prompt + tool call + tool return (persisted before compaction)
-        # Iter 2: resume notice + remaining tool pairs + completion
+        # Iter 2: resume notice + ONE tool pair + completion (second pair's step was prefetch-discarded)
         expected = [
             # Iter 1 content
             ModelRequest(parts=[UserPromptPart(content=add_timestamp_prefix("test"))]),
@@ -1235,8 +1235,6 @@ class TestRunStatefulAgentCompaction(_BaseRouteTest):
             ModelRequest(parts=[F.DUMMY_TOOL_RETURN_PART]),
             # Iter 2 content
             ModelRequest(parts=[UserPromptPart(content=COMPACTION_RESUME_NOTICE)]),
-            ModelResponse(parts=[F.DUMMY_TOOL_CALL_PART]),
-            ModelRequest(parts=[F.DUMMY_TOOL_RETURN_PART]),
             ModelResponse(parts=[F.DUMMY_TOOL_CALL_PART]),
             ModelRequest(parts=[F.DUMMY_TOOL_RETURN_PART]),
             ModelResponse(parts=[TextPart(content=F.COMPLETION_TEXT)]),
@@ -1328,7 +1326,7 @@ class TestMCPTools(_BaseRouteTest):
 
         assert self.mock_persist_messages.called, "persist_messages must be called at least once"
         for call in self.mock_persist_messages.call_args_list:
-            toolsets = call.kwargs["toolsets"]
+            toolsets = _persist_call_args(call)["toolsets"]
             function_toolsets = [ts for ts in toolsets if isinstance(ts, FunctionToolset)]
             mcp_toolsets = [ts for ts in toolsets if isinstance(ts, MCPToolset)]
             assert len(function_toolsets) == 1, "Expected exactly one FunctionToolset"
@@ -1403,7 +1401,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
             position=0,
         )
         session.add(block)
-        await session.flush()
+        await session.commit()
         return block
     
     def _make_tool_stream(self, tool_name: str, args_list: list[dict]):
@@ -1464,7 +1462,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         ),
     ])
     async def test_memory_tool_through_runner(
-        self, session, agent_record, agent_with_block, tool_name, args_list, expected_contents
+        self, session, test_engine, agent_record, agent_with_block, tool_name, args_list, expected_contents
     ):
         """Memory tools execute correctly through run_stateful_agent.
         
@@ -1480,7 +1478,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
             tools=[TOOL_REGISTRY[tool_name]],
         )
         
-        deps = AgentDeps(session=session, agent_record=agent_record)
+        deps = make_deps(test_engine, agent_record)
         
         events = []
         async for event in run_stateful_agent(agent, deps, AgentAppState(), f"call {tool_name}"):
@@ -1498,7 +1496,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
                 assert expected in agent_with_block.content, \
                     f"Expected '{expected}' in block content after {tool_name}"
 
-    async def test_parallel_calls_trimmed_to_first(self, session, agent_record, agent_with_block):
+    async def test_parallel_calls_trimmed_to_first(self, session, test_engine, agent_record, agent_with_block):
         """BANDAID: ParallelToolCallTrimmer turns a parallel-call response into a single call.
 
         Simulates an OpenRouter provider ignoring parallel_tool_calls=False. Only the first call
@@ -1514,7 +1512,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
             tools=[TOOL_REGISTRY["memory_insert"]],
             capabilities=[ParallelToolCallTrimmer()],
         )
-        deps = AgentDeps(session=session, agent_record=agent_record)
+        deps = make_deps(test_engine, agent_record)
 
         events = [e async for e in run_stateful_agent(agent, deps, AgentAppState(), "call memory_insert")]
 
@@ -1525,7 +1523,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         assert "first insert" in agent_with_block.content
         assert "second insert" not in agent_with_block.content
 
-        persisted = [m for call in self.mock_persist_messages.call_args_list for m in call.kwargs["messages"]]
+        persisted = [m for call in self.mock_persist_messages.call_args_list for m in _persist_call_args(call)["messages"]]
         persisted_calls = [p for m in persisted if isinstance(m, ModelResponse)
                            for p in m.parts if isinstance(p, ToolCallPart)]
         persisted_returns = [p for m in persisted if isinstance(m, ModelRequest)

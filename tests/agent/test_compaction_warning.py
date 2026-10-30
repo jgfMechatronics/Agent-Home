@@ -1,8 +1,9 @@
 """Tests for CompactionWarner capability."""
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 import pytest_asyncio
+from conftest import make_ro_engine
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -17,6 +18,7 @@ from pydantic_ai.models.test import TestModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction import compact
+from agent.deps import AgentDeps
 from agent.compaction_warner import COMPACTION_WARNING_TEXT, COMPACTION_WARNING_THRESHOLD_FRACTION,CompactionWarner
 from agent.factory import AgentFactory
 from agent.runner import run_stateful_agent
@@ -65,22 +67,36 @@ class TestCompactionWarnerIntegration:
         via build_agent_and_deps, then overrides the model with TestModel."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
+    async def setup(self, session: AsyncSession, agent_record: AgentRecord, test_engine):
         self.session = session
         self.agent_record = agent_record
+        self.test_engine = test_engine
+        self.ro_engine = make_ro_engine(test_engine)
+
+    async def _update_record(self, **fields) -> None:
+        """Update agent record fields directly in the DB (test setup)."""
+        async with AsyncSession(self.test_engine) as update_session:
+            record = await update_session.get(AgentRecord, self.agent_record.id)
+            for key, value in fields.items():
+                setattr(record, key, value)
+            await update_session.commit()
+
+    async def _fresh_record(self) -> AgentRecord:
+        """Fetch the agent record fresh from the DB (self.agent_record is detached/stale)."""
+        async with AsyncSession(self.ro_engine) as check_session:
+            return await check_session.get(AgentRecord, self.agent_record.id)
 
     async def _run_and_get_messages(self, model: TestModel, soft_limit: int = 100) -> list[ModelMessage]:
         """Run agent with given model and return persisted messages."""
-        self.agent_record.agent_config = AgentConfig(
+        await self._update_record(agent_config=AgentConfig(
             model_name="anthropic:claude-sonnet-4-20250514",
             tool_names=["duckduckgo_search"],
             soft_compaction_limit=soft_limit,
-        )
-        await self.session.flush()
+        ))
 
         agent_app_state_reg: dict[str, AgentAppState] = {}
         with patch("agent.runner.is_compaction_needed", return_value=False):
-            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.session)
+            factory = AgentFactory(self.agent_record.id, agent_app_state_reg, self.test_engine, self.ro_engine)
             async with factory.build_agent_and_deps() as (agent, deps):
                 with agent.override(model=model):
                     events = [e async for e in run_stateful_agent(
@@ -123,8 +139,8 @@ class TestCompactionWarnerIntegration:
         warning_idx = self._find_warning_index(messages)
         assert warning_idx is not None, "Warning should appear in persisted history"
         
-        await self.session.refresh(self.agent_record)
-        assert self.agent_record.compaction_warning_fired is True
+        # Verify flag is set in the database
+        assert (await self._fresh_record()).compaction_warning_fired is True
 
         # Warning should appear BEFORE last tool call (proves mid-chain injection)
         tool_call_indices = self._find_tool_call_indices(messages)
@@ -139,22 +155,22 @@ class TestCompactionWarnerIntegration:
         # High limit = threshold won't be crossed
         await self._run_and_get_messages(model, soft_limit=100000)
 
-        await self.session.refresh(self.agent_record)
-        assert self.agent_record.compaction_warning_fired is False
+        # Verify flag is not set in the database
+        assert (await self._fresh_record()).compaction_warning_fired is False
 
     async def test_fire_once_per_cycle(self):
         """Warning only fires once per compaction cycle (flag prevents re-fire)."""
-        self.agent_record.compaction_warning_fired = True  # Pre-set flag
-        
+        await self._update_record(compaction_warning_fired=True)
+
         model = TestModel(call_tools="all", custom_output_text="Response")
         messages = await self._run_and_get_messages(model)
 
         # Should complete without injecting another warning
         warning_idx = self._find_warning_index(messages)
         assert warning_idx is None, "Should not inject warning when flag already set"
-        
-        await self.session.refresh(self.agent_record)
-        assert self.agent_record.compaction_warning_fired is True
+
+        # Verify flag is still set
+        assert (await self._fresh_record()).compaction_warning_fired is True
 
 
 SMALL_COMPACT_LIMIT = 100
@@ -183,10 +199,9 @@ class TestCompactionWarnerUnit:
         mock_config = MagicMock()
         mock_config.soft_compaction_limit = soft_limit
         
-        mock_deps = MagicMock()
+        mock_deps = create_autospec(AgentDeps, instance=True)
         mock_deps.config = mock_config
         mock_deps.compaction_warning_fired = False
-        mock_deps.commit_changes_refresh_agent_record = AsyncMock()
         
         mock_ctx = MagicMock()
         mock_ctx.deps = mock_deps
@@ -215,14 +230,13 @@ class TestCompactionWarnerUnit:
         target_fraction = 0.25
         total_tokens = 5000
 
-        mock_deps = MagicMock()
+        mock_deps = create_autospec(AgentDeps, instance=True)
         mock_deps.context_window_start = None
         mock_deps.compiled_system_prompt = ""
         mock_deps.config = MagicMock()
         mock_deps.config.compaction_target_fraction = target_fraction
         mock_deps.config.soft_compaction_limit = soft_limit
         mock_deps.compaction_warning_fired = True  # Flag is set from previous warning
-        mock_deps.commit_changes_refresh_agent_record = AsyncMock()
         
         # Need > 4 messages; type="ModelResponse" avoids deserialization branch.
         # Set total_tokens on the last record so compact() can derive it without a real API call.

@@ -3,11 +3,6 @@ API routes
 NOTE: Read only routes should take a session only and do not need to read or acquire the agent lock
 R/W routes should take deps from get_agent_deps which acquires and holds the lock
 
-TODO: Our current "read-only" access pattern isn't truly read-only. Read operations
-take a full AsyncSession and may return mutable ORM objects still connected to the DB.
-This works but violates principle of least privilege — callers that only need to read
-have full write access. Worth revisiting when we have bandwidth.
-
 TODO: We have some exception catching and mapping that doesn't use "raise ... from e", probably some places we want to add the chaining.
 """
 import logging
@@ -19,6 +14,7 @@ from pydantic import ValidationError
 from pydantic_ai import Agent, AgentRunResultEvent
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from db.connection import ReadOnlySession
 
 from agent.crud import (
     agent_exists,
@@ -29,10 +25,11 @@ from agent.crud import (
     replace_agent_config,
     replace_system_instructions,
 )
-from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings, MCPConnError
+from agent.deps import AgentDeps
+from agent.types import AgentAppState, AgentConfig, BlockSettings, MCPConnError
 from agent.runner import run_stateful_agent
 from agent.broadcast_streaming import BroadcastHub, RunErrorEvent, run_agent_with_broadcast
-from api.fastapi_deps import get_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_broadcast_hub
+from api.fastapi_deps import get_ro_session_dep, get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_broadcast_hub
 from prototype.api.slash_commands import get_available_commands, is_slash_cmd, handle_slash_cmd
 from api.schemas import (
     AgentMetadataResponse,
@@ -49,6 +46,7 @@ from api.schemas import (
 from memory.block_crud import (
     ContentExceedsLimitError,
     InvalidBlockOrderListError,
+    MemoryBlock,
     create_block,
     get_block,
     get_blocks,
@@ -90,7 +88,7 @@ def map_to_sse(event: Any) -> ServerSentEvent:
     return ServerSentEvent(data=event, event=type(event).__name__)
 
 
-async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
+async def _get_agent_record_or_404(session: ReadOnlySession, agent_id: str) -> Any:
     """Load agent record by ID, raising 404 if not found."""
     record = await get_agent_record(session, agent_id)
     if record is None:
@@ -98,7 +96,7 @@ async def _get_agent_record_or_404(session: AsyncSession, agent_id: str) -> Any:
     return record
 
 
-async def _get_agent_record_by_name_or_404(session: AsyncSession, agent_name: str) -> Any:
+async def _get_agent_record_by_name_or_404(session: ReadOnlySession, agent_name: str) -> Any:
     """Load agent record by name, raising 404 if not found."""
     record = await get_agent_record_by_name(session, agent_name)
     if record is None:
@@ -175,7 +173,6 @@ async def handle_message(
     except Exception as e:
         # TODO (low priority): put more thought into logging strategy (log levels, handler chain, structured logging)
         logger.exception("Unexpected error in handle_message for agent %s", agent_id)
-        await deps.session.rollback()
         yield map_to_sse(RunErrorEvent.from_exception(e))
 
 
@@ -189,13 +186,14 @@ async def recompile_system_prompt_route_handler(
     if we do, need to design proper and unit test
     """
 
-    await compile_system_prompt(deps)
+    async with deps.write_scope() as session:
+        await compile_system_prompt(deps, session)
     return True
 
 
 @router.get("")
 async def list_agents(
-    session: AsyncSession = Depends(get_session_dep),
+    session: ReadOnlySession = Depends(get_ro_session_dep),
 ) -> list[AgentMetadataResponse]:
     """Return all agents on the server."""
     records = await get_all_agents(session)
@@ -205,36 +203,43 @@ async def list_agents(
 @router.post("", status_code=201)
 async def create_agent(
     body: CreateAgentRequest,
-    session: AsyncSession = Depends(get_session_dep),
+    request: Request,
 ) -> AgentMetadataResponse:
     """Create a new agent and return its metadata.
 
-    TODO: Compile the system prompt immediately after creation so the agent's memory blocks
-    are visible from the first turn. Currently the agent starts without a compiled system
-    prompt and won't see its blocks until an explicit recompile or first compaction.
-    This should call compile_system_prompt (or equivalent) before returning, and the
-    behaviour should be covered by tests in test_routes.py::TestCreateAgent.
-    
+    This route directly accesses rw_engine because it's a write route that can't
+    take deps — the agent doesn't exist yet, so there's no lock to acquire and no
+    deps to construct. The route manages the session and composes create_agent_record
+    + compile_system_prompt in a single transaction, so the agent is fully
+    initialized at commit time.
+
     TODO: I was able to get an invalid model name through to the DB. Errored out when trying to do a model request but did persist
     (update: pretty sure this is fixed now)
-    TODO: this route and the associated crud function do not follow our read only scheme. granted, the read only scheme is intended to
-    block concurrent access to an existing agent, which doesn't apply here. we can't use our normal deps scheme to lock because there's
-    no agent to construct deps for. will need to figure out, perhaps this route manually acquires the lock.
     """
-    try:
-        record = await create_agent_record(session, body.name, body.system_instructions, body.config)
-    except IntegrityError as e:
-        if "UNIQUE constraint failed: agent.name" in str(e.orig):
-            # SQLite-specific string check. This is brittle but worst case user just gets a less helpful but still helpful error msg
-            raise HTTPException(status_code=409, detail=f"Agent name already in use: {body.name!r}")
-        raise
-    return AgentMetadataResponse.from_record(record)
+    async with AsyncSession(request.app.state.rw_engine) as session:
+        try:
+            record = await create_agent_record(session, body.name, body.system_instructions, body.config)
+            # Temporary deps for compile_system_prompt — no lock needed (agent is brand new).
+            # Record is session-attached, so property setter guards pass naturally.
+            deps = AgentDeps(
+                request.app.state.rw_engine, request.app.state.ro_engine, record,
+                bypass_factory_guard=True,  # Bootstrap: no lock exists yet for a brand-new agent
+            )
+            await compile_system_prompt(deps, session)
+            await session.commit()
+            await session.refresh(record)
+            return AgentMetadataResponse.from_record(record)
+        except IntegrityError as e:
+            if "UNIQUE constraint failed: agent.name" in str(e.orig):
+                # SQLite-specific string check. This is brittle but worst case user just gets a less helpful but still helpful error msg
+                raise HTTPException(status_code=409, detail=f"Agent name already in use: {body.name!r}")
+            raise
 
 
 @router.get("/{agent_id}/system-instructions")
 async def get_system_instructions(
     agent_id: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: ReadOnlySession = Depends(get_ro_session_dep),
 ) -> SystemInstructionsResponse:
     """Return the system instructions for an existing agent."""
     record = await _get_agent_record_or_404(session, agent_id)
@@ -263,7 +268,7 @@ async def put_system_instructions(
 @router.get("/{agent_id}")
 async def get_agent_info(
     agent_id: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: ReadOnlySession = Depends(get_ro_session_dep),
 ) -> AgentMetadataResponse:
     """Return metadata for an existing agent."""
     record = await _get_agent_record_or_404(session, agent_id)
@@ -273,7 +278,7 @@ async def get_agent_info(
 @router.get("/by-name/{agent_name}")
 async def get_agent_info_by_name(
     agent_name: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: ReadOnlySession = Depends(get_ro_session_dep),
 ) -> AgentMetadataResponse:
     """Return metadata for an agent by name."""
     record = await _get_agent_record_by_name_or_404(session, agent_name)
@@ -283,7 +288,7 @@ async def get_agent_info_by_name(
 @router.get("/{agent_id}/config")
 async def get_config(
     agent_id: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: ReadOnlySession = Depends(get_ro_session_dep),
 ) -> AgentConfig:
     """Return the config for an existing agent."""
     record = await _get_agent_record_or_404(session, agent_id)
@@ -293,7 +298,7 @@ async def get_config(
 @router.get("/{agent_id}/memory/blocks")
 async def get_memory_blocks(
     agent_id: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: ReadOnlySession = Depends(get_ro_session_dep),
 ) -> CoreMemoryResponse:
     """Return core memory blocks for an agent."""
     blocks = await get_blocks(session, agent_id)
@@ -307,7 +312,7 @@ async def get_memory_blocks(
 async def get_memory_block(
     agent_id: str,
     label: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: ReadOnlySession = Depends(get_ro_session_dep),
 ) -> MemoryBlockResponse:
     """Return a single memory block by label."""
     block = await get_block(session, agent_id, label)
@@ -321,7 +326,7 @@ async def create_memory_block(
     agent_id: str,
     body: CreateMemoryBlockRequest,
     deps: AgentDeps = Depends(get_agent_deps),
-) -> MemoryBlockResponse:
+) -> MemoryBlock:
     """Create a new memory block for an agent."""
     try:
         settings = BlockSettings(
@@ -331,8 +336,7 @@ async def create_memory_block(
         )
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=f"Invalid block settings: {e}") from e
-    block = await create_block(deps, settings, body.content)
-    return MemoryBlockResponse.from_record(block)
+    return await create_block(deps, settings, body.content)
 
 
 @router.put("/{agent_id}/memory/blocks/{label}/content")
@@ -341,26 +345,25 @@ async def update_block_content(
     label: str,
     body: UpdateBlockContentRequest,
     deps: AgentDeps = Depends(get_agent_deps),
-) -> MemoryBlockResponse:
+) -> MemoryBlock:
     """Update the content of a memory block."""
     try:
-        block = await update_block(deps, label, body.content)
+        return await update_block(deps, label, body.content)
     except ContentExceedsLimitError as e:
-        raise HTTPException(status_code=422, detail=f"Content exceeds char limit") from e
-    return MemoryBlockResponse.from_record(block)
+        raise HTTPException(status_code=422, detail="Content exceeds char limit") from e
 
 
 @router.get("/{agent_id}/memory/blocks/{label}/settings")
 async def get_block_settings(
     agent_id: str,
     label: str,
-    session: AsyncSession = Depends(get_session_dep),
+    session: ReadOnlySession = Depends(get_ro_session_dep),
 ) -> BlockSettings:
     """Get settings/metadata for a memory block."""
     block = await get_block(session, agent_id, label)
     if block is None:
         raise HTTPException(status_code=404, detail=f"Block {label!r} not found")
-    return BlockSettings.from_record(block)
+    return BlockSettings.model_validate(block)
 
 
 @router.put("/{agent_id}/memory/blocks/{label}/settings")
@@ -372,7 +375,7 @@ async def put_block_settings(
 ) -> BlockSettings:
     """Update settings/metadata for a memory block."""
     block = await update_block_settings(deps, label, settings)
-    return BlockSettings.from_record(block)
+    return BlockSettings.model_validate(block)
 
 
 @router.put("/{agent_id}/memory/blocks/order", status_code=204)
@@ -411,7 +414,7 @@ async def cancel_agent_run(
 async def get_messages(
     agent_id: str,
     full: bool = False,
-    session: AsyncSession = Depends(get_session_dep),
+    session: ReadOnlySession = Depends(get_ro_session_dep),
 ) -> MessagesResponse:
     """
     Return conversation history. Use ?full=true for complete history.

@@ -27,13 +27,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 # Local
 from agent.factory import LOCK_TIMEOUT_FAST
-from agent.types import AgentAppState, AgentConfig, AgentDeps, BlockSettings
+from agent.deps import AgentDeps
+from agent.types import AgentAppState, AgentConfig, BlockSettings
 from api.fastapi_deps import get_agent_deps
 from agent.crud import create_agent_record
-from conftest import SAMPLE_AGENT_CONFIG
-from db.models import AgentRecord, MemoryBlockRecord, utcnow
+from conftest import SAMPLE_AGENT_CONFIG, make_deps, make_ro_engine
+from db.models import AgentRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
-from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError
+from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError, MemoryBlock
 
 
 # --- Test Classes ---
@@ -55,8 +56,11 @@ class TestCreateAgent:
 
     @pytest.fixture(autouse=True)
     def mock_create_agent_deps(self):
-        with patch("api.routes.create_agent_record", new_callable=AsyncMock) as mock_create:
+        with patch("api.routes.create_agent_record", new_callable=AsyncMock) as mock_create, \
+             patch("api.routes.compile_system_prompt", new_callable=AsyncMock) as mock_compile, \
+             patch("api.routes.AsyncSession", return_value=AsyncMock()):
             self.mock_create_agent_record = mock_create
+            self.mock_compile_system_prompt = mock_compile
             yield
 
     async def test_creates_agent_and_returns_metadata(self, client: AsyncClient) -> None:
@@ -113,6 +117,24 @@ class TestCreateAgentNameUniqueness:
         second = await client.post("/agents", json=TestCreateAgent._VALID_BODY)
         assert second.status_code == 409
         assert second.json()["detail"] == f"Agent name already in use: {TestCreateAgent._NAME!r}"
+
+
+class TestCreateAgentInitialization:
+    """POST /agents — real DB, no mocks: the agent is fully initialized at commit."""
+
+    async def test_system_prompt_compiled_on_create(self, client: AsyncClient, test_engine):
+        """create_agent compiles the system prompt in the same transaction as the insert."""
+        before = utcnow()
+        response = await client.post("/agents", json=TestCreateAgent._VALID_BODY)
+        after = utcnow()
+        assert response.status_code == 201
+
+        async with AsyncSession(make_ro_engine(test_engine)) as check_session:
+            record = await check_session.get(AgentRecord, response.json()["id"])
+
+        assert TestCreateAgent._VALID_BODY["system_instructions"] in record.compiled_system_prompt
+        assert record.sys_prompt_compiled_at is not None
+        assert before < record.sys_prompt_compiled_at < after
 
 
 class TestGetAgentByName:
@@ -288,6 +310,11 @@ class TestListAgents:
                 session, name=f"agent-{i}", system_instructions="", config=SAMPLE_AGENT_CONFIG
             )
             expected.append(AgentMetadataResponse.from_record(record))
+
+        # Commit so records are visible to separate client connection.
+        # Not commit_and_detach_fixture_record: the loop reads record.id (via from_record) BEFORE
+        # committing, which is why this setup needs create_agent_record's explicit flush.
+        await session.commit()
 
         response = await client.get("/agents")
 
@@ -486,7 +513,6 @@ class _MemoryBlockEndpointBase:
     Provides:
     - self.agent_record: The agent from agent_with_blocks
     - self.blocks: The pre-existing blocks from agent_with_blocks
-    - self.mock_session: A mock session
     - self.<crud_attr_name>: The mocked crud function
     """
     crud_patch_target: str
@@ -497,15 +523,14 @@ class _MemoryBlockEndpointBase:
         """Common setup: override get_agent_deps, patch crud function, cleanup."""
         self.agent_record = agent_with_blocks["agent"]
         self.blocks = agent_with_blocks["blocks"]
-        self.mock_session = Mock()
 
         async def _mock_dep():
-            yield AgentDeps(session=self.mock_session, agent_record=self.agent_record)
+            yield make_deps(app.state.rw_engine, self.agent_record)
 
         app.dependency_overrides[get_agent_deps] = _mock_dep
 
-        with patch(self.crud_patch_target, new_callable=AsyncMock) as mock:
-            setattr(self, self.crud_attr_name, mock)
+        with patch(self.crud_patch_target, new_callable=AsyncMock) as mock_crud:
+            setattr(self, self.crud_attr_name, mock_crud)
             yield
 
         app.dependency_overrides.pop(get_agent_deps)
@@ -526,10 +551,12 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
 
     async def test_calls_create_block_and_returns_201(self, client: AsyncClient):
         """Successful creation calls create_block and returns 201 with block data."""
-        mock_block_record = MemoryBlockRecord(
-            agent_id="dummy", position=0, updated_at=self._MOCK_UPDATED_AT, **self._VALID_BODY
+        mock_block = MemoryBlock(
+            id=str(uuid4()), agent_id="dummy", position=0,
+            created_at=self._MOCK_UPDATED_AT, updated_at=self._MOCK_UPDATED_AT,
+            **self._VALID_BODY,
         )
-        self.mock_create_block.return_value = mock_block_record
+        self.mock_create_block.return_value = mock_block
 
         response = await client.post(
             f"/agents/{self.agent_record.id}/memory/blocks",
@@ -538,7 +565,7 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
 
         assert response.status_code == 201
         self.mock_create_block.assert_called_once()
-        assert MemoryBlockResponse.model_validate(response.json()) == MemoryBlockResponse.from_record(mock_block_record)
+        assert MemoryBlock.model_validate(response.json()) == mock_block
 
     # 404 tested via parametrized TestNotFound
     # 422 for Duplicate block handled by app level handler + test
@@ -702,7 +729,7 @@ class TestUpdateBlockSettings(_MemoryBlockEndpointBase):
         assert call_args.args[1] == original_label  # current label from URL
         assert call_args.args[2] == BlockSettings(**request_settings)  # settings object
         # Verify route returns helper's output (which differs from request)
-        assert response.json() == BlockSettings.from_record(target_block).model_dump()
+        assert response.json() == BlockSettings.model_validate(target_block).model_dump()
 
     async def test_returns_404_for_unknown_label(self, client: AsyncClient):
         """Returns 404 when block label doesn't exist for this agent."""

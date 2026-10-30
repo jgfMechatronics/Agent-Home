@@ -53,9 +53,8 @@ async def assert_round_trips(session: AsyncSession, record: Any, expected_fields
         assert actual == expected, f"Field '{field}': expected {expected!r}, got {actual!r}"
 
 
-async def assert_timestamps_auto_populated(session: AsyncSession, record: Any):
+async def assert_timestamps_auto_populated(record: Any):
     """Verify created_at and updated_at are set automatically on creation and within 5 minutes of now (rough sanity check on accuracy)."""
-    await session.refresh(record)
     now = utcnow()
     five_minutes = timedelta(minutes=5)
     assert record.created_at is not None, "created_at should be auto-populated on creation"
@@ -151,7 +150,7 @@ async def test_agent_record_defaults(session: AsyncSession):
 
 async def test_agent_record_timestamps_auto_populated(session: AsyncSession, agent_record: AgentRecord):
     """created_at and updated_at are automatically set when an agent is created."""
-    await assert_timestamps_auto_populated(session, agent_record)
+    await assert_timestamps_auto_populated(agent_record)
 
 
 async def test_agent_record_updated_at_bumps_on_modify(session: AsyncSession, agent_record: AgentRecord):
@@ -177,7 +176,8 @@ async def test_memory_block_timestamps_auto_populated(session: AsyncSession, mem
     """created_at and updated_at are automatically set when a memory block is created."""
     session.add(memory_block_record)
     await session.flush()
-    await assert_timestamps_auto_populated(session, memory_block_record)
+    await session.refresh(memory_block_record)
+    await assert_timestamps_auto_populated(memory_block_record)
 
 
 async def test_memory_block_updated_at_bumps_on_modify(session: AsyncSession, memory_block_record: MemoryBlockRecord):

@@ -63,6 +63,9 @@ class AgentMetadataResponse(BaseModel):
         )
 
 
+# TODO: MemoryBlock (block_crud.py) is a superset of this — replace MemoryBlockResponse with
+# MemoryBlock everywhere and delete this class. Exposes id/agent_id/position/created_at too,
+# which clients actually need (id for targeting updates/deletes, position for ordering).
 class MemoryBlockResponse(BaseModel):
     @classmethod
     def from_record(cls, block: "MemoryBlockRecord") -> "MemoryBlockResponse":

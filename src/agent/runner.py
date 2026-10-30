@@ -23,7 +23,8 @@ from pydantic_ai.messages import (
 )
 from agent.compaction import compact, is_compaction_needed
 from agent.timestamping import add_timestamp_prefix
-from agent.types import AgentAppState, AgentDeps, AgentOutput, MCPConnError
+from agent.deps import AgentDeps
+from agent.types import AgentAppState, AgentOutput, MCPConnError
 from messages.messages import deserialize_messages, format_system_alert, load_messages, persist_messages
 
 if TYPE_CHECKING:
@@ -85,7 +86,6 @@ async def _check_and_handle_cancel(
         content=format_system_alert("Turn cancelled by user.")
     )])
     await persist_messages(deps=deps, messages=[cancel_notice], toolsets=toolsets)
-    await deps.commit_changes_refresh_agent_record()
     return True
 
 
@@ -120,7 +120,8 @@ async def run_stateful_agent(agent: Agent,
     while interrupted_by_compaction:
         interrupted_by_compaction = False
         
-        records = await load_messages(deps.session, deps.agent_id, start_seq_id=deps.context_window_start)
+        async with deps.read_scope() as session:
+            records = await load_messages(session, deps.agent_id, start_seq_id=deps.context_window_start)
         message_history = deserialize_messages(records)
         
         # pydantic-ai merges adjacent same-type messages, which shifts indices in the captured messages list
@@ -157,7 +158,6 @@ async def run_stateful_agent(agent: Agent,
 
                         if messages_to_persist:
                             total_tokens = await persist_messages(deps=deps, messages=messages_to_persist, toolsets=agent.toolsets)
-                            await deps.commit_changes_refresh_agent_record()
                             new_message_idx += len(messages_to_persist)
                             if total_tokens is not None:
                                 last_total_tokens_value = total_tokens

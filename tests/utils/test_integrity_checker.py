@@ -21,7 +21,7 @@ from messages.messages import dump_msg_json, format_system_alert
 from db.models import AgentRecord, MessageRecord
 from messages.messages import deserialize_messages
 from utils.integrity_checker import (
-    CRITICAL, ERROR, WARN, IntegrityIssue, Severity, check_agent_integrity,
+    CRITICAL, ERROR, WARN, IntegrityIssue, check_agent_integrity,
     _check_seq_id_consecutive, _check_timestamps_increasing, _check_context_window_start_validity,
     _check_message_ordering, _check_for_empty_content,
     _check_tool_call_return_pairing, _check_for_duplicate_content,
@@ -34,6 +34,15 @@ from utils.integrity_checker import (
 # Message Record Factory (local to integrity tests)
 # ---------------------------------------------------------------------------
 
+# TODO: Promote make_message_record / make_message_sequence to conftest as the shared
+# MessageRecord builders. They're the most realistic ones in the suite (real serialized
+# ModelMessage content, deterministic timestamps, valid context_window_start_msg_id), and:
+#   - TestReconstructContext._make_message in test_ctx_reconstructor.py is a weaker duplicate
+#     tied to self.session, and should use these instead.
+#   - test_run_integrity_check.py mocks every dependency (autospec'd). With shared builders it
+#     can run run() against a real DB the way test_run_ctx_reconstructor.py does: seed a
+#     sequence with a seq_id gap for the lockfile case and a clean one for the other, then
+#     commit before calling run() (it reads through its own mode=ro connection).
 def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRecord:
     """Construct a MessageRecord with realistic defaults.
 
@@ -280,7 +289,7 @@ MODELMESSAGE_TIMESTAMP_TEST_CASES = [
             check_type="modelmessage_timestamp_duplicate",
             severity=ERROR,
             seq_ids=[1, 3],
-            details=f"Duplicate ModelMessage timestamp at seq_ids 1 and 3",
+            details="Duplicate ModelMessage timestamp at seq_ids 1 and 3",
         )],
         id="sad_equal_timestamps",
     ),

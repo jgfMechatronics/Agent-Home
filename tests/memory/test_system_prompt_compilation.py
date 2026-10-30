@@ -4,15 +4,16 @@ Tests for system prompt building (memory/system_prompt_compilation.py)
 compile_system_prompt(deps) — assembles blocks into prompt, stores result
 get_system_prompt(ctx) — returns cached prompt for Pydantic AI instructions param
 """
-from datetime import datetime, UTC
+from datetime import datetime
 
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from conftest import mock_run_context, SAMPLE_AGENT_CONFIG
-from agent.types import AgentDeps
-from db.models import AgentRecord, MemoryBlockRecord
+from conftest import (
+    mock_run_context, SAMPLE_AGENT_CONFIG, make_deps, commit_and_detach_fixture_record
+)
+from agent.deps import AgentDeps
+from db.models import AgentRecord, MemoryBlockRecord, utcnow
 
 
 from memory.system_prompt_compilation import compile_system_prompt, get_system_prompt
@@ -22,9 +23,9 @@ from memory.system_prompt_compilation import compile_system_prompt, get_system_p
 # Note: agent_with_blocks comes from conftest.py
 
 @pytest_asyncio.fixture
-async def agent_with_blocks_and_deps(session: AsyncSession, agent_with_blocks: dict):
+async def agent_with_blocks_and_deps(session: AsyncSession, test_engine, agent_with_blocks: dict):
     """Extends agent_with_blocks with AgentDeps for write operations."""
-    return {**agent_with_blocks, "deps": AgentDeps(session=session, agent_record=agent_with_blocks["agent"])}
+    return {**agent_with_blocks, "deps": make_deps(test_engine, agent_with_blocks["agent"]), "session": session}
 
 
 @pytest_asyncio.fixture
@@ -34,7 +35,7 @@ async def agent_no_blocks_with_deps(agent_deps: AgentDeps, agent_record: AgentRe
 
 
 @pytest_asyncio.fixture
-async def agent_with_precompiled_prompt(session: AsyncSession):
+async def agent_with_precompiled_prompt(session: AsyncSession, test_engine):
     """Agent with a pre-populated compiled_system_prompt for get_system_prompt tests."""
     agent = AgentRecord(
         name="precompiled-agent",
@@ -45,7 +46,7 @@ async def agent_with_precompiled_prompt(session: AsyncSession):
     )
     session.add(agent)
     await session.flush()
-    return {"agent": agent, "deps": AgentDeps(session=session, agent_record=agent)}
+    return {"agent": agent, "deps": make_deps(test_engine, agent)}
 
 
 # --- Helper ---
@@ -76,7 +77,9 @@ class TestCompileSystemPrompt:
         self.deps = agent_with_blocks_and_deps["deps"]
         self.agent = agent_with_blocks_and_deps["agent"]
         self.blocks = agent_with_blocks_and_deps["blocks"]
-        await compile_system_prompt(self.deps)
+        self.session = agent_with_blocks_and_deps["session"]
+        async with self.deps.write_scope() as session:
+            await compile_system_prompt(self.deps, session)
         self.compiled = self.agent.compiled_system_prompt
 
     async def test_assembles_blocks_in_position_order(self):
@@ -154,7 +157,8 @@ class TestCompileSystemPrompt:
         """Compiling the same blocks twice should produce identical output."""
         first_compile = self.compiled
 
-        await compile_system_prompt(self.deps)
+        async with self.deps.write_scope() as session:
+            await compile_system_prompt(self.deps, session)
         second_compile = self.agent.compiled_system_prompt
 
         assert first_compile == second_compile, "Compilation should be deterministic"
@@ -162,9 +166,11 @@ class TestCompileSystemPrompt:
     async def test_reflects_updated_blocks_on_recompile(self):
         """Recompiling after a block edit should produce output reflecting the new content."""
         self.blocks[0].content = "Updated persona content after first compile."
-        await self.deps.session.flush()
+        await self.session.merge(self.blocks[0])
+        await self.session.commit()
 
-        await compile_system_prompt(self.deps)
+        async with self.deps.write_scope() as session:
+            await compile_system_prompt(self.deps, session)
 
         assert "Updated persona content after first compile." in self.agent.compiled_system_prompt
 
@@ -195,9 +201,10 @@ async def test_exact_compiled_format(session: AsyncSession, agent_deps: AgentDep
         content=_BLOCK_B_CONTENT, char_limit=_BLOCK_B_LIMIT, position=1,
     )
     session.add_all([block_a, block_b])
-    await session.flush()
+    await session.commit()
 
-    await compile_system_prompt(agent_deps)
+    async with agent_deps.write_scope() as ws_session:
+        await compile_system_prompt(agent_deps, ws_session)
 
     expected = (
         f"<system_instructions>\n"
@@ -222,7 +229,8 @@ async def test_compile_handles_agent_with_no_blocks(agent_no_blocks_with_deps: d
     deps = agent_no_blocks_with_deps["deps"]
     agent = agent_no_blocks_with_deps["agent"]
 
-    await compile_system_prompt(deps)
+    async with deps.write_scope() as session:
+        await compile_system_prompt(deps, session)
     compiled = agent.compiled_system_prompt
 
     assert f"<system_instructions>\n{agent.system_instructions}\n</system_instructions>" == compiled
@@ -235,42 +243,48 @@ async def test_compile_updates_sys_prompt_compiled_at(agent_with_blocks_and_deps
 
     assert agent.sys_prompt_compiled_at is None
 
-    before = datetime.now(UTC)
-    await compile_system_prompt(deps)
-    after = datetime.now(UTC)
+    before = utcnow()
+    async with deps.write_scope() as session:
+        await compile_system_prompt(deps, session)
+        # Naive UTC like every other timestamp column (see db.models.utcnow), even before the
+        # post-commit refresh reloads it from the DB.
+        assert deps.sys_prompt_compiled_at.tzinfo is None
+    after = utcnow()
 
     assert agent.sys_prompt_compiled_at is not None
     assert before < agent.sys_prompt_compiled_at < after
 
 
-async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession):
+async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession, test_engine):
     """Compilation should only include blocks belonging to the target agent."""
-    agent_a = AgentRecord(
+    agent_a = await commit_and_detach_fixture_record(session, AgentRecord(
         name="agent-a",
         agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Agent A instructions",
-    )
-    agent_b = AgentRecord(
+    ))
+    agent_b = await commit_and_detach_fixture_record(session, AgentRecord(
         name="agent-b",
         agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="Agent B instructions",
-    )
-    session.add_all([agent_a, agent_b])
-    await session.flush()
+    ))
 
-    block_a = MemoryBlockRecord(
-        agent_id=agent_a.id, label="a_block", description="",
-        content="A's secret content", char_limit=1000, position=0
-    )
-    block_b = MemoryBlockRecord(
-        agent_id=agent_b.id, label="b_block", description="",
-        content="B's secret content", char_limit=1000, position=0
-    )
-    session.add_all([block_a, block_b])
-    await session.flush()
+    session.add_all([
+        MemoryBlockRecord(
+            agent_id=agent_a.id, label="a_block", description="",
+            content="A's secret content", char_limit=1000, position=0
+        ),
+        MemoryBlockRecord(
+            agent_id=agent_b.id, label="b_block", description="",
+            content="B's secret content", char_limit=1000, position=0
+        ),
+    ])
+    await session.commit()
 
-    deps_a = AgentDeps(session=session, agent_record=agent_a)
-    await compile_system_prompt(deps_a)
+    deps_a = make_deps(test_engine, agent_a)
+    async with deps_a.write_scope() as write_session:
+        await compile_system_prompt(deps_a, write_session)
+
+    # write_scope refreshes the deps record (agent_a) on exit — readable directly
     compiled_a = agent_a.compiled_system_prompt
 
     assert "A's secret content" in compiled_a
@@ -312,7 +326,7 @@ class TestGetSystemPrompt:
 
 # --- get_system_prompt standalone tests (different fixtures) ---
 
-async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession):
+async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession, test_engine):
     """get_system_prompt should return empty string when compiled_system_prompt is empty/unset."""
     agent = AgentRecord(
         name="null-prompt-agent",
@@ -323,7 +337,7 @@ async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession
     await session.flush()
     assert agent.compiled_system_prompt == ""  # model defaults to ''
 
-    ctx = mock_run_context(AgentDeps(session=session, agent_record=agent))
+    ctx = mock_run_context(make_deps(test_engine, agent))
     result = await get_system_prompt(ctx)
     assert result == ""
 
@@ -338,13 +352,15 @@ async def test_get_returns_stale_prompt_after_block_edit(agent_with_blocks_and_d
     ctx = mock_run_context(deps)
 
     # Compile initial prompt
-    await compile_system_prompt(deps)
+    async with deps.write_scope() as session:
+        await compile_system_prompt(deps, session)
     original_compiled = agent.compiled_system_prompt
 
     # Modify a block directly (simulating what memory tools would do)
     blocks = agent_with_blocks_and_deps["blocks"]
     blocks[0].content = "COMPLETELY NEW CONTENT THAT SHOULD NOT APPEAR"
-    await deps.session.flush()
+    await agent_with_blocks_and_deps["session"].merge(blocks[0])
+    await agent_with_blocks_and_deps["session"].commit()
 
     # get_system_prompt should return the OLD compiled prompt
     result = await get_system_prompt(ctx)

@@ -36,6 +36,8 @@ from messages.messages import _extract_tool_definitions, deserialize_messages, l
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
 from conftest import (
+    commit_and_detach_fixture_record,
+    make_deps,
     in_process_mcp_toolset_factory,
     local_dummy_tool,
     SAMPLE_AGENT_CONFIG,
@@ -45,7 +47,7 @@ from conftest import (
     make_retry_pair,
     make_tool_pair,
 )
-from agent.types import AgentDeps
+from agent.deps import AgentDeps
 
 
 # ---------------------------------------------------------------------------
@@ -139,9 +141,9 @@ class DBTestBase:
     async def _persist(self, messages: list[ModelMessage], toolsets: Sequence[AbstractToolset] | None = None, *, deps: AgentDeps | None = None) -> int | None:
         """Persist messages with real toolset extraction. Defaults to no toolsets."""
         return await persist_messages(
-            deps if deps is not None else self.deps,
-            messages,
-            toolsets if toolsets is not None else [],
+            deps=deps if deps is not None else self.deps,
+            messages=messages,
+            toolsets=toolsets if toolsets is not None else [],
         )
 
     async def _persist_and_fetch(self, messages: list[ModelMessage], toolsets: Sequence[AbstractToolset] | None = None) -> list[MessageRecord]:
@@ -266,7 +268,7 @@ class TestPersistMessages(DBTestBase):
         restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
         assert restored == [response_with_call, request_with_response]
 
-    async def test_records_isolated_per_agent(self):
+    async def test_records_isolated_per_agent(self, test_engine):
         """
         Messages persisted for one agent must not affect another agent's records.
         Also verifies that new messages for a given agent do not affect that agent's old msgs.
@@ -276,9 +278,8 @@ class TestPersistMessages(DBTestBase):
             agent_config=SAMPLE_AGENT_CONFIG,
             system_instructions="Other agent.",
         )
-        self.session.add(other_agent)
-        await self.session.flush()
-        other_deps = AgentDeps(session=self.session, agent_record=other_agent)
+        other_agent = await commit_and_detach_fixture_record(self.session, other_agent)
+        other_deps = make_deps(test_engine, other_agent)
 
         expected_other_msg = make_request("other msg")
         my_first_expected_msg = make_request("my msg")
@@ -439,9 +440,9 @@ class TestPersistMessagesSnapshots(DBTestBase):
         schemas = tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS
         with patch("messages.messages._extract_tool_definitions", AsyncMock(return_value=schemas)):
             return await persist_messages(
-                deps if deps is not None else self.deps,
-                messages,
-                [],
+                deps=deps if deps is not None else self.deps,
+                messages=messages,
+                toolsets=[],
             )
 
     async def _persist_and_fetch(self, messages: list[ModelMessage], tool_schemas: list[ToolDefinition] | None = None) -> list[MessageRecord]:
@@ -592,16 +593,15 @@ class TestLoadMessages(DBTestBase):
         seq_ids = [r.seq_id for r in records]
         assert seq_ids == sorted(seq_ids)
 
-    async def test_returns_only_records_for_given_agent(self):
+    async def test_returns_only_records_for_given_agent(self, test_engine):
         """Records from other agents must not appear in results."""
         other_agent = AgentRecord(
             name="other-agent",
             agent_config=self.agent.agent_config,
             system_instructions="Other agent.",
         )
-        self.session.add(other_agent)
-        await self.session.flush()
-        other_deps = AgentDeps(session=self.session, agent_record=other_agent)
+        other_agent = await commit_and_detach_fixture_record(self.session, other_agent)
+        other_deps = make_deps(test_engine, other_agent)
 
         await self._persist([make_request(), make_response()])
         await self._persist([make_request(), make_response()], deps=other_deps)

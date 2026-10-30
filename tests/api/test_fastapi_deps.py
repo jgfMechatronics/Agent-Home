@@ -20,12 +20,13 @@ import pytest
 import pytest_asyncio
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agent.factory import AgentFactory
-from agent.types import AgentAppState, AgentDeps, AgentLockedError, AgentNotFoundError
-from api.fastapi_deps import get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_session_dep
-from tests.conftest import TEST_BASE_URL
+from agent.deps import AgentDeps
+from agent.types import AgentAppState, AgentLockedError, AgentNotFoundError
+from api.fastapi_deps import get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_ro_session_dep
+from tests.conftest import TEST_BASE_URL, make_ro_engine
 
 
 # --- Fixtures ---
@@ -52,6 +53,7 @@ async def _build_test_client(
     route,
     session: AsyncSession,
     agent_app_state_reg: dict,
+    test_engine: AsyncEngine,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Minimal FastAPI test app with session and agent state registry overridden, as an AsyncClient.
 
@@ -63,11 +65,13 @@ async def _build_test_client(
     """
     app = FastAPI()
     app.get("/test/{agent_id}")(route)
+    app.state.rw_engine = test_engine
+    app.state.ro_engine = make_ro_engine(test_engine)
 
     async def _override_session():
         yield session
 
-    app.dependency_overrides[get_session_dep] = _override_session
+    app.dependency_overrides[get_ro_session_dep] = _override_session
     app.dependency_overrides[get_agent_app_state_reg] = lambda: agent_app_state_reg
 
     async with AsyncClient(
@@ -81,6 +85,7 @@ async def agent_and_deps_client(
     session: AsyncSession,
     agent_app_state_reg: dict,
     captured: dict,
+    test_engine,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Test client wired to get_agent_and_deps — route captures both Agent and AgentDeps."""
     async def _route(agent_and_deps: tuple = Depends(get_agent_and_deps)):
@@ -91,7 +96,7 @@ async def agent_and_deps_client(
             raise exc
         return {}
 
-    async with _build_test_client(_route, session, agent_app_state_reg) as client:
+    async with _build_test_client(_route, session, agent_app_state_reg, test_engine) as client:
         yield client
 
 
@@ -100,6 +105,7 @@ async def deps_only_client(
     session: AsyncSession,
     agent_app_state_reg: dict,
     captured: dict,
+    test_engine,
 ) -> AsyncGenerator[AsyncClient, None]:
     """Test client wired to get_agent_deps — route captures AgentDeps only (no Agent)."""
     async def _route(deps: AgentDeps = Depends(get_agent_deps)):
@@ -108,7 +114,7 @@ async def deps_only_client(
             raise exc
         return {}
 
-    async with _build_test_client(_route, session, agent_app_state_reg) as client:
+    async with _build_test_client(_route, session, agent_app_state_reg, test_engine) as client:
         yield client
 
 
@@ -209,7 +215,7 @@ class TestGetAgentDeps:
             finally:
                 self.contextman_state["exited"] = True
 
-        with patch.object(AgentFactory, "build_deps", _build):
+        with patch("api.fastapi_deps.build_deps", _build):
             yield
 
     async def test_yields_correct_deps(
@@ -243,7 +249,7 @@ class TestGetAgentDeps:
             raise error
             yield  # unreachable — makes this an async generator function
 
-        with patch.object(AgentFactory, "build_deps", _raise):
+        with patch("api.fastapi_deps.build_deps", _raise):
             with pytest.raises(type(error)):
                 await deps_only_client.get("/test/any-id")
 
@@ -269,16 +275,16 @@ class TestGetAgentAppStates:
 
 
 class TestGetSessionDep:
-    """get_session_dep: yields a session from get_session(app.state.engine), one per call."""
+    """get_ro_session_dep: yields a session from get_session(app.state.ro_engine), one per call."""
 
     @pytest.fixture
     def mock_request(self) -> MagicMock:
         req = MagicMock()
-        req.app.state.engine = MagicMock()
+        req.app.state.ro_engine = MagicMock()
         return req
 
     async def test_yields_session_from_engine(self, mock_request: MagicMock):
-        """Yields the session returned by get_session, called with app.state.engine."""
+        """Yields the session returned by get_session, called with app.state.ro_engine."""
         mock_session = MagicMock(spec=AsyncSession)
         captured_engine = None
 
@@ -289,19 +295,19 @@ class TestGetSessionDep:
             yield mock_session
 
         with patch("api.fastapi_deps.get_session", mock_get_session):
-            session = await get_session_dep(mock_request).__anext__()
+            session = await get_ro_session_dep(mock_request).__anext__()
 
         assert session is mock_session
-        assert captured_engine is mock_request.app.state.engine
+        assert captured_engine is mock_request.app.state.ro_engine
 
     async def test_new_session_per_call(self, mock_request: MagicMock):
-        """Each invocation of get_session_dep yields a distinct session object."""
+        """Each invocation of get_ro_session_dep yields a distinct session object."""
         @asynccontextmanager
         async def mock_get_session(engine):
             yield MagicMock(spec=AsyncSession)
 
         with patch("api.fastapi_deps.get_session", mock_get_session):
-            session1 = await get_session_dep(mock_request).__anext__()
-            session2 = await get_session_dep(mock_request).__anext__()
+            session1 = await get_ro_session_dep(mock_request).__anext__()
+            session2 = await get_ro_session_dep(mock_request).__anext__()
 
         assert session1 is not session2

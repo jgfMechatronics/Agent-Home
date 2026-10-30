@@ -1,6 +1,8 @@
 import hashlib
 import os
+import tempfile
 import uuid
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 # Must be set before any import of api.app (which reads it at module level).
@@ -9,24 +11,23 @@ os.environ.setdefault("AGENT_HOME_DB_PATH", os.path.expanduser("~/.agent-home_py
 
 from contextlib import asynccontextmanager
 from datetime import datetime
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
 import time_machine
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event
-from db.connection import _configure_sqlite_conn
+from sqlalchemy.orm import object_session
+from db.connection import ReadOnlyEngine, create_readonly_sqlite_engine, create_sqlite_engine
 
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.types import AgentConfig, AgentDeps
+from agent.deps import AgentDeps
+from agent.types import AgentAppState, AgentConfig
 from agent.broadcast_streaming import BroadcastHub
 from pydantic import ConfigDict
 from api.app import _create_app
-from api.fastapi_deps import get_session_dep
 from db.models import (
     AgentConfigSnapshot,
     AgentRecord,
@@ -83,11 +84,11 @@ SAMPLE_AGENT_CONFIG_DATA = { "model_name": "anthropic:claude-sonnet-4-20250514",
 
 
 class _FrozenAgentConfig(AgentConfig):
-    """Immutable subclass of AgentConfig for use as a shared test constant.
+    """AgentConfig subclass for use as a shared test constant.
 
-    Raises FrozenInstanceError on any in-place mutation, catching mistakes at
-    the point of the error rather than silently corrupting shared test state.
-    model_copy() returns a regular (mutable) AgentConfig as expected.
+    AgentConfig itself is now frozen, so in-place mutation already raises; the
+    frozen=True here is redundant but harmless. Use model_copy(update=...) to
+    derive variants.
 
     __eq__ compares field values against any AgentConfig instance so that DB
     round-trips (which deserialize to plain AgentConfig) compare equal when the
@@ -168,10 +169,42 @@ async def seed_stub_snapshots(session: AsyncSession):
     await session.flush()
 
 
+def make_ro_engine(engine) -> ReadOnlyEngine:
+    """Derive a genuine read-only engine (SQLite mode=ro) from a test RW engine.
+
+    Same DB file, exact prod constructor: writes through the ro side fail in
+    tests with the same readonly-database error prod would raise. ReadOnlySession
+    is only a NewType (type-level intent, no runtime enforcement), so this engine
+    is the ONLY runtime write protection on the read path. NullPool: no teardown
+    needed. Used by make_deps and by sites building build_deps/AgentFactory directly.
+    """
+    return create_readonly_sqlite_engine(engine.url.database)
+
+
+def make_deps(engine, agent_record) -> AgentDeps:
+    """Test-side factory for AgentDeps — bypasses the factory guard (valid in tests only).
+
+    Requires a real SQLAlchemy engine (will fail loudly on engine.url if passed a mock).
+    Derives a genuine mode=ro ro engine (see make_ro_engine) so the rw/ro split is
+    enforced in tests as in prod. Sites explicitly testing the rw/ro split itself use
+    the raw constructor. Centralizes the guard-bypass so constructor signature changes
+    touch one place.
+
+    Expunges the record if it's still attached to a session (belt-and-suspenders —
+    commit_and_detach_fixture_record already detaches; guards against raw flush+add
+    callers): deps' invariant is a detached record between scopes, and write_scope's
+    re-attach fails loudly on a doubly-attached record.
+    """
+    ro_engine = make_ro_engine(engine)
+    if (attached_session := object_session(agent_record)) is not None:
+        attached_session.expunge(agent_record)
+    return AgentDeps(engine, ro_engine, agent_record, bypass_factory_guard=True)
+
+
 @pytest_asyncio.fixture
-async def agent_deps(session: AsyncSession, agent_record: AgentRecord) -> AgentDeps:
-    """AgentDeps constructed directly from session + agent_record (bypasses factory/lock — valid in tests)."""
-    return AgentDeps(session=session, agent_record=agent_record)
+async def agent_deps(test_engine, agent_record: AgentRecord) -> AgentDeps:
+    """AgentDeps on the test engine, with a genuine mode=ro ro engine (see make_deps)."""
+    return make_deps(test_engine, agent_record)
 
 
 # ---------------------------------------------------------------------------
@@ -242,40 +275,77 @@ def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
 
 
 @pytest_asyncio.fixture
-async def session():
-    """Fresh in-memory SQLite database per test. StaticPool ensures create_all and
-    the session share the same connection; engine disposal destroys the DB."""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        poolclass=StaticPool,
-    )
-    event.listens_for(engine.sync_engine, "connect")(_configure_sqlite_conn)
+async def test_engine():
+    """Per-test engine backed by a real file DB in a per-test tmpfs directory.
 
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        
-        async with AsyncSession(engine) as async_session:
-            yield async_session
-    finally:
-        await engine.dispose()
+    File-backed + create_sqlite_engine gives tests the exact production SQLite
+    configuration (WAL, busy_timeout, foreign_keys): committed-visibility and
+    snapshot semantics, with no read_uncommitted divergence. The directory
+    lives under /dev/shm (tmpfs) — RAM speed, no disk wear. TemporaryDirectory
+    gives a unique per-test dir (isolation incl. xdist workers) and removes it
+    automatically on teardown; the engine is disposed first.
+    """
+    tmpfs = "/dev/shm" if Path("/dev/shm").is_dir() else None
+    with tempfile.TemporaryDirectory(prefix="agent-home-test-", dir=tmpfs, ignore_cleanup_errors=True) as db_dir:
+        engine = create_sqlite_engine(str(Path(db_dir) / "test.db"))
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            yield engine
+        finally:
+            await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def session(test_engine):
+    """Session bound to the test engine, for test setup and assertions.
+
+    Fixture setup that other connections must see: use commit_and_detach_fixture_record
+    (add + commit + refresh — the same idiom as prod write_scope).
+    """
+    async with AsyncSession(test_engine) as async_session:
+        yield async_session
+
+
+async def commit_and_detach_fixture_record(session: AsyncSession, record):
+    """Fixture setup idiom: add + commit + refresh + expunge.
+
+    Commit publishes the record to other connections (read_scope queries) AND
+    autoflushes any pending inserts (no explicit flush() needed). Refresh reloads
+    attributes wiped by commit-expiry. Expunge detaches the record so it can be
+    passed to make_deps or write_scope without double-attach errors.
+
+    Use this for fixture records accessed via separate sessions (e.g., read_scope
+    in tested functions). If you need DB-generated values BEFORE committing (rare),
+    do explicit flush+commit by hand instead (see TestListAgents.test_returns_all_agents).
+    """
+    session.add(record)
+    await session.commit()
+    await session.refresh(record)
+    session.expunge(record)
+    return record
+
+
+@pytest.fixture
+def agent_app_state_reg() -> dict[str, AgentAppState]:
+    """Fresh agent state registry for each test. Must be an empty dict."""
+    return {}
 
 
 @pytest_asyncio.fixture
 async def agent_record(session: AsyncSession) -> AgentRecord:
     """
-    A persisted AgentRecord for use in tests that require an existing agent.
-    The underlying session can be used by dependents by seperately requesting that fixture. Pytest will
-    cache it resulting in session pointing to the temp DB which contains the persisted agent
+    A persisted, committed, detached AgentRecord for use in tests.
+    Committed so build_deps (which creates its own session) can find it.
+    Refreshed and expunged by commit_and_detach_fixture_record so attribute
+    reads work on the detached record.
     """
     agent = AgentRecord(
         name="test-agent",
         agent_config=SAMPLE_AGENT_CONFIG,
         system_instructions="You are a test agent.",
     )
-    session.add(agent)
-    await session.flush()
-    return agent
+    return await commit_and_detach_fixture_record(session, agent)
 
 
 @pytest_asyncio.fixture
@@ -324,8 +394,16 @@ async def agent_with_blocks(session: AsyncSession):
     # Insert out of position order to verify queries sort by position, not insertion order
     session.add_all([block_human, block_notes, block_persona])
     blocks = [block_persona, block_human, block_notes]  # position order for test assertions
-    await session.flush()
-    
+    # Commit + refresh + expunge: fixtures hand out detached, attribute-loaded records
+    # (ORM objects never outlive their session). Mutate via merge + commit in tests.
+    await session.commit()
+    await session.refresh(agent)
+    for block in blocks:
+        await session.refresh(block)
+    session.expunge(agent)
+    for block in blocks:
+        session.expunge(block)
+
     return {"agent": agent, "blocks": blocks}
 
 
@@ -360,21 +438,16 @@ def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | N
     return agent
 
 
-def _make_mock_session() -> Mock:
-    """Build a mock AsyncSession with async commit/rollback/refresh."""
-    session = Mock()
-    session.commit = AsyncMock()
-    session.rollback = AsyncMock()
-    session.refresh = AsyncMock()
-    return session
+@pytest_asyncio.fixture
+async def app(test_engine) -> FastAPI:
+    """Fresh app instance per test — avoids state contamination.
 
-
-@pytest.fixture
-def app() -> FastAPI:
-    """Fresh app instance per test — avoids state contamination."""
+    Sets rw_engine/ro_engine on app.state (normally done in lifespan, which doesn't run in tests).
+    """
     app = _create_app()
-    # Lifespan doesn't run in tests, so set up broadcast_hub manually
     app.state.broadcast_hub = BroadcastHub()
+    app.state.rw_engine = test_engine
+    app.state.ro_engine = make_ro_engine(test_engine)
     return app
 
 
@@ -390,20 +463,6 @@ async def client(app: FastAPI) -> AsyncClient:
         base_url=TEST_BASE_URL,
     ) as c:
         yield c
-
-
-@pytest.fixture(autouse=True)
-def override_db_session(app: FastAPI, session: AsyncSession):
-    """Ensure routes use the test session, not a separate DB connection.
-
-    Without this, routes call get_session_dep() -> new connection -> test data invisible.
-    """
-    async def _get_test_session():
-        yield session
-
-    app.dependency_overrides[get_session_dep] = _get_test_session
-    yield
-    app.dependency_overrides.pop(get_session_dep)
 
 
 # ---------------------------------------------------------------------------

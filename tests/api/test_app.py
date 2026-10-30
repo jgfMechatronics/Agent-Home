@@ -32,39 +32,45 @@ class TestLifespan:
     async def setup_and_teardown(self):
         # Fresh app instance per test - no state contamination
         self.app = _create_app()
-        
-        # set up mocks and handle patching
-        self.mock_db_engine = MagicMock()
-        self.mock_db_engine.dispose = AsyncMock()
+
+        # Lifespan creates two engines (rw + ro)
+        self.mock_rw_engine = MagicMock()
+        self.mock_rw_engine.dispose = AsyncMock()
+        self.mock_ro_engine = MagicMock()
+        self.mock_ro_engine.dispose = AsyncMock()
         self.mock_broadcast_hub = MagicMock()
         self.mock_broadcast_hub.shutdown = AsyncMock()
 
-        with (patch('api.app.create_sqlite_engine') as mock_create_engine,  # sync function
+        with (patch('api.app.create_sqlite_engine', return_value=self.mock_rw_engine) as mock_create_rw_engine,
+              patch('api.app.create_readonly_sqlite_engine', return_value=self.mock_ro_engine) as mock_create_ro_engine,
               patch('api.app.init_db', new_callable=AsyncMock) as mock_init_db,
               patch('api.app.BroadcastHub', return_value=self.mock_broadcast_hub)):
-            self.mock_create_engine = mock_create_engine
+            self.mock_create_rw_engine = mock_create_rw_engine
+            self.mock_create_ro_engine = mock_create_ro_engine
             self.mock_init_db = mock_init_db
-            self.mock_create_engine.return_value = self.mock_db_engine
             yield
-    
+
     async def startup_and_shutdown_lifespan(self) -> None:
         try:
             async with LifespanManager(self.app):  # Triggers ASGI lifespan startup/shutdown
                 pass
         finally:
             # lifespan shutdown should have cleaned up resources
-            self.mock_db_engine.dispose.assert_called_once()
+            self.mock_rw_engine.dispose.assert_called_once()
+            self.mock_ro_engine.dispose.assert_called_once()
             self.mock_broadcast_hub.shutdown.assert_called_once()
 
     async def test_happy_path(self):
         await self.startup_and_shutdown_lifespan()
 
         expected_db_path = os.environ["AGENT_HOME_DB_PATH"]
-        
-        self.mock_create_engine.assert_called_once_with(expected_db_path)
-        self.mock_init_db.assert_called_once_with(self.mock_db_engine)
 
-        assert self.app.state.engine is self.mock_db_engine
+        self.mock_create_rw_engine.assert_called_once_with(expected_db_path)
+        self.mock_create_ro_engine.assert_called_once_with(expected_db_path)
+        self.mock_init_db.assert_called_once_with(self.mock_rw_engine)
+
+        assert self.app.state.rw_engine is self.mock_rw_engine
+        assert self.app.state.ro_engine is self.mock_ro_engine
         assert self.app.state.broadcast_hub is self.mock_broadcast_hub
         assert self.app.state.agent_app_state_reg == {}
         # teardown asserts cleanup activity

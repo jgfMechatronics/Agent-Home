@@ -10,7 +10,6 @@ StatefulAgent Pattern:
   - Related: ReadOnlyStatefulAgent for read-only routes (get_blocks, etc.) — no AgentRunner, read-only DB connection
   - Could own lifespan. Lock acquisition/release and such. AgentFactory could then be an object which only exists long enough to construct a StatefulAgent, or could just be a free function
 """
-import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -32,18 +31,18 @@ from pydantic_ai_harness.tool_output_limits import (
     Truncate,
     indented_json,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agent.compaction_warner import CompactionWarner
-from agent.crud import get_agent_record
+from agent.deps import AgentDeps, build_deps
 from agent.parallel_tool_call_trimmer import ParallelToolCallTrimmer
 from agent.timestamping import ToolReturnTimestamper
-from agent.types import AgentAppState, AgentConfig, AgentDeps, AgentLockedError, AgentNotFoundError, AgentOutput
+from agent.types import AgentAppState, AgentConfig, AgentOutput
 from memory.system_prompt_compilation import get_system_prompt
 from agent.tools import get_tools_for_agent
+from db.connection import ReadOnlyEngine
 
 
-LOCK_TIMEOUT_SECONDS: int = 60
 LOCK_TIMEOUT_FAST: int = 2
 _MCP_FILESYSTEM_URL = "http://host.docker.internal:8080/mcp"
 
@@ -84,8 +83,8 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     # OpenRouter providers ignore it, and pydantic-ai runs any multiple calls it receives
     # concurrently. ParallelToolCallTrimmer (in _build_capabilities) is what actually guarantees
     # one call per response. Required because run_stateful_agent's persistence can't handle
-    # parallel calls and shares a session with tool execution.
-    # Safe to remove after session factory refactor.
+    # parallel calls, and AgentDeps is not task-safe for concurrent tool calls (see the
+    # task-safety TODO at the end of agent/deps.py). Not safe to remove until both are fixed.
     settings = ModelSettings(
         thinking=config.thinking_mode,
         max_tokens=36864,
@@ -187,77 +186,46 @@ def _build_capabilities() -> list[AgentCapability[AgentDeps]]:
     ]
 
 
+def get_or_create_agent_app_state(agent_app_state_reg: dict[str, AgentAppState], agent_id: str) -> AgentAppState:
+    """Get or create an AgentAppState entry for the given agent_id."""
+    # TODO: Memory leak on garbage agent_IDs or if there are a TON of registered agents being invoked
+    if agent_id not in agent_app_state_reg:
+        agent_app_state_reg[agent_id] = AgentAppState()
+    return agent_app_state_reg[agent_id]
+
+
 class AgentFactory:
     """Per-agent, per-request factory for building agents with locking.
 
-    Constructed via FastAPI Depends with agent_id, session, and agent_app_state bound.
+    Constructed via FastAPI Depends with agent_id, rw/ro engines, and agent_app_state bound.
     Resolves (or creates) the agent's AppState entry at construction time, so the registry
-    reference can be discarded after __init__. Routes call build_agent_and_deps() or
-    build_deps() for clean interface.
+    reference can be discarded after __init__. Routes call build_agent_and_deps() for
+    a fully configured (Agent, AgentDeps) pair.
 
-    Read-only operations can use session directly without factory.
-    Write operations require build_deps() or build_agent_and_deps(),
-    which proves the caller holds the lock.
+    For deps-only access (no Agent), use build_deps from agent.deps directly.
     """
 
-    def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState], session: AsyncSession):
+    def __init__(self, agent_id: str, agent_app_state_reg: dict[str, AgentAppState], rw_engine: AsyncEngine, ro_engine: ReadOnlyEngine):
         """Resolve (or create) the agent slot from the registry, then discard the registry ref."""
         self._agent_id = agent_id
-        self._agent_app_state = self._get_or_create_agent_app_state(agent_app_state_reg, agent_id)
-        self._session = session  # TODO: session also lives and is passed around in deps. ref spaghetti?
-
-    @staticmethod
-    def _get_or_create_agent_app_state(agent_app_state_reg: dict[str, AgentAppState], agent_id: str) -> AgentAppState:
-        """Get or create an AgentAppState entry for the given agent_id."""
-        # TODO: Memory leak on garbage agent_IDs or if there are a TON of registered agents being invoked
-        if agent_id not in agent_app_state_reg:
-            agent_app_state_reg[agent_id] = AgentAppState()
-        return agent_app_state_reg[agent_id]
-
-    @asynccontextmanager
-    async def build_deps(self, timeout: float = LOCK_TIMEOUT_SECONDS) -> AsyncIterator[AgentDeps]:
-        """Async context manager that acquires the agent lock and yields AgentDeps.
-
-        Lock-then-fetch: acquires lock BEFORE fetching from DB to prevent stale state.
-        Releases lock on exit (normal or exception) via try/finally.
-        """
-        try:
-            await asyncio.wait_for(self._agent_app_state.lock.acquire(), timeout=timeout)
-        except asyncio.TimeoutError:
-            raise AgentLockedError(f"Agent {self._agent_id!r} did not become available within {timeout}s")
-
-        try:
-            agent_record = await get_agent_record(self._session, self._agent_id)
-            if agent_record is None:
-                raise AgentNotFoundError(f"Agent {self._agent_id!r} not found")
-
-            deps = AgentDeps(self._session, agent_record)
-            yield deps
-        finally:
-            # Clear cancel_requested on exit to prevent a stale signal (e.g. a cancel that arrived
-            # during teardown) from leaking into the next run. Tradeoff: if a second client is waiting
-            # on the lock and sent a cancel for their queued run, that cancel is silently lost here.
-            # Acceptable for now — our "queue" is just lock waiters with no ordering guarantees and no
-            # run attribution. When we add a real queue, cancels should be associated with a specific
-            # run so this ambiguity goes away.
-            self._agent_app_state.cancel_requested.clear()
-            self._agent_app_state.lock.release()
-
+        self._agent_app_state = get_or_create_agent_app_state(agent_app_state_reg, agent_id)
+        self._rw_engine = rw_engine
+        self._ro_engine = ro_engine
 
     @asynccontextmanager
     async def build_agent_and_deps(self) -> AsyncIterator[tuple[Agent[AgentDeps, AgentOutput], AgentDeps]]:
         """Async context manager that yields a configured (Agent, AgentDeps) tuple.
-        
+
         Wraps build_deps and constructs the Pydantic AI Agent with correct model and tools.
         TODO: Sanity check the DeferredToolRequests thing, JF doesn't really understand whats going on there anymore
         Could be useful for client side tool execution.
         TODO: This doesn't actually manage context properly. It might release the lock but that seems to be pretty much ALL
         it does, it doesn't null out the resources actually associated with the lock!!!! Oops.
         """
-        async with self.build_deps() as deps:
+        async with build_deps(self._agent_id, self._agent_app_state, self._rw_engine, self._ro_engine) as deps:
             model_settings = _build_model_settings(deps.config)
             toolsets = _construct_toolsets(deps.config.toolset_names)
-            
+
             agent = Agent(deps.config.model_name,
                           instructions=get_system_prompt,
                           deps_type=AgentDeps,
@@ -268,6 +236,6 @@ class AgentFactory:
                           output_type=AgentOutput,
                           model_settings=model_settings,
                           capabilities=_build_capabilities())
-            
+
             yield (agent, deps)
 

@@ -1,17 +1,11 @@
-"""
-Tests for agent/types.py — Section 3.0
-
-AgentConfig: Pydantic model for agent configuration
-AgentDeps: Dataclass holding request-scoped agent state
-"""
+"""Tests for agent/types.py — AgentConfig and related types."""
 import json
-from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from conftest import SAMPLE_AGENT_CONFIG_DATA
 from pydantic import ValidationError
 
-from agent.types import THINKING_EFFORT_LEVELS, AgentConfig, AgentDeps, validate_model_name
+from agent.types import THINKING_EFFORT_LEVELS, AgentConfig, validate_model_name
 
 
 def test_validate_model_name_works_without_api_keys(monkeypatch):
@@ -244,52 +238,3 @@ def test_agentconfig_rejects_extra_fields(valid_config_data: dict):
     
     errors = exc_info.value.errors()
     assert any("extra" in str(e["type"]).lower() for e in errors)
-
-
-# --- AgentDeps ---
-
-@pytest.mark.parametrize("missing_field", ["session", "agent_record"])
-def test_agentdeps_requires_field(missing_field: str):
-    """AgentDeps should raise TypeError when a required constructor argument is missing."""
-    all_fields = {
-        "session": object(),
-        "agent_record": MagicMock(),
-    }
-    del all_fields[missing_field]
-
-    with pytest.raises(TypeError):
-        AgentDeps(**all_fields)
-
-
-class TestAgentDepsCommitChangesRefreshAgentRecord:
-    """commit_changes_refresh_agent_record — commit+refresh ordering invariant."""
-
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        self.mock_record = MagicMock()
-        self.mock_session = AsyncMock()
-        self.deps = AgentDeps(session=self.mock_session, agent_record=self.mock_record)
-
-    async def test_commits_then_refreshes(self):
-        """Refresh must follow commit — refreshing first would reload stale data."""
-        await self.deps.commit_changes_refresh_agent_record()
-
-        assert self.mock_session.mock_calls == [call.commit(), call.refresh(self.mock_record)]
-
-    async def test_refresh_not_called_when_commit_raises(self):
-        """A failed commit leaves the DB unchanged — refresh must not be called."""
-        self.mock_session.commit.side_effect = RuntimeError("DB connection lost")
-
-        with pytest.raises(RuntimeError, match="DB connection lost"):
-            await self.deps.commit_changes_refresh_agent_record()
-
-        self.mock_session.refresh.assert_not_called()
-
-
-async def test_agentdeps_holds_expected_fields(session, agent_deps, agent_record):
-    """AgentDeps properties should delegate to the underlying AgentRecord."""
-    assert agent_deps.agent_id == agent_record.id
-    assert agent_deps.session is session
-    assert agent_deps.config is agent_record.agent_config
-    assert agent_deps.name == agent_record.name
-    assert agent_deps.system_instructions == agent_record.system_instructions

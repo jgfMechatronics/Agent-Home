@@ -1,6 +1,12 @@
 """Tests for send_message tool — inter-agent communication.
 
 Prototype-quality tests for the IAC implementation.
+
+TODO(runner-refactor): Companion to test_runner.py's post-ToolResultEvent prefetch TODO. Once the
+runner refactor and agentic compaction eliminate that discarded model call, keep the scheduling
+yields in TestSendMessageContextIsolation's _persist_side_effect (they simulate production DB I/O
+regardless), but update the prefetch-dependent expectations in
+test_recipient_messages_persisted_after_compaction. Unchanged assertions would mean the waste remains.
 """
 import asyncio
 import json
@@ -15,8 +21,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.runner import COMPACTION_RESUME_NOTICE, run_stateful_agent, is_compaction_needed as _real_is_compaction_needed
 from agent.timestamping import add_timestamp_prefix
-from agent.types import AgentAppState, AgentDeps
-from conftest import SAMPLE_AGENT_CONFIG, _make_mock_session, make_alternating_messages, mock_run_context, assert_ModelMessage_list_eq
+from agent.deps import AgentDeps
+from agent.types import AgentAppState
+from conftest import SAMPLE_AGENT_CONFIG, make_alternating_messages, mock_run_context, assert_ModelMessage_list_eq, make_deps, commit_and_detach_fixture_record
 from db.models import AgentRecord
 from prototype.iac.send_message import (
     _format_inter_agent_message,
@@ -38,18 +45,16 @@ class TestSendMessage:
     """send_message tool: inter-agent communication."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession):
+    async def setup(self, session: AsyncSession, test_engine):
         """Create sender agent and optionally a target for delivery tests."""
         sender = AgentRecord(
             name="sender-agent",
             agent_config=SAMPLE_AGENT_CONFIG,
             system_instructions="Sender",
         )
-        session.add(sender)
-        await session.flush()
-        self.sender = sender
+        self.sender = await commit_and_detach_fixture_record(session, sender)
         self.session = session
-        self.deps = AgentDeps(session=session, agent_record=sender)
+        self.deps = make_deps(test_engine, sender)
         self.ctx = mock_run_context(self.deps)
         # Clear IAC module state before each test (some tests check unconfigured state)
         iac_module._agent_app_state_reg_IAC_ref = None
@@ -62,9 +67,7 @@ class TestSendMessage:
             agent_config=SAMPLE_AGENT_CONFIG,
             system_instructions="Target",
         )
-        self.session.add(target)
-        await self.session.flush()
-        return target
+        return await commit_and_detach_fixture_record(self.session, target)
 
     def _configure_iac(self, mocker):
         """Helper: configure IAC module (enables send_message)."""
@@ -118,16 +121,7 @@ class TestSendMessage:
 class TestDeliverMessage:
     """_deliver_message: background task for inter-agent delivery."""
 
-    @pytest.fixture
-    def mock_session(self, mocker):
-        """Mock get_session context manager (patch at source — imports are deferred)."""
-        mock_cm = mocker.AsyncMock()
-        mock_cm.__aenter__.return_value = mocker.MagicMock()
-        mock_cm.__aexit__.return_value = None
-        mocker.patch("db.connection.get_session", return_value=mock_cm)
-        return mock_cm
-
-    async def test_lock_unavailable_signals_false(self, mocker, mock_session):
+    async def test_lock_unavailable_signals_false(self, mocker):
         """Future receives False when AgentLockedError."""
         from agent.types import AgentLockedError
 
@@ -136,13 +130,14 @@ class TestDeliverMessage:
 
         mock_factory = mocker.MagicMock()
         mock_factory.build_agent_and_deps.return_value = mock_factory_cm
-        mocker.patch("agent.factory.AgentFactory", return_value=mock_factory)
+        mocker.patch("agent.factory.AgentFactory", autospec=True, return_value=mock_factory)
 
         future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         await _deliver_message(
             agent_id="test-agent-id",
             user_prompt="hello",
-            engine=mocker.MagicMock(),
+            rw_engine=mocker.MagicMock(),
+            ro_engine=mocker.MagicMock(),
             agent_app_state_reg={"test-agent-id": mocker.MagicMock()},
             broadcast_hub=mocker.MagicMock(),
             delivery_future=future,
@@ -150,7 +145,7 @@ class TestDeliverMessage:
 
         assert future.done() and future.result() is False
 
-    async def test_lock_acquired_signals_true_and_uses_broadcast_runner(self, mocker, mock_session):
+    async def test_lock_acquired_signals_true_and_uses_broadcast_runner(self, mocker):
         """Lock acquired: future receives True and run_agent_with_broadcast is called."""
         mock_agent = mocker.MagicMock()
         mock_deps = mocker.MagicMock()
@@ -167,7 +162,7 @@ class TestDeliverMessage:
 
         mock_factory = mocker.MagicMock()
         mock_factory.build_agent_and_deps.return_value = mock_factory_cm
-        mocker.patch("agent.factory.AgentFactory", return_value=mock_factory)
+        mocker.patch("agent.factory.AgentFactory", autospec=True, return_value=mock_factory)
 
         mock_app_state = mocker.MagicMock()
         mock_hub = mocker.MagicMock()
@@ -175,7 +170,8 @@ class TestDeliverMessage:
         await _deliver_message(
             agent_id="test-agent-id",
             user_prompt="hello",
-            engine=mocker.MagicMock(),
+            rw_engine=mocker.MagicMock(),
+            ro_engine=mocker.MagicMock(),
             agent_app_state_reg={"test-agent-id": mock_app_state},
             broadcast_hub=mock_hub,
             delivery_future=future,
@@ -223,12 +219,9 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
     """
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, mocker):
-        # Real DB records — only needed for flush (gives us real UUIDs) and
-        # as registry keys. NOT used inside the agent-run path to avoid
-        # ORM attribute access inside pydantic-ai's async context (which
-        # uses anyio greenlets that are not SQLAlchemy greenlets, causing
-        # MissingGreenlet on lazy-load of expired ORM objects).
+    async def setup(self, session: AsyncSession, mocker, test_engine):
+        # Real DB records, refreshed and detached by the fixture helper so later
+        # attribute access cannot trigger async lazy loads.
         sender_record = AgentRecord(
             name="sender-agent",
             agent_config=SAMPLE_AGENT_CONFIG,
@@ -239,13 +232,9 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
             agent_config=SAMPLE_AGENT_CONFIG,
             system_instructions="You are the recipient.",
         )
-        session.add_all([sender_record, recipient_record])
-        await session.flush()
-        # Refresh to load all attributes — prevents MissingGreenlet on later access
-        await session.refresh(sender_record)
-        await session.refresh(recipient_record)
+        sender_record = await commit_and_detach_fixture_record(session, sender_record)
+        recipient_record = await commit_and_detach_fixture_record(session, recipient_record)
 
-        # Use real records directly (refresh prevents lazy load issues)
         self.sender_record = sender_record
         self.recipient_record = recipient_record
         sender_id = sender_record.id
@@ -258,20 +247,14 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # Configure IAC module with registry + hub
         configure_iac(self.app_state_reg, self.mock_hub)
 
-        # Sender deps: mock session (DB access in send_message is bypassed via
-        # mocked get_all_agents; session.bind still needed for engine extraction)
-        self.sender_deps = AgentDeps(
-            session=_make_mock_session(),
-            agent_record=self.sender_record,
-        )
+        # Sender deps: use test_engine (DB access in send_message is bypassed via
+        # mocked get_all_agents)
+        self.sender_deps = make_deps(test_engine, self.sender_record)
         self.sender_app_state = AgentAppState()
         self.sender_agent = _SenderTestAgent()
 
-        # Recipient deps: mock session + real record (refreshed to avoid lazy load)
-        self.recipient_deps = AgentDeps(
-            session=_make_mock_session(),
-            agent_record=self.recipient_record,
-        )
+        # Recipient deps: use test_engine + real record (refreshed to avoid lazy load)
+        self.recipient_deps = make_deps(test_engine, self.recipient_record)
         # B runs two loop iterations: iter1 ends at ToolResultEvent (compaction fires),
         # iter2 runs steps 2–4 (two more tool calls + completion).  With the fix, all 9
         # expected messages are persisted correctly.  Without the fix, iter2's stale
@@ -298,12 +281,6 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         mock_factory.build_agent_and_deps.return_value = mock_cm
         mocker.patch("agent.factory.AgentFactory", return_value=mock_factory)
 
-        # Mock get_session in _deliver_message (engine from session.bind isn't real in tests)
-        mock_sess_cm = mocker.AsyncMock()
-        mock_sess_cm.__aenter__.return_value = mocker.MagicMock()
-        mock_sess_cm.__aexit__.return_value = None
-        mocker.patch("db.connection.get_session", return_value=mock_sess_cm)
-
         # Use real is_compaction_needed so token values drive compaction, not call ordering.
         # _real_is_compaction_needed is captured at module import time, before _BaseRouteTest
         # patches agent.runner.is_compaction_needed, so it still points to the real function.
@@ -314,7 +291,12 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         # All other calls (A's persists and B's iter2 persists) return None → no compaction.
         b_first_persist_done = [False]
 
-        async def _persist_side_effect(deps, messages, toolsets):
+        async def _persist_side_effect(deps, messages, toolsets, **kwargs):
+            # Yield to the event loop like production persist's real DB I/O does —
+            # pydantic-ai's post-ToolResultEvent prefetch needs the scheduling window
+            # (see _BaseRouteTest._persist_noop in test_runner.py for the full rationale).
+            for _ in range(10):
+                await asyncio.sleep(0)
             if deps._agent_record is self.recipient_record and not b_first_persist_done[0]:
                 b_first_persist_done[0] = True
                 return 999_999  # > soft_compaction_limit (10 000) → compaction fires
@@ -360,25 +342,20 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
         """
         A calls send_message → B spawned in background task.
         B runs 2 loop iterations using THREE_TOOL_CALL_STEPS (tool, tool, tool, done):
-          iter1: step 1 (tool call) → compaction fires after ToolResultEvent
-          iter2: steps 2–4 (two more tool calls + completion text)
+          iter1: step 0 (tool call) → compaction fires after ToolResultEvent.
+                 NOTE: pydantic-ai prefetches step 1 when the ToolResultEvent is pulled
+                 off the iterator; its response is discarded on the compaction break
+                 (known wastefulness — see test_runner compaction tests).
+          iter2: steps 2–3 (one more tool call + completion text)
 
-        With the contextvar fix (context=contextvars.Context()):
-          B's capture list is isolated per-iteration → all 9 messages persisted correctly.
-        Without the fix (surgical _RunMessages only):
-          iter2 reuses the stale iter1 capture list which ends in ToolCallPart;
-          the ToolResultEvent if-branch fires with stale history and re-persists it → 15 msgs.
-
-        Expected persisted messages for B (9 total):
+        Expected persisted messages for B (7 total):
           iter1  ① ModelRequest  [UserPromptPart(inter-agent msg)]        ← PartStartEvent elif
           iter1  ② ModelResponse [DUMMY_TOOL_CALL_PART]                   ┐ ToolResultEvent
-          iter1  ③ ModelRequest  [DUMMY_TOOL_RETURN_PART]                 ┘  step 1 atomic persist
+          iter1  ③ ModelRequest  [DUMMY_TOOL_RETURN_PART]                 ┘  step 0 atomic persist
           iter2  ④ ModelRequest  [UserPromptPart(COMPACTION_RESUME_NOTICE)] ← PartStartEvent elif
           iter2  ⑤ ModelResponse [DUMMY_TOOL_CALL_PART]                   ┐ ToolResultEvent
           iter2  ⑥ ModelRequest  [DUMMY_TOOL_RETURN_PART]                 ┘  step 2 atomic persist
-          iter2  ⑦ ModelResponse [DUMMY_TOOL_CALL_PART]                   ┐ ToolResultEvent
-          iter2  ⑧ ModelRequest  [DUMMY_TOOL_RETURN_PART]                 ┘  step 3 atomic persist
-          iter2  ⑨ ModelResponse [TextPart(COMPLETION_TEXT)]              ← AgentRunResultEvent elif
+          iter2  ⑦ ModelResponse [TextPart(COMPLETION_TEXT)]              ← AgentRunResultEvent elif
         """
         a_events = [event async for event in run_stateful_agent(
             self.sender_agent.agent,
@@ -408,13 +385,12 @@ class TestSendMessageContextIsolation(_PersistenceAndCancellationTestBase):
             )))]),
             ModelResponse(parts=[FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
             ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
-            # iter2: compaction resume notice + steps 2 and 3 tool call/return pairs
+            # iter2: compaction resume notice + step 2 tool call/return pair
+            # (step 1 was prefetch-discarded by pydantic-ai during iter1's compaction break)
             ModelRequest(parts=[UserPromptPart(content=COMPACTION_RESUME_NOTICE)]),
             ModelResponse(parts=[FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
             ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
-            ModelResponse(parts=[FunctionModelTestAgent.DUMMY_TOOL_CALL_PART]),
-            ModelRequest(parts=[FunctionModelTestAgent.DUMMY_TOOL_RETURN_PART]),
-            # iter2: step 4 completion
+            # iter2: step 3 completion
             ModelResponse(parts=[TextPart(content=FunctionModelTestAgent.COMPLETION_TEXT)]),
         ]
         assert_ModelMessage_list_eq(b_persisted, expected)

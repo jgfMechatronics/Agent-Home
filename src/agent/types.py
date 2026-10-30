@@ -6,15 +6,13 @@ not the reverse.
 """
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import TYPE_CHECKING, Literal, get_args, get_origin
+from typing import Literal, get_args, get_origin
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.models import parse_model_id
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.settings import ThinkingLevel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 # Union of valid agent run outputs. Single source of truth: the factory derives its
@@ -22,10 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # construction can't drift apart. None opts into pydantic-ai's allows_none path —
 # empty/thinking-only responses complete runs with None instead of retrying.
 AgentOutput = str | DeferredToolRequests | None
-
-
-if TYPE_CHECKING:
-    from db.models import AgentRecord, MemoryBlockRecord
 
 
 def validate_model_name(model_name: str) -> str:
@@ -120,7 +114,7 @@ class AgentConfig(BaseModel):
     - thinking_mode: False (off) | True (on, provider default effort) | effort level
       ('minimal'/'low'/'medium'/'high'/'xhigh' — pydantic-ai ThinkingLevel, mapped per provider)
     """
-    model_config = ConfigDict(extra="forbid") # prevent extra unexpected fields
+    model_config = ConfigDict(frozen=True, extra="forbid")  # frozen: prevents silent divergence via in-place mutation (JSON TypeDecorator isn't change-tracked)
 
     model_name: str
     tool_names: list[str]
@@ -173,112 +167,9 @@ class BlockSettings(BaseModel):
     Defaults align with create_block's defaults so BlockSettings() with just a label
     produces the same behavior as the old create_block(label=...) call.
     """
+    model_config = ConfigDict(from_attributes=True)
+
     label: str = Field(min_length=1)
     description: str = ""
     char_limit: int = Field(default=20000, gt=0)
     position: int | None = Field(default=None, ge=0)
-
-    @classmethod
-    def from_record(cls, block: "MemoryBlockRecord") -> "BlockSettings":
-        return cls(
-            label=block.label,
-            description=block.description,
-            char_limit=block.char_limit,
-            position=block.position,
-        )
-
-
-@dataclass(init=False)
-class AgentDeps:
-    """
-    Dependency bundle for agent operations. Outside tests, should only be constructed by build_deps.
-    This enforces the connection between AgentDeps and the lock that build_deps holds,
-    making it so deps proves caller holds the per-agent lock.
-    TODO: consider having AgentDeps validate it came from build_deps, or associate the lock with AgentDeps
-    Best move here is probably have AgentDeps take the lock at construction or something and enforce locked. Unsure if it should live in deps (probably not to reduce unnecessary refs and access)
-
-    _agent_record is private by convention — access via properties.
-
-    All properties read through _agent_record. Whenever possible call
-    commit_changes_refresh_agent_record() rather than committing directly — it
-    commits and refreshes _agent_record, preventing MissingGreenlet on
-    subsequent reads. Mutating callers should always hold deps (proves lock), so the
-    commit site is always well-defined.
-    """
-    session: AsyncSession
-    _agent_record: "AgentRecord" = field(repr=False)
-
-    def __init__(self, session: AsyncSession, agent_record: "AgentRecord") -> None:
-        self.session = session
-        self._agent_record = agent_record
-
-    @property
-    def agent_id(self) -> str:
-        return self._agent_record.id
-
-    @property
-    def name(self) -> str:
-        return self._agent_record.name
-
-    @property
-    def config(self) -> AgentConfig:
-        return self._agent_record.agent_config
-
-    @config.setter
-    def config(self, value: AgentConfig) -> None:
-        self._agent_record.agent_config = value
-
-    @property
-    def system_instructions(self) -> str:
-        return self._agent_record.system_instructions or ""
-
-    @system_instructions.setter
-    def system_instructions(self, value: str) -> None:
-        self._agent_record.system_instructions = value
-
-    @property
-    def compiled_system_prompt(self) -> str:
-        return self._agent_record.compiled_system_prompt
-
-    @compiled_system_prompt.setter
-    def compiled_system_prompt(self, value: str) -> None:
-        self._agent_record.compiled_system_prompt = value
-
-    @property
-    def sys_prompt_compiled_at(self) -> datetime | None:
-        return self._agent_record.sys_prompt_compiled_at
-
-    @sys_prompt_compiled_at.setter
-    def sys_prompt_compiled_at(self, value: datetime) -> None:
-        # Setters take non-None values intentionally — callers always provide a concrete timestamp
-        self._agent_record.sys_prompt_compiled_at = value
-
-    @property
-    def context_window_start(self) -> int:
-        return self._agent_record.context_window_start
-
-    @context_window_start.setter
-    def context_window_start(self, value: int) -> None:
-        self._agent_record.context_window_start = value
-
-    @property
-    def compaction_warning_fired(self) -> bool:
-        return self._agent_record.compaction_warning_fired
-
-    @compaction_warning_fired.setter
-    def compaction_warning_fired(self, value: bool) -> None:
-        self._agent_record.compaction_warning_fired = value
-
-    async def commit_changes_refresh_agent_record(self) -> None:
-        """Commit the session and immediately refresh _agent_record.
-
-        These two operations should always be coupled: SQLAlchemy expires all ORM attributes
-        after a commit, so any subsequent read of a mutable property (compiled_system_prompt,
-        context_window_start, etc.) would trigger a lazy reload — which raises MissingGreenlet
-        outside SQLAlchemy's own async machinery. Refreshing immediately after the commit
-        reloads the record while the async context is still active, keeping the object live.
-
-        Whenever possible, use this instead of calling session.commit() directly.
-        """
-        await self.session.commit()
-        await self.session.refresh(self._agent_record)

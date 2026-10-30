@@ -99,8 +99,9 @@ class TestAFIngestion:
         )
         # tool_names order may vary
         assert set(returned_config.tool_names) == set(expected_config.tool_names)
-        returned_config.tool_names = expected_config.tool_names # normalize prior to full eq
-        assert returned_config == expected_config
+        # Normalize tool_names order for comparison (model is frozen, use model_copy)
+        returned_normalized = returned_config.model_copy(update={"tool_names": expected_config.tool_names})
+        assert returned_normalized == expected_config
 
     async def test_system_instructions(self):
         """Imported agent has correct system instructions."""

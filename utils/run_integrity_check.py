@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agent.crud import get_all_agents
-from db.connection import create_sqlite_engine, get_session
+from db.connection import create_readonly_sqlite_engine, get_session
 from utils.integrity_checker import check_agent_integrity, load_dismissals, filter_dismissed_issues
 from common.constants import INTEGRITY_LOCKFILE_NAME
 
@@ -35,7 +35,7 @@ async def run(db_path: Path) -> int:
     dismissals_path = db_path.parent / _DISMISSALS_FILENAME
     results_path = db_path.parent / _RESULTS_FILENAME
 
-    engine = create_sqlite_engine(str(db_path.absolute()), readonly=True)
+    engine = create_readonly_sqlite_engine(str(db_path.absolute()))
 
     try:
         lines: list[str] = []

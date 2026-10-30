@@ -9,14 +9,13 @@ by app-level exception handlers registered in api/app.py — not caught here.
 from typing import AsyncIterator
 
 from fastapi import Depends, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST
-from agent.types import AgentAppState, AgentDeps
-from db.connection import get_session
-from agent.broadcast_streaming import BroadcastHub
-
 from pydantic_ai import Agent
+
+from agent.deps import AgentDeps, build_deps
+from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST, get_or_create_agent_app_state
+from agent.types import AgentAppState
+from db.connection import ReadOnlyEngine, ReadOnlySession, get_session
+from agent.broadcast_streaming import BroadcastHub
 
 
 def get_agent_app_state_reg(request: Request) -> dict[str, AgentAppState]:
@@ -29,15 +28,16 @@ def get_broadcast_hub(request: Request) -> BroadcastHub:
     return request.app.state.broadcast_hub
 
 
-async def get_session_dep(request: Request) -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency: yields a session bound to app.state.engine."""
-    async with get_session(request.app.state.engine) as session:
+async def get_ro_session_dep(request: Request) -> AsyncIterator[ReadOnlySession]:
+    """FastAPI dependency: yields a read-only session bound to app.state.ro_engine."""
+    ro_engine: ReadOnlyEngine = request.app.state.ro_engine
+    async with get_session(ro_engine) as session:
         yield session
 
 
 async def get_agent_and_deps(
     agent_id: str,
-    session: AsyncSession = Depends(get_session_dep),
+    request: Request,
     agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> AsyncIterator[tuple[Agent, AgentDeps]]:
     """FastAPI yield dependency: acquires agent lock, yields (Agent, AgentDeps).
@@ -48,14 +48,15 @@ async def get_agent_and_deps(
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
-    factory = AgentFactory(agent_id, agent_app_state_reg, session)
+    factory = AgentFactory(agent_id, agent_app_state_reg,
+                           request.app.state.rw_engine, request.app.state.ro_engine)
     async with factory.build_agent_and_deps() as (agent, deps):
         yield (agent, deps)
 
 
 async def get_agent_deps(
     agent_id: str,
-    session: AsyncSession = Depends(get_session_dep),
+    request: Request,
     agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
 ) -> AsyncIterator[AgentDeps]:
     """FastAPI yield dependency: acquires agent lock (short timeout) and yields AgentDeps.
@@ -71,6 +72,12 @@ async def get_agent_deps(
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
-    factory = AgentFactory(agent_id, agent_app_state_reg, session)
-    async with factory.build_deps(timeout=LOCK_TIMEOUT_FAST) as deps:
+    app_state = get_or_create_agent_app_state(agent_app_state_reg, agent_id)
+    async with build_deps(
+        agent_id=agent_id,
+        agent_app_state=app_state,
+        rw_engine=request.app.state.rw_engine,
+        ro_engine=request.app.state.ro_engine,
+        timeout=LOCK_TIMEOUT_FAST,
+    ) as deps:
         yield deps
