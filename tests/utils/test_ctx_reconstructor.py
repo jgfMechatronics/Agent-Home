@@ -9,7 +9,6 @@ import pytest
 import pytest_asyncio
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.factory import AgentFactory

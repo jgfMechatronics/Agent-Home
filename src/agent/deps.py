@@ -262,7 +262,7 @@ Related, but NOT fixed by anything below: read-modify-write lost updates in memo
 memory_insert (see TODO in agent/tools.py).
 
 PROPOSED DESIGN: frozen snapshot for reads, transaction handle for writes, per-deps write lock.
-Drop the property setters entirely (only ~8 write sites in src, all already inside write_scope).
+Drop the property setters entirely (only 10 write sites in src, all already inside write_scope).
 Keep the getters (~47 read sites), reading from an immutable snapshot.
 
     class AgentSnapshot(BaseModel):
@@ -339,9 +339,11 @@ Design notes / decisions:
   - To verify when implementing: AgentConfigType (TypeDecorator) round-trips correctly through
     AgentSnapshot.model_validate(record).
 
-Migration cost: the 8 setter write sites (compaction.py, crud.py, compaction_warner.py,
-system_prompt_compilation.py), compile_system_prompt's signature (deps, session) -> (txn), deps.py
-itself (net simpler), plus tests that set fields through deps inside write_scope (test_compaction,
-test_crud, test_deps, test_system_prompt_compilation). test_agentdeps_setter_requires_write_scope
+Migration cost: the 10 setter write sites (compaction.py, crud.py, compaction_warner.py,
+system_prompt_compilation.py), compile_system_prompt's signature (deps, session) -> (txn) and its
+callers (compaction.py, crud.py, api/routes.py x2, prototype/api/slash_commands.py), deps.py
+itself (net simpler), plus tests that set fields through deps inside write_scope or call
+compile_system_prompt (test_compaction, test_crud, test_deps, test_system_prompt_compilation,
+utils/test_ctx_reconstructor). test_agentdeps_setter_requires_write_scope
 becomes moot.
 """

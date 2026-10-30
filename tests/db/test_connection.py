@@ -4,7 +4,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.pool import NullPool
 
-from conftest import SAMPLE_AGENT_CONFIG
 from db.connection import create_readonly_sqlite_engine, create_sqlite_engine, get_session, init_db
 from db.models import AgentRecord, MessageRecord, MemoryBlockRecord
 

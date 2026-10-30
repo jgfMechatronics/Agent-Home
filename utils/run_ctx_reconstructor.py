@@ -29,7 +29,7 @@ def _format_reconstruction(ctx: ReconstructedContext) -> str:
     lines.append("=" * 70)
     
     lines.append(f"\nAgent ID: {ctx.agent_id}")
-    lines.append(f"\nTarget Message:")
+    lines.append("\nTarget Message:")
     lines.append(repr(ctx.target_message))
     
     lines.append(f"\n\n{'=' * 70}")

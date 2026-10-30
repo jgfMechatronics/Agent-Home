@@ -21,7 +21,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.orm import object_session
 from db.connection import ReadOnlyEngine, create_readonly_sqlite_engine, create_sqlite_engine
 
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.deps import AgentDeps
 from agent.types import AgentAppState, AgentConfig

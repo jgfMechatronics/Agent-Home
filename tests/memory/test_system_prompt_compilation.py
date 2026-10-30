@@ -6,7 +6,6 @@ get_system_prompt(ctx) — returns cached prompt for Pydantic AI instructions pa
 """
 from datetime import datetime
 
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
