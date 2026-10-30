@@ -53,7 +53,6 @@ from messages.messages import format_system_alert, persist_messages
 from agent.parallel_tool_call_trimmer import ParallelToolCallTrimmer
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
 from agent.timestamping import add_timestamp_prefix
-from agent.deps import AgentDeps
 from agent.types import AgentAppState, MCPConnError
 from api.fastapi_deps import get_agent_and_deps
 from conftest import make_mock_agent, local_dummy_tool, assert_ModelMessage_list_eq, make_deps
@@ -999,7 +998,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
         self.function_agent.chunk_emitted.clear()
         self.function_agent.resume_stream.set()  # unblock so route can service the cancel
 
-        events = await asyncio.wait_for(stream_task, timeout=5.0)
+        await asyncio.wait_for(stream_task, timeout=5.0)
 
         persisted_msgs_list = self._list_persisted_messages(self.mock_persist_messages)
 

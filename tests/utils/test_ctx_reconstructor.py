@@ -328,7 +328,7 @@ class TestReconstructContextIntegration:
         mutated_config = AgentConfig(
             model_name="anthropic:claude-sonnet-4-20250514", tool_names=["memory_replace"], soft_compaction_limit=10000
         )
-        
+
         # Update record and compile within write_scope
         mutated_deps = make_deps(test_engine, self.agent_record)
         async with mutated_deps.write_scope() as session:

@@ -32,7 +32,7 @@ from agent.types import AgentAppState, AgentConfig, BlockSettings
 from api.fastapi_deps import get_agent_deps
 from agent.crud import create_agent_record
 from conftest import SAMPLE_AGENT_CONFIG, make_deps
-from db.models import AgentRecord, MemoryBlockRecord, utcnow
+from db.models import AgentRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError, MemoryBlock
 
@@ -292,7 +292,7 @@ class TestListAgents:
                 session, name=f"agent-{i}", system_instructions="", config=SAMPLE_AGENT_CONFIG
             )
             expected.append(AgentMetadataResponse.from_record(record))
-        
+
         # Commit so records are visible to separate client connection.
         # Not commit_and_detach_fixture_record: the loop reads record.id (via from_record) BEFORE
         # committing, which is why this setup needs create_agent_record's explicit flush.

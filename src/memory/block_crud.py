@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.connection import ReadOnlySession
 

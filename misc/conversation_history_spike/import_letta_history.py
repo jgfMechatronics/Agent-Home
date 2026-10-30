@@ -235,7 +235,11 @@ async def import_to_database(
     
     engine = create_sqlite_engine(db_path)
     await init_db(engine)  # Creates tables if needed
-    
+
+    # TODO: get_session is read-only (takes ReadOnlyEngine, yields ReadOnlySession, no commit).
+    # This works only because we pass a rw engine and commit explicitly below; the type checker
+    # will flag it. Fix: replace with `async with AsyncSession(engine) as session:` (keeping the
+    # explicit commit), the same pattern as the create_agent route.
     async with get_session(engine) as session:
         # Check if agent already exists
         result = await session.execute(

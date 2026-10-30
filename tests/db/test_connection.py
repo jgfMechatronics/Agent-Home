@@ -131,5 +131,3 @@ async def test_get_session_closes_on_context_exit(ro_engine):
         await session.execute(text("SELECT 1"))  # triggers autobegin
         assert session.in_transaction()
     assert not session.in_transaction()
-
-

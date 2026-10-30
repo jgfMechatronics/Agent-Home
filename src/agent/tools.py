@@ -173,10 +173,10 @@ async def memory_replace(
         block = await get_block(session, deps.agent_id, label)
         if block is None:
             raise ModelRetry(f"block '{label}' not found")
-        
+
         # Resolve occurrence to character position (raises ModelRetry on failure)
         start_pos = _resolve_occurrence(block.content, old_string, occurrence, label)
-        
+
         # Perform replacement
         end_pos = start_pos + len(old_string)
         new_content = block.content[:start_pos] + new_string + block.content[end_pos:]

@@ -22,8 +22,6 @@ from pydantic_ai.settings import ThinkingLevel
 AgentOutput = str | DeferredToolRequests | None
 
 
-
-
 def validate_model_name(model_name: str) -> str:
     """Validate a model name string via pydantic-ai's provider registry.
 

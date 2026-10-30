@@ -238,4 +238,3 @@ def test_agentconfig_rejects_extra_fields(valid_config_data: dict):
     
     errors = exc_info.value.errors()
     assert any("extra" in str(e["type"]).lower() for e in errors)
-

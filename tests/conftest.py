@@ -84,11 +84,11 @@ SAMPLE_AGENT_CONFIG_DATA = { "model_name": "anthropic:claude-sonnet-4-20250514",
 
 
 class _FrozenAgentConfig(AgentConfig):
-    """Immutable subclass of AgentConfig for use as a shared test constant.
+    """AgentConfig subclass for use as a shared test constant.
 
-    Raises FrozenInstanceError on any in-place mutation, catching mistakes at
-    the point of the error rather than silently corrupting shared test state.
-    model_copy() returns a regular (mutable) AgentConfig as expected.
+    AgentConfig itself is now frozen, so in-place mutation already raises; the
+    frozen=True here is redundant but harmless. Use model_copy(update=...) to
+    derive variants.
 
     __eq__ compares field values against any AgentConfig instance so that DB
     round-trips (which deserialize to plain AgentConfig) compare equal when the

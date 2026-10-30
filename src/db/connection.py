@@ -28,6 +28,11 @@ def _configure_sqlite_conn(dbapi_conn, _) -> None:
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute(f"PRAGMA busy_timeout={_DB_BUSY_TIMEOUT_MS}")
+    # WAL is persistent in the DB file header. On a mode=ro connection this PRAGMA is a no-op if
+    # the file is already WAL, but raises "attempt to write a readonly database" if it isn't. Fine
+    # in practice: the app's lifespan runs init_db on the rw engine (first connection, sets WAL)
+    # before anything touches the ro engine, and the utils runners read the existing (WAL) prod DB.
+    # A ro engine pointed at a never-WAL'd file (e.g. a foreign SQLite file) will fail here.
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.close()
 

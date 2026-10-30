@@ -3,11 +3,6 @@ API routes
 NOTE: Read only routes should take a session only and do not need to read or acquire the agent lock
 R/W routes should take deps from get_agent_deps which acquires and holds the lock
 
-TODO: Our current "read-only" access pattern isn't truly read-only. Read operations
-take a full AsyncSession and may return mutable ORM objects still connected to the DB.
-This works but violates principle of least privilege — callers that only need to read
-have full write access. Worth revisiting when we have bandwidth.
-
 TODO: We have some exception catching and mapping that doesn't use "raise ... from e", probably some places we want to add the chaining.
 """
 import logging
@@ -355,7 +350,7 @@ async def update_block_content(
     try:
         return await update_block(deps, label, body.content)
     except ContentExceedsLimitError as e:
-        raise HTTPException(status_code=422, detail=f"Content exceeds char limit") from e
+        raise HTTPException(status_code=422, detail="Content exceeds char limit") from e
 
 
 @router.get("/{agent_id}/memory/blocks/{label}/settings")

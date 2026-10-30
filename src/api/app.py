@@ -1,5 +1,4 @@
 """FastAPI application and lifespan"""
-import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
