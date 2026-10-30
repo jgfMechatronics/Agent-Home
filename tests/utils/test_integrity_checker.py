@@ -34,6 +34,15 @@ from utils.integrity_checker import (
 # Message Record Factory (local to integrity tests)
 # ---------------------------------------------------------------------------
 
+# TODO: Promote make_message_record / make_message_sequence to conftest as the shared
+# MessageRecord builders. They're the most realistic ones in the suite (real serialized
+# ModelMessage content, deterministic timestamps, valid context_window_start_msg_id), and:
+#   - TestReconstructContext._make_message in test_ctx_reconstructor.py is a weaker duplicate
+#     tied to self.session, and should use these instead.
+#   - test_run_integrity_check.py mocks every dependency (autospec'd). With shared builders it
+#     can run run() against a real DB the way test_run_ctx_reconstructor.py does: seed a
+#     sequence with a seq_id gap for the lockfile case and a clean one for the other, then
+#     commit before calling run() (it reads through its own mode=ro connection).
 def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRecord:
     """Construct a MessageRecord with realistic defaults.
 
