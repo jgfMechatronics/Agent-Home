@@ -29,7 +29,9 @@ class AgentDeps:
     Dependency bundle for stateful agents. Instances built by build_deps hold the agent's
     AgentAppState.lock for their lifetime, so at most one such deps exists per agent at a time.
     This is an in-process lock, not a DB write lock: code holding its own session can still
-    write the agent's rows.
+    write the agent's rows. The only sanctioned way to get write access to the db though is
+    through deps, so as long as nothing violates that, the in-process lock is effectively a
+    write lock.
 
     Construction is guarded: callers must either pass the private _deps_token (from
     build_deps) or explicitly pass bypass_factory_guard=True (for bootstrap cases like
