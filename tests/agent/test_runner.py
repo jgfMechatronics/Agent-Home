@@ -56,7 +56,7 @@ from agent.timestamping import add_timestamp_prefix
 from agent.deps import AgentDeps
 from agent.types import AgentAppState, MCPConnError
 from api.fastapi_deps import get_agent_and_deps
-from conftest import make_mock_agent, _make_mock_session, local_dummy_tool, assert_ModelMessage_list_eq, make_deps
+from conftest import make_mock_agent, local_dummy_tool, assert_ModelMessage_list_eq, make_deps
 from db.models import AgentRecord, MemoryBlockRecord
 from agent.tools import TOOL_REGISTRY
 
@@ -495,7 +495,7 @@ class FunctionModelTestAgent:
         we should just make the override use a real factory with a FunctionModelAgent model or something.
         """
         agent_app_state = AgentAppState()
-        agent_id = agent_record.id  # capture eagerly — write_scope expires record attrs on exception
+        agent_id = agent_record.id  # capture eagerly — write_scope falls back to expiring record attrs if its rollback/refresh fails
         app.state.agent_app_state_reg[agent_id] = agent_app_state
 
         async def _make_agent_and_deps():

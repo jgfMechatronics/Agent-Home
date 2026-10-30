@@ -1,10 +1,9 @@
 """Tests for utils/run_integrity_check.py — lockfile creation behavior."""
 
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import pytest
-from contextlib import asynccontextmanager
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from utils.integrity_checker import INTEGRITY_LOCKFILE_NAME, IntegrityIssue, Severity
 from utils.run_integrity_check import run
@@ -32,18 +31,17 @@ def db_path(tmp_path):
 
 @pytest.fixture(autouse=True)
 def mock_integrity_runner_deps(db_path, mock_agent):
-    """Mock DB layer so no real SQLite engine is needed."""
-    mock_session = AsyncMock()
+    """Mock DB layer so no real SQLite engine is needed.
 
-    @asynccontextmanager
-    async def mock_get_session(_engine):
-        yield mock_session
-
+    Every patch uses autospec=True so a call that doesn't match the real signature (e.g. a
+    removed kwarg like readonly=) raises TypeError here instead of passing silently.
+    """
     with (
-        patch("utils.run_integrity_check.create_sqlite_engine", return_value=AsyncMock()),
-        patch("utils.run_integrity_check.get_session", mock_get_session),
-        patch("utils.run_integrity_check.get_all_agents", new_callable=AsyncMock, return_value=[mock_agent]),
-        patch("utils.run_integrity_check.load_dismissals", return_value=[]),
+        patch("utils.run_integrity_check.create_readonly_sqlite_engine", autospec=True,
+              return_value=create_autospec(AsyncEngine, instance=True)),
+        patch("utils.run_integrity_check.get_session", autospec=True),
+        patch("utils.run_integrity_check.get_all_agents", autospec=True, return_value=[mock_agent]),
+        patch("utils.run_integrity_check.load_dismissals", autospec=True, return_value=[]),
     ):
         yield
 
@@ -58,8 +56,8 @@ async def test_lockfile_behavior(db_path, issues, expect_lockfile, expected_exit
     check_agent_integrity and filter_dismissed_issues are patched here rather than in the
     fixture because the return value depends on the parametrized `issues` argument.
     """
-    with patch("utils.run_integrity_check.check_agent_integrity", new_callable=AsyncMock, return_value=issues):
-        with patch("utils.run_integrity_check.filter_dismissed_issues", side_effect=lambda found_issues, _dismissals: found_issues):
+    with patch("utils.run_integrity_check.check_agent_integrity", autospec=True, return_value=issues):
+        with patch("utils.run_integrity_check.filter_dismissed_issues", autospec=True, side_effect=lambda found_issues, _dismissals: found_issues):
             exit_code = await run(db_path)
 
     lockfile = db_path.parent / INTEGRITY_LOCKFILE_NAME

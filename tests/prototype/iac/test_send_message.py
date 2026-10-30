@@ -23,7 +23,7 @@ from agent.runner import COMPACTION_RESUME_NOTICE, run_stateful_agent, is_compac
 from agent.timestamping import add_timestamp_prefix
 from agent.deps import AgentDeps
 from agent.types import AgentAppState
-from conftest import SAMPLE_AGENT_CONFIG, _make_mock_session, make_alternating_messages, mock_run_context, assert_ModelMessage_list_eq, make_deps, commit_and_detach_fixture_record
+from conftest import SAMPLE_AGENT_CONFIG, make_alternating_messages, mock_run_context, assert_ModelMessage_list_eq, make_deps, commit_and_detach_fixture_record
 from db.models import AgentRecord
 from prototype.iac.send_message import (
     _format_inter_agent_message,

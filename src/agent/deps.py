@@ -26,13 +26,14 @@ Not importable by convention — only this module should use it."""
 
 class AgentDeps:
     """
-    Dependency bundle for stateful agents. When constructed without bypass_factory_guard=True,
-    agent is write locked for anyone who doesn't hold the single deps instance associated with said
-    agent. 
+    Dependency bundle for stateful agents. Instances built by build_deps hold the agent's
+    AgentAppState.lock for their lifetime, so at most one such deps exists per agent at a time.
+    This is an in-process lock, not a DB write lock: code holding its own session can still
+    write the agent's rows.
 
     Construction is guarded: callers must either pass the private _deps_token (from
     build_deps) or explicitly pass bypass_factory_guard=True (for bootstrap cases like
-    create_agent_record, and tests).
+    the create_agent route, and tests).
 
     _agent_record intended to be accessed via properties.
 

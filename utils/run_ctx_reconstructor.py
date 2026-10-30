@@ -17,7 +17,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from db.connection import create_sqlite_engine, get_session
+from db.connection import create_readonly_sqlite_engine, get_session
 from utils.ctx_reconstructor import reconstruct_context, ReconstructedContext
 
 
@@ -67,7 +67,7 @@ def _format_reconstruction(ctx: ReconstructedContext) -> str:
 async def run(db_path: Path, message_id: str, output_path: Path) -> int:
     """Run context reconstruction. Returns 0 on success, 1 on error."""
     
-    engine = create_sqlite_engine(str(db_path.absolute()), readonly=True)
+    engine = create_readonly_sqlite_engine(str(db_path.absolute()))
     
     try:
         async with get_session(engine) as session:

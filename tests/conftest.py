@@ -11,7 +11,7 @@ os.environ.setdefault("AGENT_HOME_DB_PATH", os.path.expanduser("~/.agent-home_py
 
 from contextlib import asynccontextmanager
 from datetime import datetime
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
@@ -346,7 +346,6 @@ async def agent_record(session: AsyncSession) -> AgentRecord:
         system_instructions="You are a test agent.",
     )
     return await commit_and_detach_fixture_record(session, agent)
-    return agent
 
 
 @pytest_asyncio.fixture
@@ -437,15 +436,6 @@ def make_mock_agent(events: list | None = None, raises_mid_stream: Exception | N
 
     agent.run_stream_events = _stream
     return agent
-
-
-def _make_mock_session() -> Mock:
-    """Build a mock AsyncSession with async commit/rollback/refresh."""
-    session = Mock()
-    session.commit = AsyncMock()
-    session.rollback = AsyncMock()
-    session.refresh = AsyncMock()
-    return session
 
 
 @pytest_asyncio.fixture
