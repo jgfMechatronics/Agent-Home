@@ -31,7 +31,7 @@ from agent.deps import AgentDeps
 from agent.types import AgentAppState, AgentConfig, BlockSettings
 from api.fastapi_deps import get_agent_deps
 from agent.crud import create_agent_record
-from conftest import SAMPLE_AGENT_CONFIG, make_deps
+from conftest import SAMPLE_AGENT_CONFIG, make_deps, make_ro_engine
 from db.models import AgentRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError, MemoryBlock
@@ -117,6 +117,24 @@ class TestCreateAgentNameUniqueness:
         second = await client.post("/agents", json=TestCreateAgent._VALID_BODY)
         assert second.status_code == 409
         assert second.json()["detail"] == f"Agent name already in use: {TestCreateAgent._NAME!r}"
+
+
+class TestCreateAgentInitialization:
+    """POST /agents — real DB, no mocks: the agent is fully initialized at commit."""
+
+    async def test_system_prompt_compiled_on_create(self, client: AsyncClient, test_engine):
+        """create_agent compiles the system prompt in the same transaction as the insert."""
+        before = utcnow()
+        response = await client.post("/agents", json=TestCreateAgent._VALID_BODY)
+        after = utcnow()
+        assert response.status_code == 201
+
+        async with AsyncSession(make_ro_engine(test_engine)) as check_session:
+            record = await check_session.get(AgentRecord, response.json()["id"])
+
+        assert TestCreateAgent._VALID_BODY["system_instructions"] in record.compiled_system_prompt
+        assert record.sys_prompt_compiled_at is not None
+        assert before < record.sys_prompt_compiled_at < after
 
 
 class TestGetAgentByName:

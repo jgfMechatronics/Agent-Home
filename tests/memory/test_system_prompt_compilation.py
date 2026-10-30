@@ -4,7 +4,7 @@ Tests for system prompt building (memory/system_prompt_compilation.py)
 compile_system_prompt(deps) — assembles blocks into prompt, stores result
 get_system_prompt(ctx) — returns cached prompt for Pydantic AI instructions param
 """
-from datetime import datetime, UTC
+from datetime import datetime
 
 import pytest
 import pytest_asyncio
@@ -14,7 +14,7 @@ from conftest import (
     mock_run_context, SAMPLE_AGENT_CONFIG, make_deps, commit_and_detach_fixture_record
 )
 from agent.deps import AgentDeps
-from db.models import AgentRecord, MemoryBlockRecord
+from db.models import AgentRecord, MemoryBlockRecord, utcnow
 
 
 from memory.system_prompt_compilation import compile_system_prompt, get_system_prompt
@@ -244,12 +244,13 @@ async def test_compile_updates_sys_prompt_compiled_at(agent_with_blocks_and_deps
 
     assert agent.sys_prompt_compiled_at is None
 
-    # SQLite stores naive datetimes — sys_prompt_compiled_at round-trips naive-UTC,
-    # so compare against naive now() values.
-    before = datetime.now(UTC).replace(tzinfo=None)
+    before = utcnow()
     async with deps.write_scope() as session:
         await compile_system_prompt(deps, session)
-    after = datetime.now(UTC).replace(tzinfo=None)
+        # Naive UTC like every other timestamp column (see db.models.utcnow), even before the
+        # post-commit refresh reloads it from the DB.
+        assert deps.sys_prompt_compiled_at.tzinfo is None
+    after = utcnow()
 
     assert agent.sys_prompt_compiled_at is not None
     assert before < agent.sys_prompt_compiled_at < after

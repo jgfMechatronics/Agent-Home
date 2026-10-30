@@ -26,7 +26,7 @@ from agent.factory import AgentFactory
 from agent.deps import AgentDeps
 from agent.types import AgentAppState, AgentLockedError, AgentNotFoundError
 from api.fastapi_deps import get_agent_and_deps, get_agent_app_state_reg, get_agent_deps, get_ro_session_dep
-from tests.conftest import TEST_BASE_URL
+from tests.conftest import TEST_BASE_URL, make_ro_engine
 
 
 # --- Fixtures ---
@@ -66,7 +66,7 @@ async def _build_test_client(
     app = FastAPI()
     app.get("/test/{agent_id}")(route)
     app.state.rw_engine = test_engine
-    app.state.ro_engine = test_engine
+    app.state.ro_engine = make_ro_engine(test_engine)
 
     async def _override_session():
         yield session
@@ -275,16 +275,16 @@ class TestGetAgentAppStates:
 
 
 class TestGetSessionDep:
-    """get_ro_session_dep: yields a session from get_session(app.state.engine), one per call."""
+    """get_ro_session_dep: yields a session from get_session(app.state.ro_engine), one per call."""
 
     @pytest.fixture
     def mock_request(self) -> MagicMock:
         req = MagicMock()
-        req.app.state.engine = MagicMock()
+        req.app.state.ro_engine = MagicMock()
         return req
 
     async def test_yields_session_from_engine(self, mock_request: MagicMock):
-        """Yields the session returned by get_session, called with app.state.engine."""
+        """Yields the session returned by get_session, called with app.state.ro_engine."""
         mock_session = MagicMock(spec=AsyncSession)
         captured_engine = None
 

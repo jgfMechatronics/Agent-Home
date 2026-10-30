@@ -1008,6 +1008,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
             ModelRequest(parts=[UserPromptPart(content=add_timestamp_prefix(DEFAULT_USER_MESSAGE))]),
             self.CANCEL_NOTICE,
         ]
+        assert_ModelMessage_list_eq(persisted_msgs_list, expected_msg_list)
 
 
 # ---------------------------------------------------------------------------

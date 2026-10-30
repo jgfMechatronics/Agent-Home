@@ -1,5 +1,5 @@
 """Tests for CompactionWarner capability."""
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 import pytest_asyncio
@@ -18,6 +18,7 @@ from pydantic_ai.models.test import TestModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction import compact
+from agent.deps import AgentDeps
 from agent.compaction_warner import COMPACTION_WARNING_TEXT, COMPACTION_WARNING_THRESHOLD_FRACTION,CompactionWarner
 from agent.factory import AgentFactory
 from agent.runner import run_stateful_agent
@@ -198,10 +199,9 @@ class TestCompactionWarnerUnit:
         mock_config = MagicMock()
         mock_config.soft_compaction_limit = soft_limit
         
-        mock_deps = MagicMock()
+        mock_deps = create_autospec(AgentDeps, instance=True)
         mock_deps.config = mock_config
         mock_deps.compaction_warning_fired = False
-        mock_deps.commit_changes_refresh_agent_record = AsyncMock()
         
         mock_ctx = MagicMock()
         mock_ctx.deps = mock_deps
@@ -230,14 +230,13 @@ class TestCompactionWarnerUnit:
         target_fraction = 0.25
         total_tokens = 5000
 
-        mock_deps = MagicMock()
+        mock_deps = create_autospec(AgentDeps, instance=True)
         mock_deps.context_window_start = None
         mock_deps.compiled_system_prompt = ""
         mock_deps.config = MagicMock()
         mock_deps.config.compaction_target_fraction = target_fraction
         mock_deps.config.soft_compaction_limit = soft_limit
         mock_deps.compaction_warning_fired = True  # Flag is set from previous warning
-        mock_deps.commit_changes_refresh_agent_record = AsyncMock()
         
         # Need > 4 messages; type="ModelResponse" avoids deserialization branch.
         # Set total_tokens on the last record so compact() can derive it without a real API call.

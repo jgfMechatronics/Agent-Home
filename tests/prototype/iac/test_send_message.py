@@ -130,19 +130,22 @@ class TestDeliverMessage:
 
         mock_factory = mocker.MagicMock()
         mock_factory.build_agent_and_deps.return_value = mock_factory_cm
-        mocker.patch("agent.factory.AgentFactory", autospec=True, return_value=mock_factory)
+        mock_factory_cls = mocker.patch("agent.factory.AgentFactory", autospec=True, return_value=mock_factory)
 
+        rw_engine, ro_engine = mocker.MagicMock(), mocker.MagicMock()
+        registry = {"test-agent-id": mocker.MagicMock()}
         future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         await _deliver_message(
             agent_id="test-agent-id",
             user_prompt="hello",
-            rw_engine=mocker.MagicMock(),
-            ro_engine=mocker.MagicMock(),
-            agent_app_state_reg={"test-agent-id": mocker.MagicMock()},
+            rw_engine=rw_engine,
+            ro_engine=ro_engine,
+            agent_app_state_reg=registry,
             broadcast_hub=mocker.MagicMock(),
             delivery_future=future,
         )
 
+        mock_factory_cls.assert_called_once_with("test-agent-id", registry, rw_engine, ro_engine)
         assert future.done() and future.result() is False
 
     async def test_lock_acquired_signals_true_and_uses_broadcast_runner(self, mocker):
@@ -162,21 +165,24 @@ class TestDeliverMessage:
 
         mock_factory = mocker.MagicMock()
         mock_factory.build_agent_and_deps.return_value = mock_factory_cm
-        mocker.patch("agent.factory.AgentFactory", autospec=True, return_value=mock_factory)
+        mock_factory_cls = mocker.patch("agent.factory.AgentFactory", autospec=True, return_value=mock_factory)
 
         mock_app_state = mocker.MagicMock()
         mock_hub = mocker.MagicMock()
+        rw_engine, ro_engine = mocker.MagicMock(), mocker.MagicMock()
+        registry = {"test-agent-id": mock_app_state}
         future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         await _deliver_message(
             agent_id="test-agent-id",
             user_prompt="hello",
-            rw_engine=mocker.MagicMock(),
-            ro_engine=mocker.MagicMock(),
-            agent_app_state_reg={"test-agent-id": mock_app_state},
+            rw_engine=rw_engine,
+            ro_engine=ro_engine,
+            agent_app_state_reg=registry,
             broadcast_hub=mock_hub,
             delivery_future=future,
         )
 
+        mock_factory_cls.assert_called_once_with("test-agent-id", registry, rw_engine, ro_engine)
         assert future.done() and future.result() is True
         mock_broadcast_run.assert_called_once_with(
             mock_agent, mock_deps, mock_app_state, "hello", mock_hub

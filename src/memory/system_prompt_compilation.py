@@ -7,14 +7,13 @@ TODO: More instances of accessing db directly rather than going through the agen
 """
 from __future__ import annotations
 
-from datetime import datetime, UTC
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
     from agent.deps import AgentDeps
-from db.models import MemoryBlockRecord
+from db.models import MemoryBlockRecord, utcnow
 from db.connection import ReadOnlySession
 from memory.block_crud import get_blocks
 from pydantic_ai import RunContext
@@ -60,7 +59,7 @@ async def compile_system_prompt(deps: AgentDeps, session: AsyncSession) -> None:
 
     # Store result
     deps.compiled_system_prompt = "\n".join(parts)
-    deps.sys_prompt_compiled_at = datetime.now(UTC)
+    deps.sys_prompt_compiled_at = utcnow()
 
 
 async def get_system_prompt(ctx: RunContext[AgentDeps]) -> str:
