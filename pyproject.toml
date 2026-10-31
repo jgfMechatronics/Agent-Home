@@ -60,6 +60,7 @@ package = true
 
 [tool.pyright]
 extraPaths = ["src", "."]
+exclude = ["misc"]
 
 [dependency-groups]
 dev = [
