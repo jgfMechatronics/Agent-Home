@@ -63,5 +63,6 @@ extraPaths = ["src", "."]
 
 [dependency-groups]
 dev = [
+    "pyright>=1.1.414",
     "time-machine>=3.5.1",
 ]
