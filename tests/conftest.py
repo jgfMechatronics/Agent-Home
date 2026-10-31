@@ -19,7 +19,7 @@ import time_machine
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.orm import object_session
-from db.connection import ReadOnlyEngine, create_readonly_sqlite_engine, create_sqlite_engine
+from db.connection import Engines, ReadOnlyEngine, create_readonly_sqlite_engine, create_sqlite_engine
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -446,8 +446,7 @@ async def app(test_engine) -> FastAPI:
     """
     app = _create_app()
     app.state.broadcast_hub = BroadcastHub()
-    app.state.rw_engine = test_engine
-    app.state.ro_engine = make_ro_engine(test_engine)
+    app.state._engines = Engines(rw=test_engine, ro=make_ro_engine(test_engine))
     return app
 
 
