@@ -189,7 +189,7 @@ class TestRunCleanupFlowIntegration:
         await create_block(deps, BlockSettings(label=self.skill_label), self.skill_content)
         
         # TestClient WITHOUT context manager = no lifespan run
-        # app fixture supplies app.state.ro_engine; routes use real get_ro_session_dep
+        # app fixture supplies app.state._engines; routes use real get_ro_session_dep
         # base_url required for TrustedHostMiddleware validation
         self.test_client = TestClient(app, base_url="http://localhost")
     
@@ -226,7 +226,7 @@ class TestRunCleanupFlowIntegration:
                     )
         
         # Verify blocks were updated (read routes get fresh sessions per request —
-        # real get_ro_session_dep on app.state.ro_engine)
+        # real get_ro_session_dep on app.state._engines.ro)
         for label in self.cleanup_labels:
             resp = self.test_client.get(f"/agents/{self.agent_id}/memory/blocks/{label}")
             assert resp.json()["content"] == f"Edited {label}"
