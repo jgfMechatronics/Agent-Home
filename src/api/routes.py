@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from pydantic_ai import Agent, AgentRunResultEvent
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from db.connection import ReadOnlySession
+from db.connection import ReadOnlySession, get_engines
 
 from agent.crud import (
     agent_exists,
@@ -216,13 +216,14 @@ async def create_agent(
     TODO: I was able to get an invalid model name through to the DB. Errored out when trying to do a model request but did persist
     (update: pretty sure this is fixed now)
     """
-    async with AsyncSession(request.app.state.rw_engine) as session:
+    engines = get_engines(request)
+    async with AsyncSession(engines.rw) as session:
         try:
             record = await create_agent_record(session, body.name, body.system_instructions, body.config)
             # Temporary deps for compile_system_prompt — no lock needed (agent is brand new).
             # Record is session-attached, so property setter guards pass naturally.
             deps = AgentDeps(
-                request.app.state.rw_engine, request.app.state.ro_engine, record,
+                engines.rw, engines.ro, record,
                 bypass_factory_guard=True,  # Bootstrap: no lock exists yet for a brand-new agent
             )
             await compile_system_prompt(deps, session)

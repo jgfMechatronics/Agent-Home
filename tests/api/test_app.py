@@ -38,6 +38,8 @@ class TestLifespan:
         self.mock_rw_engine.dispose = AsyncMock()
         self.mock_ro_engine = MagicMock()
         self.mock_ro_engine.dispose = AsyncMock()
+        # Engines.__post_init__ validates ro engine URL contains mode=ro
+        self.mock_ro_engine.url = "sqlite+aiosqlite:///file:/tmp/test.db?mode=ro&uri=true"
         self.mock_broadcast_hub = MagicMock()
         self.mock_broadcast_hub.shutdown = AsyncMock()
 
@@ -69,8 +71,8 @@ class TestLifespan:
         self.mock_create_ro_engine.assert_called_once_with(expected_db_path)
         self.mock_init_db.assert_called_once_with(self.mock_rw_engine)
 
-        assert self.app.state.rw_engine is self.mock_rw_engine
-        assert self.app.state.ro_engine is self.mock_ro_engine
+        assert self.app.state._engines.rw is self.mock_rw_engine
+        assert self.app.state._engines.ro is self.mock_ro_engine
         assert self.app.state.broadcast_hub is self.mock_broadcast_hub
         assert self.app.state.agent_app_state_reg == {}
         # teardown asserts cleanup activity

@@ -4,7 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.pool import NullPool
 
-from db.connection import create_readonly_sqlite_engine, create_sqlite_engine, get_session, init_db
+from db.connection import create_readonly_sqlite_engine, create_sqlite_engine, get_session, init_db, Engines
 from db.models import AgentRecord, MessageRecord, MemoryBlockRecord
 
 TABLE_NAMES = [AgentRecord.__tablename__, MessageRecord.__tablename__, MemoryBlockRecord.__tablename__]
@@ -130,3 +130,20 @@ async def test_get_session_closes_on_context_exit(ro_engine):
         await session.execute(text("SELECT 1"))  # triggers autobegin
         assert session.in_transaction()
     assert not session.in_transaction()
+
+
+# --- Engines dataclass ---
+
+class TestEngines:
+    """Engines dataclass validates ro engine has mode=ro at construction time."""
+
+    async def test_constructs_with_correct_engines(self, raw_engine, ro_engine):
+        """Engines constructs successfully when ro engine is actually read-only."""
+        engines = Engines(rw=raw_engine, ro=ro_engine)
+        assert engines.rw is raw_engine
+        assert engines.ro is ro_engine
+
+    async def test_rejects_swapped_engines(self, raw_engine, ro_engine):
+        """Engines raises RuntimeError if ro slot gets a non-readonly engine."""
+        with pytest.raises(RuntimeError, match="not a mode=ro engine"):
+            Engines(rw=ro_engine, ro=raw_engine)

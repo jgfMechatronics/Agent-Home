@@ -1,9 +1,11 @@
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import AsyncIterator, NewType
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
+from starlette.requests import Request
 
 from db.models import Base
 
@@ -56,6 +58,37 @@ async def init_db(engine: AsyncEngine) -> None:
     # TODO: Do we need to pass checkfirst or whatever = True or otherwise check if db already init? This is init_db's responsibility
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+@dataclass(frozen=True)
+class Engines:
+    """Typed container for rw/ro engine pair. Frozen to prevent accidental mutation.
+
+    Runtime check in __post_init__ verifies ro engine is actually read-only.
+    This catches wiring mistakes that static analysis can't (NewType is erased at runtime).
+    """
+
+    rw: AsyncEngine
+    ro: ReadOnlyEngine
+
+    def __post_init__(self) -> None:
+        # ro engine URL should have mode=ro in query string
+        # URL is like: sqlite+aiosqlite:///file:/path/to/db?mode=ro&uri=true
+        url_str = str(self.ro.url)
+        if "mode=ro" not in url_str:
+            raise RuntimeError(
+                f"Engines.ro is not a mode=ro engine. URL: {url_str}"
+            )
+
+
+def get_engines(request: Request) -> Engines:
+    """Single typed accessor for engine pair. All engine access should go through this.
+
+    Using a dedicated accessor (vs direct app.state access) ensures type checking works:
+    app.state.__getattr__ returns Any, bypassing static analysis.
+    """
+    # Private access intentional here, this member intended to be accessed ONLY by this function
+    return request.app.state._engines
 
 
 @asynccontextmanager

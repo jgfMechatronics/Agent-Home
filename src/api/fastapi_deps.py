@@ -14,7 +14,7 @@ from pydantic_ai import Agent
 from agent.deps import AgentDeps, build_deps
 from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST, get_or_create_agent_app_state
 from agent.types import AgentAppState
-from db.connection import ReadOnlyEngine, ReadOnlySession, get_session
+from db.connection import ReadOnlySession, get_engines, get_session
 from agent.broadcast_streaming import BroadcastHub
 
 
@@ -30,8 +30,8 @@ def get_broadcast_hub(request: Request) -> BroadcastHub:
 
 async def get_ro_session_dep(request: Request) -> AsyncIterator[ReadOnlySession]:
     """FastAPI dependency: yields a read-only session bound to app.state.ro_engine."""
-    ro_engine: ReadOnlyEngine = request.app.state.ro_engine
-    async with get_session(ro_engine) as session:
+    engines = get_engines(request)
+    async with get_session(engines.ro) as session:
         yield session
 
 
@@ -48,8 +48,8 @@ async def get_agent_and_deps(
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
-    factory = AgentFactory(agent_id, agent_app_state_reg,
-                           request.app.state.rw_engine, request.app.state.ro_engine)
+    engines = get_engines(request)
+    factory = AgentFactory(agent_id, agent_app_state_reg, engines.rw, engines.ro)
     async with factory.build_agent_and_deps() as (agent, deps):
         yield (agent, deps)
 
@@ -72,12 +72,13 @@ async def get_agent_deps(
 
     Lock is released on exit regardless of outcome (normal, exception, or client disconnect).
     """
+    engines = get_engines(request)
     app_state = get_or_create_agent_app_state(agent_app_state_reg, agent_id)
     async with build_deps(
         agent_id=agent_id,
         agent_app_state=app_state,
-        rw_engine=request.app.state.rw_engine,
-        ro_engine=request.app.state.ro_engine,
+        rw_engine=engines.rw,
+        ro_engine=engines.ro,
         timeout=LOCK_TIMEOUT_FAST,
     ) as deps:
         yield deps
