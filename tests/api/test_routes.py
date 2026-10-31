@@ -525,7 +525,7 @@ class _MemoryBlockEndpointBase:
         self.blocks = agent_with_blocks["blocks"]
 
         async def _mock_dep():
-            yield make_deps(app.state.rw_engine, self.agent_record)
+            yield make_deps(app.state._engines.rw, self.agent_record)
 
         app.dependency_overrides[get_agent_deps] = _mock_dep
 
