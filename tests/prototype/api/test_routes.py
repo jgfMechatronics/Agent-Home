@@ -50,7 +50,7 @@ class TestGetMessages:
         self.mock_load_messages.assert_called_once()
         call = self.mock_load_messages.call_args
         loaded_session, loaded_agent_id = call.args
-        assert loaded_session.bind is app.state.ro_engine
+        assert loaded_session.bind is app.state._engines.ro
         assert loaded_agent_id == agent_id
         assert call.kwargs == {"start_seq_id": start_seq_id}
 
