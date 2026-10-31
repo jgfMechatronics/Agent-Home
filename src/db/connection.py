@@ -87,6 +87,7 @@ def get_engines(request: Request) -> Engines:
     Using a dedicated accessor (vs direct app.state access) ensures type checking works:
     app.state.__getattr__ returns Any, bypassing static analysis.
     """
+    # Private access intentional here, this member intended to be accessed ONLY by this function
     return request.app.state._engines
 
 
