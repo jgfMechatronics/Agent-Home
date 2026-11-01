@@ -38,6 +38,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -563,7 +564,7 @@ async def process_sse_event(
 ) -> None:
     """Process a single SSE event."""
     try:
-        data = json.loads(data_str) if data_str else {}
+        data: dict[str, Any] = json.loads(data_str) if data_str else {}
     except json.JSONDecodeError:
         data = {"raw": data_str}
 
