@@ -10,6 +10,7 @@ Each test spawns a fresh bridge subprocess and drives it via the ACP protocol.
 import asyncio
 import json
 import sys
+from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 import httpx
@@ -19,6 +20,10 @@ import pytest_asyncio
 from tests.e2e.conftest import TEST_AGENT_INSTRUCTIONS, PROJECT_ROOT, SERVER_URL, REQUEST_TIMEOUT
 
 BRIDGE_TIMEOUT = REQUEST_TIMEOUT  # seconds to wait for bridge responses
+
+# Deterministic tool-call probe: a memory block the tool_agent agent can read.
+TOOL_PROBE_BLOCK = "e2e_probe"
+TOOL_PROBE_CONTENT = "alpha\nbeta\ngamma\n"
 
 
 # =============================================================================
@@ -123,19 +128,85 @@ async def e2e_agent(live_server: str) -> AsyncIterator[str]:
 
 
 @pytest_asyncio.fixture
-async def bridge(e2e_agent: str) -> AsyncIterator[BridgeProcess]:
-    """Spawn a bridge subprocess connected to the e2e test agent."""
+async def tool_agent(live_server: str) -> AsyncIterator[str]:
+    """Agent with one built-in tool, plus a memory block for that tool to edit.
+
+    The bridge e2e agent has no tools, so this fixture provides the smallest
+    deterministic setup that produces a real FunctionToolCall/Result pair:
+    memory_insert against a known block (no network, no external state).
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(f"{live_server}/agents")
+        resp.raise_for_status()
+        agent_id = next(
+            (agent["id"] for agent in resp.json() if agent.get("name") == "e2e-bridge-tool-test"),
+            None,
+        )
+        if agent_id is None:
+            resp = await client.post(
+                f"{live_server}/agents",
+                json={
+                    "name": "e2e-bridge-tool-test",
+                    "system_instructions": (
+                        "You are a test assistant running as part of an automated e2e test. "
+                        "When a message asks you to call a tool, call it; never answer from memory. "
+                        "Your participation is not mandatory. If at any point you wish to not "
+                        "participate, simply reply 'REFUSE' and nothing else."
+                    ),
+                    "config": {
+                        "model_name": "anthropic:claude-haiku-4-5-20251001",
+                        "tool_names": ["memory_insert"],
+                        "soft_compaction_limit": 100000,
+                    },
+                },
+            )
+            resp.raise_for_status()
+            agent_id = resp.json()["id"]
+
+        # Seed the probe block (idempotent across repeated fixture use).
+        resp = await client.get(f"{live_server}/agents/{agent_id}/memory/blocks")
+        resp.raise_for_status()
+        labels = {block.get("label") for block in resp.json()["blocks"]}
+        if TOOL_PROBE_BLOCK not in labels:
+            resp = await client.post(
+                f"{live_server}/agents/{agent_id}/memory/blocks",
+                json={"label": TOOL_PROBE_BLOCK, "content": TOOL_PROBE_CONTENT},
+            )
+            resp.raise_for_status()
+
+        yield agent_id
+
+
+@asynccontextmanager
+async def _spawn_bridge(agent_id: str) -> AsyncIterator[BridgeProcess]:
+    """Spawn a bridge subprocess connected to the given agent."""
     proc = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "prototype.acp",
-        e2e_agent, "--server-url", SERVER_URL,
+        agent_id, "--server-url", SERVER_URL,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
         cwd=PROJECT_ROOT,
     )
-    bp = BridgeProcess(proc, e2e_agent)
-    yield bp
-    await bp.close()
+    bp = BridgeProcess(proc, agent_id)
+    try:
+        yield bp
+    finally:
+        await bp.close()
+
+
+@pytest_asyncio.fixture
+async def bridge(e2e_agent: str) -> AsyncIterator[BridgeProcess]:
+    """Spawn a bridge subprocess connected to the e2e test agent."""
+    async with _spawn_bridge(e2e_agent) as bp:
+        yield bp
+
+
+@pytest_asyncio.fixture
+async def tool_bridge(tool_agent: str) -> AsyncIterator[BridgeProcess]:
+    """Spawn a bridge subprocess connected to the tool-call test agent."""
+    async with _spawn_bridge(tool_agent) as bp:
+        yield bp
 
 
 # =============================================================================
@@ -194,6 +265,72 @@ async def test_session_prompt_delivers_agent_response(bridge: BridgeProcess, e2e
     ]
     assert len(chunk_updates) > 0, "Expected at least one agent_message_chunk notification"
 
+    # Assert the exact reply, not just that chunks arrived: the bridge forwards
+    # server-side failures as "[Error: ...]" chunks, so a non-empty list alone
+    # can hide an auth or model failure.
+    chunk_texts = [
+        m["params"]["update"]["content"]["text"] for m in chunk_updates
+    ]
+    assert "".join(chunk_texts) == "hello"
+
     # prompt response should have been received
     prompt_responses = [m for m in msgs if _is_response(m, prompt_id)]
     assert len(prompt_responses) == 1
+
+
+def _update_payloads(msgs: list[dict], session_update: str) -> list[dict]:
+    """Filter protocol messages down to one session/update kind."""
+    return [
+        m["params"]["update"] for m in msgs
+        if m.get("method") == "session/update"
+        and m.get("params", {}).get("update", {}).get("sessionUpdate") == session_update
+    ]
+
+
+async def test_tool_call_flows_through_with_structured_fields(
+    tool_bridge: BridgeProcess, tool_agent: str
+):
+    """A real tool call arrives as tool_call + tool_call_update with usable fields.
+
+    Pins the Nori-facing contract end to end: kind is set, the result rides in
+    rawOutput as plain text with real newlines (not JSON-escaped), and generic
+    tools keep a text content block so their output is still visible.
+    """
+    init_id = await tool_bridge.send("initialize", {})
+    await tool_bridge.read_until(lambda m: _is_response(m, init_id))
+
+    new_id = await tool_bridge.send("session/new", {})
+    await tool_bridge.read_until(lambda m: _is_response(m, new_id))
+
+    prompt_id = await tool_bridge.send("session/prompt", {
+        "sessionId": tool_agent,
+        "prompt": [{
+            "type": "text",
+            "text": (
+                f"Call the memory_insert tool on block '{TOOL_PROBE_BLOCK}' with "
+                "content 'delta' and after '<end>'. Invoke the tool rather than "
+                "answering directly."
+            ),
+        }],
+    })
+    msgs = await tool_bridge.read_until(lambda m: _is_prompt_response(m, prompt_id))
+
+    calls = _update_payloads(msgs, "tool_call")
+    assert calls, "Expected a tool_call notification for the memory_insert call"
+    call = calls[0]
+    assert call["title"] == "memory_insert"
+    assert call["kind"] == "other"
+    assert call["status"] == "in_progress"
+    assert call["rawInput"]["label"] == TOOL_PROBE_BLOCK
+
+    results = _update_payloads(msgs, "tool_call_update")
+    assert results, "Expected a tool_call_update notification for the tool result"
+    result = results[0]
+    assert result["status"] == "completed"
+    assert result["kind"] == "other"
+
+    # Real newlines, not literal "\n", end to end through JSON-RPC.
+    text = result["content"][0]["content"]["text"]
+    assert "alpha" in text
+    assert "\n" in text
+    assert "\\n" not in text
