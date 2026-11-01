@@ -106,13 +106,13 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     elif isinstance(m, OpenRouterModel):
         # Default routing uses cache-adjusted "effective price" — smarter than raw list price.
         # Only override with provider.order when we need explicit provider control.
-        provider_config: dict = {"data_collection": "deny"}
+        provider_config: dict[str, object] = {"data_collection": "deny"}
         # Optional provider pinning via env var (comma-separated slugs, e.g. "anthropic,aws-bedrock")
         if pinned := os.environ.get("OPENROUTER_PROVIDER_ORDER"):
             provider_config["order"] = [p.strip() for p in pinned.split(",")]
         settings = OpenRouterModelSettings(
             **settings,
-            openrouter_provider=provider_config,
+            openrouter_provider=provider_config,  # type: ignore[arg-type]
             openrouter_usage={"include": True},
         )
 
