@@ -129,11 +129,13 @@ def _create_app() -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     app.state.agent_app_state_reg = {}
     app.include_router(router)
-    app.add_exception_handler(AgentNotFoundError, agent_not_found_handler)
-    app.add_exception_handler(AgentLockedError, agent_locked_handler)
-    app.add_exception_handler(BlockNotFoundError, block_not_found_handler)
-    app.add_exception_handler(DuplicateBlockError, duplicate_block_handler)
-    app.add_exception_handler(DuplicatePositionError, duplicate_position_handler)
+    # type: ignore — FastAPI/Starlette types ExceptionHandler as (Request, Exception) -> Response,
+    # so specific exception types fail contravariance. Runtime routing is correct; ignoring until upstream fixes.
+    app.add_exception_handler(AgentNotFoundError, agent_not_found_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(AgentLockedError, agent_locked_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(BlockNotFoundError, block_not_found_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(DuplicateBlockError, duplicate_block_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(DuplicatePositionError, duplicate_position_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unexpected_error_handler)
     # Prevent DNS rebinding (validates Host header)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=_ALLOWED_HOSTS)
