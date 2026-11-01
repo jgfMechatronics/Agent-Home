@@ -184,7 +184,7 @@ async def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent
 async def _persist_error_warnings(
     deps: AgentDeps,
     session: AsyncSession,
-    errors: list[tuple[datetime | None, str]],
+    errors: Sequence[tuple[datetime | None, str]],
     toolsets: "Sequence[AbstractToolset]",
 ) -> None:
     """Build and persist error warning messages via recursive call to _persist_messages."""
@@ -245,7 +245,7 @@ async def persist_messages(
 async def _persist_messages(
     deps: AgentDeps,
     session: AsyncSession,
-    messages: list[ModelMessage],
+    messages: Sequence[ModelMessage],
     toolsets: "Sequence[AbstractToolset]",
     *,
     _is_error_pass: bool = False,

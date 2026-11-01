@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig
+from db.connection import ReadOnlySession
 from db.models import AgentConfigSnapshot, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot
 from messages.messages import load_messages
 
@@ -52,7 +53,7 @@ class ReconstructedContext:
     agent_id: str
 
 
-async def reconstruct_context(session: AsyncSession, target_message_id: str) -> ReconstructedContext:
+async def reconstruct_context(session: ReadOnlySession, target_message_id: str) -> ReconstructedContext:
     """Reconstruct the context that existed when a specified target message was processed.
 
     Args:
