@@ -95,99 +95,181 @@ def user_message_chunk(session_id: str, text: str) -> dict[str, Any]:
     })
 
 
-def tool_call_complete(
-    session_id: str, tool_call_id: str, tool_name: str,
-    args: dict[str, Any], result: Any, status: str = "completed"
-) -> dict[str, Any]:
-    """Build a complete ToolCall for history replay (not streaming)."""
-    # Format args + result as displayable content
-    content_blocks = []
-    if args:
-        args_text = json.dumps(args, indent=2)
-        content_blocks.append({
-            "type": "content",
-            "content": {"type": "text", "text": f"**Arguments:**\n```json\n{args_text}\n```"}
-        })
-    if result:
-        result_text = json.dumps(result, indent=2) if not isinstance(result, str) else result
-        status_label = "✓ Success" if status == "completed" else "✗ Failed"
-        content_blocks.append({
-            "type": "content",
-            "content": {"type": "text", "text": f"**{status_label}:**\n```json\n{result_text}\n```"}
-        })
-    
-    return session_update(session_id, {
-        "sessionUpdate": "tool_call",
-        "toolCallId": tool_call_id,
-        "title": tool_name,
-        "status": status,
-        "rawInput": args,
-        "rawOutput": {"result": result} if result else None,
-        "content": content_blocks if content_blocks else None,
-    })
+# Agent Home tool name → ACP ToolKind. Nori selects its per-kind cell from this:
+# execute/read/edit/search get structured rendering, and anything unmapped falls
+# back to "other" (Nori's generic tool cell), which loses presentation only.
+TOOL_KINDS: dict[str, str] = {
+    "Bash": "execute",
+    "Read": "read",
+    "Edit": "edit",
+    "Write": "edit",
+    "web_fetch": "fetch",
+    "duckduckgo_search": "search",
+}
+
+_PATH_ARG_KEYS = ("file_path", "path", "file")
+
+
+def tool_kind(tool_name: str | None) -> str:
+    """Map an Agent Home tool name to an ACP ToolKind."""
+    if tool_name is None:
+        return "other"
+    return TOOL_KINDS.get(tool_name, "other")
+
+
+def _parse_tool_args(args: dict[str, Any] | str | None) -> dict[str, Any]:
+    """Normalize pydantic-ai's JSON-string args into a dict."""
+    if isinstance(args, dict):
+        return args
+    if isinstance(args, str):
+        try:
+            parsed = json.loads(args)
+        except (json.JSONDecodeError, ValueError):
+            return {"raw": args}
+        return parsed if isinstance(parsed, dict) else {"raw": parsed}
+    return {}
+
+
+def _tool_path(raw_input: dict[str, Any]) -> str | None:
+    for key in _PATH_ARG_KEYS:
+        value = raw_input.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _tool_locations(raw_input: dict[str, Any]) -> list[dict[str, Any]]:
+    """ACP locations for file-oriented tools, so Nori can label reads/edits."""
+    path = _tool_path(raw_input)
+    return [{"path": path}] if path else []
+
+
+def _edit_diff(tool_name: str | None, raw_input: dict[str, Any]) -> dict[str, Any] | None:
+    """ACP Diff content for Edit calls, so Nori renders the changed lines."""
+    if tool_name != "Edit":
+        return None
+    path = _tool_path(raw_input)
+    new_text = raw_input.get("new_string")
+    if not path or not isinstance(new_text, str):
+        return None
+    old_text = raw_input.get("old_string")
+    return {
+        "type": "diff",
+        "path": path,
+        "oldText": old_text if isinstance(old_text, str) else None,
+        "newText": new_text,
+    }
+
+
+def _result_text(result: Any) -> str:
+    """Tool result as display text. Strings stay verbatim, so real newlines survive."""
+    if isinstance(result, str):
+        return result
+    if result is None:
+        return ""
+    return json.dumps(result, indent=2)
+
+
+def _raw_output(tool_name: str | None, result: Any, status: str) -> Any:
+    """Shape rawOutput for Nori's structured cells.
+
+    Execute cells read stdout from rawOutput; putting the text there keeps
+    multi-line output intact instead of wrapping it in a JSON string. Failed
+    calls expose "error" so Nori can show the message under the header.
+    """
+    text = _result_text(result)
+    if tool_kind(tool_name) == "execute":
+        return {"stdout": text}
+    if status == "failed":
+        return {"error": text}
+    if isinstance(result, dict):
+        return result
+    return {"result": result}
+
+
+def _invocation_content(tool_name: str, raw_input: dict[str, Any]) -> list[dict[str, Any]]:
+    """Content blocks attached when the call starts (currently just edit diffs)."""
+    diff = _edit_diff(tool_name, raw_input)
+    return [diff] if diff else []
+
+
+def _result_content(
+    tool_name: str | None, result: Any, status: str, raw_input: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Content blocks attached when the call completes.
+
+    Structured kinds (execute/read/search/edit) render from rawInput/rawOutput
+    and their kind-specific cells, so no text block is added. Everything else
+    keeps a plain-text block so custom tools don't lose their output.
+    """
+    kind = tool_kind(tool_name)
+    if kind == "edit":
+        diff = _edit_diff(tool_name, raw_input)
+        return [diff] if diff else []
+    if kind in ("execute", "read", "search"):
+        return []
+    text = _result_text(result)
+    if not text:
+        return []
+    return [{"type": "content", "content": {"type": "text", "text": text}}]
 
 
 def tool_call(
     session_id: str, tool_call_id: str, tool_name: str, args: dict[str, Any] | str | None
 ) -> dict[str, Any]:
     """Build a ToolCall update for tool invocation start."""
-    # pydantic-ai sends args as JSON string, not dict
-    if isinstance(args, dict):
-        raw_input = args
-    elif isinstance(args, str):
-        try:
-            raw_input = json.loads(args)
-        except (json.JSONDecodeError, ValueError):
-            raw_input = {"raw": args}
-    else:
-        raw_input = {}
-    # Format args as displayable content for Toad
-    args_text = json.dumps(raw_input, indent=2) if raw_input else ""
-    content = [{"type": "content", "content": {"type": "text", "text": f"**Arguments:**\n```json\n{args_text}\n```"}}] if args_text else []
-    
+    raw_input = _parse_tool_args(args)
     return session_update(session_id, {
         "sessionUpdate": "tool_call",
         "toolCallId": tool_call_id,
         "title": tool_name,
+        "kind": tool_kind(tool_name),
         "status": "in_progress",
         "rawInput": raw_input,
-        "content": content,
+        "locations": _tool_locations(raw_input),
+        "content": _invocation_content(tool_name, raw_input),
     })
 
 
 def tool_call_update(
     session_id: str, tool_call_id: str, result: Any, status: str = "completed",
-    args: dict[str, Any] | None = None
+    args: dict[str, Any] | None = None, tool_name: str | None = None
 ) -> dict[str, Any]:
     """Build a ToolCallUpdate for tool result."""
-    raw_output = {"result": result} if not isinstance(result, dict) else result
-    
-    # Format combined args + result as displayable content for Toad
-    content_blocks = []
-    
-    # Include args if present
-    if args:
-        args_text = json.dumps(args, indent=2)
-        content_blocks.append({
-            "type": "content", 
-            "content": {"type": "text", "text": f"**Arguments:**\n```json\n{args_text}\n```"}
-        })
-    
-    # Include result
-    if raw_output:
-        result_text = json.dumps(raw_output, indent=2)
-        status_label = "✓ Success" if status == "completed" else "✗ Failed"
-        content_blocks.append({
-            "type": "content",
-            "content": {"type": "text", "text": f"**{status_label}:**\n```json\n{result_text}\n```"}
-        })
-    
-    return session_update(session_id, {
+    raw_input = args or {}
+    update: dict[str, Any] = {
         "sessionUpdate": "tool_call_update",
         "toolCallId": tool_call_id,
         "status": status,
-        "rawOutput": raw_output,
-        "content": content_blocks if content_blocks else None,
+        "rawOutput": _raw_output(tool_name, result, status),
+    }
+    if tool_name is not None:
+        update["kind"] = tool_kind(tool_name)
+    content = _result_content(tool_name, result, status, raw_input)
+    if content:
+        update["content"] = content
+    return session_update(session_id, update)
+
+
+def tool_call_complete(
+    session_id: str, tool_call_id: str, tool_name: str,
+    args: dict[str, Any] | None, result: Any, status: str = "completed"
+) -> dict[str, Any]:
+    """Build a complete ToolCall for history replay (not streaming)."""
+    raw_input = _parse_tool_args(args)
+    content = _invocation_content(tool_name, raw_input) + _result_content(
+        tool_name, result, status, raw_input
+    )
+    return session_update(session_id, {
+        "sessionUpdate": "tool_call",
+        "toolCallId": tool_call_id,
+        "title": tool_name,
+        "kind": tool_kind(tool_name),
+        "status": status,
+        "rawInput": raw_input,
+        "rawOutput": _raw_output(tool_name, result, status) if result is not None else None,
+        "locations": _tool_locations(raw_input),
+        "content": content,
     })
 
 
@@ -245,12 +327,10 @@ class BridgeState:
 class StreamState:
     """Tracks state within a single SSE stream."""
     in_thinking: bool = False
-    # Track args per tool_call_id so we can include them in the final update
-    tool_args: dict[str, dict[str, Any]] = None
-    
-    def __post_init__(self):
-        if self.tool_args is None:
-            self.tool_args = {}
+    # Per-tool-call args and names, carried from the call event to the result
+    # event so the update can reuse the kind/diff shaping.
+    tool_args: dict[str, dict[str, Any]] = field(default_factory=dict)
+    tool_names: dict[str, str] = field(default_factory=dict)
 
 
 async def process_sse_stream(
@@ -333,19 +413,14 @@ async def process_sse_event(
     elif event_type == "FunctionToolCallEvent":
         part = data.get("part", {})
         tool_call_id = part.get("tool_call_id", "")
+        tool_name = part.get("tool_name", "unknown")
         args = part.get("args")
-        
-        # Store args for later use in tool_call_update
-        if args:
-            if isinstance(args, str):
-                try:
-                    stream_state.tool_args[tool_call_id] = json.loads(args)
-                except (json.JSONDecodeError, ValueError):
-                    stream_state.tool_args[tool_call_id] = {"raw": args}
-            else:
-                stream_state.tool_args[tool_call_id] = args if isinstance(args, dict) else {}
-        
-        send(tool_call(session_id, tool_call_id, part.get("tool_name", "unknown"), args))
+
+        # Store args + name for later use in tool_call_update
+        stream_state.tool_args[tool_call_id] = _parse_tool_args(args)
+        stream_state.tool_names[tool_call_id] = tool_name
+
+        send(tool_call(session_id, tool_call_id, tool_name, args))
     
     elif event_type == "FunctionToolResultEvent":
         part = data.get("part", {})
@@ -356,15 +431,17 @@ async def process_sse_event(
         outcome = part.get("outcome", "success")
         status = "failed" if (part_kind == "retry-prompt" or outcome in ("failed", "denied")) else "completed"
         
-        # Get saved args for this tool call
+        # Get saved args/name for this tool call
         saved_args = stream_state.tool_args.pop(tool_call_id, {})
-        
+        saved_name = stream_state.tool_names.pop(tool_call_id, None)
+
         send(tool_call_update(
             session_id,
             tool_call_id,
             part.get("content", ""),
             status,
-            saved_args,  # Pass args to include in combined content
+            saved_args,
+            saved_name,
         ))
     
     elif event_type == "SlashCommandResult":
@@ -432,6 +509,7 @@ def _replay_message_items(session_id: str, items: list[dict[str, Any]]) -> int |
     Returns the seq_id of the latest item, or None if items is empty.
     """
     tool_call_args: dict[str, dict[str, Any]] = {}
+    tool_call_names: dict[str, str] = {}
     latest_seq_id: int | None = None
 
     for item in items:
@@ -462,7 +540,11 @@ def _replay_message_items(session_id: str, items: list[dict[str, Any]]) -> int |
                     outcome = part.get("outcome", "success")
                     status = "failed" if (part_kind == "retry-prompt" or outcome in ("failed", "denied")) else "completed"
                     args = tool_call_args.get(tool_call_id)
-                    send(tool_call_update(session_id, tool_call_id, content, status, args=args))
+                    tool_name = tool_call_names.get(tool_call_id)
+                    send(tool_call_update(
+                        session_id, tool_call_id, content, status,
+                        args=args, tool_name=tool_name,
+                    ))
 
         elif kind == "response":
             for part in parts:
@@ -482,6 +564,7 @@ def _replay_message_items(session_id: str, items: list[dict[str, Any]]) -> int |
                         except (json.JSONDecodeError, ValueError):
                             args = {"raw": args}
                     tool_call_args[tool_call_id] = args
+                    tool_call_names[tool_call_id] = tool_name
                     send(tool_call(session_id, tool_call_id, tool_name, args))
                 elif part_kind == "text":
                     content = part.get("content", "")
