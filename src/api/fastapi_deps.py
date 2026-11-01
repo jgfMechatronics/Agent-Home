@@ -6,14 +6,14 @@ app.py and db/connection.py remain free of FastAPI route concerns.
 Domain exceptions (AgentNotFoundError, AgentLockedError) are translated to HTTP responses
 by app-level exception handlers registered in api/app.py — not caught here.
 """
-from typing import AsyncIterator
+from typing import AsyncGenerator
 
 from fastapi import Depends, Request
 from pydantic_ai import Agent
 
 from agent.deps import AgentDeps, build_deps
 from agent.factory import AgentFactory, LOCK_TIMEOUT_FAST, get_or_create_agent_app_state
-from agent.types import AgentAppState
+from agent.types import AgentAppState, AgentOutput
 from db.connection import ReadOnlySession, get_engines, get_session
 from agent.broadcast_streaming import BroadcastHub
 
@@ -28,7 +28,7 @@ def get_broadcast_hub(request: Request) -> BroadcastHub:
     return request.app.state.broadcast_hub
 
 
-async def get_ro_session_dep(request: Request) -> AsyncIterator[ReadOnlySession]:
+async def get_ro_session_dep(request: Request) -> AsyncGenerator[ReadOnlySession, None]:
     """FastAPI dependency: yields a read-only session bound to app.state.ro_engine."""
     engines = get_engines(request)
     async with get_session(engines.ro) as session:
@@ -39,7 +39,7 @@ async def get_agent_and_deps(
     agent_id: str,
     request: Request,
     agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
-) -> AsyncIterator[tuple[Agent, AgentDeps]]:
+) -> AsyncGenerator[tuple[Agent[AgentDeps, AgentOutput], AgentDeps], None]:
     """FastAPI yield dependency: acquires agent lock, yields (Agent, AgentDeps).
 
     Domain exceptions propagate to app-level handlers in api/app.py:
@@ -58,7 +58,7 @@ async def get_agent_deps(
     agent_id: str,
     request: Request,
     agent_app_state_reg: dict[str, AgentAppState] = Depends(get_agent_app_state_reg),
-) -> AsyncIterator[AgentDeps]:
+) -> AsyncGenerator[AgentDeps, None]:
     """FastAPI yield dependency: acquires agent lock (short timeout) and yields AgentDeps.
 
     Intended for user-triggered routes that do a quick update and don't need a configured

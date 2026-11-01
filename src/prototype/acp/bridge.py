@@ -246,11 +246,7 @@ class StreamState:
     """Tracks state within a single SSE stream."""
     in_thinking: bool = False
     # Track args per tool_call_id so we can include them in the final update
-    tool_args: dict[str, dict[str, Any]] = None
-    
-    def __post_init__(self):
-        if self.tool_args is None:
-            self.tool_args = {}
+    tool_args: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 async def process_sse_stream(
