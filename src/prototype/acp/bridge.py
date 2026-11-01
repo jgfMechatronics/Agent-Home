@@ -170,6 +170,79 @@ def _result_text(result: Any) -> str:
     return json.dumps(result, indent=2)
 
 
+# Kinds Nori has no structured cell for. The bridge owns their whole display
+# and sends it as text content; Nori renders that verbatim.
+_GENERIC_KINDS = frozenset({"fetch", "think", "other"})
+
+# Matches Nori's Execute-cell output cap, so generic cells truncate the same way.
+_GENERIC_DISPLAY_MAX_LINES = 15
+
+
+def _format_display_entry(key: str, value: Any, indent: int) -> list[str]:
+    pad = " " * indent
+    if isinstance(value, dict):
+        return [f"{pad}{key}:"] + _format_display_lines(value, indent + 2)
+    if isinstance(value, str):
+        if "\n" in value:
+            return [f"{pad}{key}:"] + [
+                f"{pad}  {line}" for line in value.splitlines()
+            ]
+        return [f"{pad}{key}: {value}"]
+    return [f"{pad}{key}: {json.dumps(value, ensure_ascii=False)}"]
+
+
+def _format_display_lines(value: Any, indent: int = 0) -> list[str]:
+    """Render a JSON-ish value as key/value display lines.
+
+    Nori renders structured kinds itself; generic tools are rendered here, so
+    this is the single place their display style is defined.
+    """
+    pad = " " * indent
+    if isinstance(value, dict):
+        lines: list[str] = []
+        for key, item in value.items():
+            lines.extend(_format_display_entry(str(key), item, indent))
+        return lines
+    if isinstance(value, str):
+        return [f"{pad}{line}" for line in value.splitlines()]
+    if value is None:
+        return []
+    return [
+        f"{pad}{line}"
+        for line in json.dumps(value, indent=2, ensure_ascii=False).splitlines()
+    ]
+
+
+def _truncate_display_lines(lines: list[str]) -> list[str]:
+    """Middle-truncate like Nori's Execute cells, keeping head and tail."""
+    if len(lines) <= _GENERIC_DISPLAY_MAX_LINES:
+        return lines
+    head = (_GENERIC_DISPLAY_MAX_LINES - 1) // 2
+    tail = _GENERIC_DISPLAY_MAX_LINES - head - 1
+    omitted = len(lines) - head - tail
+    return lines[:head] + [f"… +{omitted} lines"] + lines[-tail:]
+
+
+def _display_text(value: Any) -> str:
+    return "\n".join(_truncate_display_lines(_format_display_lines(value)))
+
+
+def _text_block(text: str) -> dict[str, Any]:
+    return {"type": "content", "content": {"type": "text", "text": text}}
+
+
+def _generic_content(raw_input: dict[str, Any], result: Any) -> list[dict[str, Any]]:
+    """Display content for a generic tool: args, then result, as plain text.
+
+    ACP updates replace `content`, so the update repeats the args alongside the
+    result. Each section is capped separately.
+    """
+    sections = [
+        text for text in (_display_text(raw_input), _display_text(result)) if text
+    ]
+    return [_text_block("\n\n".join(sections))] if sections else []
+
+
 def _raw_output(tool_name: str | None, result: Any, status: str) -> Any:
     """Shape rawOutput for Nori's structured cells.
 
@@ -188,9 +261,18 @@ def _raw_output(tool_name: str | None, result: Any, status: str) -> Any:
 
 
 def _invocation_content(tool_name: str, raw_input: dict[str, Any]) -> list[dict[str, Any]]:
-    """Content blocks attached when the call starts (currently just edit diffs)."""
-    diff = _edit_diff(tool_name, raw_input)
-    return [diff] if diff else []
+    """Content blocks attached when the call starts.
+
+    Edit gets its diff; generic kinds get their args as display text. Structured
+    kinds send no content — Nori renders them from rawInput/rawOutput.
+    """
+    kind = tool_kind(tool_name)
+    if kind == "edit":
+        diff = _edit_diff(tool_name, raw_input)
+        return [diff] if diff else []
+    if kind in _GENERIC_KINDS:
+        return _generic_content(raw_input, None)
+    return []
 
 
 def _result_content(
@@ -199,19 +281,16 @@ def _result_content(
     """Content blocks attached when the call completes.
 
     Structured kinds (execute/read/search/edit) render from rawInput/rawOutput
-    and their kind-specific cells, so no text block is added. Everything else
-    keeps a plain-text block so custom tools don't lose their output.
+    and their kind-specific cells, so no text block is added. Generic kinds get
+    their args and result rendered as text for Nori to display verbatim.
     """
     kind = tool_kind(tool_name)
     if kind == "edit":
         diff = _edit_diff(tool_name, raw_input)
         return [diff] if diff else []
-    if kind in ("execute", "read", "search"):
-        return []
-    text = _result_text(result)
-    if not text:
-        return []
-    return [{"type": "content", "content": {"type": "text", "text": text}}]
+    if kind in _GENERIC_KINDS:
+        return _generic_content(raw_input, result)
+    return []
 
 
 def tool_call(

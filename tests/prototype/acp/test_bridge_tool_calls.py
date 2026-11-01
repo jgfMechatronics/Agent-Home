@@ -7,7 +7,8 @@ that contract so the bridge keeps giving Nori enough to use its native cells:
 - kind: the tool name -> ACP ToolKind mapping (unmapped falls back to "other")
 - rawOutput: execute results land in "stdout" verbatim, so newlines stay real
   newlines instead of turning into literal \\n inside a JSON string
-- content: edit diffs, and plain-text results only for generic tools
+- content: edit diffs, and bridge-rendered text for generic tools (Nori's
+  fetch/think/other bucket), since Nori has no structured cell for those
 - process_sse_event: the call/result pair carries args and tool name through
 
 No HITL review
@@ -232,6 +233,94 @@ class TestToolCallUpdate:
 
         assert "kind" not in update
         assert update["rawOutput"] == {"result": "result"}
+
+
+class TestGenericDisplay:
+    """Generic kinds (fetch/think/other): the bridge renders args and results."""
+
+    def test_generic_call_renders_args_as_key_value_text(self):
+        update = update_of(
+            tool_call(
+                SESSION_ID,
+                CALL_ID,
+                "memory_insert",
+                {"label": "persona", "content": "line one\nline two"},
+            )
+        )
+
+        assert update["kind"] == "other"
+        assert update["content"] == [
+            {
+                "type": "content",
+                "content": {
+                    "type": "text",
+                    "text": "label: persona\ncontent:\n  line one\n  line two",
+                },
+            }
+        ]
+
+    def test_generic_update_includes_args_then_result(self):
+        update = update_of(
+            tool_call_update(
+                SESSION_ID,
+                CALL_ID,
+                "Message delivered.",
+                "completed",
+                {"target_name": "Haiku"},
+                "send_message",
+            )
+        )
+
+        text = update["content"][0]["content"]["text"]
+        assert text == "target_name: Haiku\n\nMessage delivered."
+        assert "\\n" not in text
+
+    def test_generic_fetch_kind_uses_the_same_rendering(self):
+        update = update_of(
+            tool_call(SESSION_ID, CALL_ID, "web_fetch", {"url": "https://example.com"})
+        )
+
+        assert update["kind"] == "fetch"
+        assert update["content"][0]["content"]["text"] == "url: https://example.com"
+
+    def test_dict_result_renders_as_key_value(self):
+        update = update_of(
+            tool_call_update(
+                SESSION_ID,
+                CALL_ID,
+                {"status": "ok", "detail": "line one\nline two"},
+                "completed",
+                {},
+                "memory_read",
+            )
+        )
+
+        text = update["content"][0]["content"]["text"]
+        assert text == "status: ok\ndetail:\n  line one\n  line two"
+
+    def test_long_display_is_middle_truncated(self):
+        long_result = "\n".join(f"line {i}" for i in range(20))
+
+        update = update_of(
+            tool_call_update(
+                SESSION_ID, CALL_ID, long_result, "completed", {}, "memory_read"
+            )
+        )
+
+        lines = update["content"][0]["content"]["text"].split("\n")
+        assert len(lines) == 15
+        assert lines[0] == "line 0"
+        assert lines[7] == "… +6 lines"
+        assert lines[-1] == "line 19"
+
+    def test_structured_kinds_still_send_no_content(self):
+        for tool_name, args in (
+            ("Bash", {"command": "ls"}),
+            ("Read", {"file_path": "/repo/a.py"}),
+            ("duckduckgo_search", {"query": "nori"}),
+        ):
+            update = update_of(tool_call(SESSION_ID, CALL_ID, tool_name, args))
+            assert update["content"] == [], tool_name
 
 
 class TestToolCallComplete:
