@@ -205,7 +205,13 @@ class TestToolCallUpdate:
         assert update["kind"] == "other"
         assert update["rawOutput"] == {"result": MULTILINE_RESULT}
         assert update["content"] == [
-            {"type": "content", "content": {"type": "text", "text": MULTILINE_RESULT}}
+            {
+                "type": "content",
+                "content": {
+                    "type": "text",
+                    "text": f"-------Result-------\n{MULTILINE_RESULT}",
+                },
+            }
         ]
         assert "\\n" not in update["content"][0]["content"]["text"]
 
@@ -236,7 +242,11 @@ class TestToolCallUpdate:
 
 
 class TestGenericDisplay:
-    """Generic kinds (fetch/think/other): the bridge renders args and results."""
+    """Generic kinds (fetch/think/other): the bridge renders args and results.
+
+    Nori renders this text dim and unstyled, so the sections are labelled and
+    the labels are what separates them.
+    """
 
     def test_generic_call_renders_args_as_key_value_text(self):
         update = update_of(
@@ -254,7 +264,13 @@ class TestGenericDisplay:
                 "type": "content",
                 "content": {
                     "type": "text",
-                    "text": "label: persona\ncontent:\n  line one\n  line two",
+                    "text": (
+                        "--------Args--------\n"
+                        "label: persona\n"
+                        "content:\n"
+                        "  line one\n"
+                        "  line two"
+                    ),
                 },
             }
         ]
@@ -272,7 +288,13 @@ class TestGenericDisplay:
         )
 
         text = update["content"][0]["content"]["text"]
-        assert text == "target_name: Haiku\n\nMessage delivered."
+        assert text == (
+            "--------Args--------\n"
+            "target_name: Haiku\n"
+            "\n"
+            "-------Result-------\n"
+            "Message delivered."
+        )
         assert "\\n" not in text
 
     def test_generic_fetch_kind_uses_the_same_rendering(self):
@@ -281,7 +303,10 @@ class TestGenericDisplay:
         )
 
         assert update["kind"] == "fetch"
-        assert update["content"][0]["content"]["text"] == "url: https://example.com"
+        assert (
+            update["content"][0]["content"]["text"]
+            == "--------Args--------\nurl: https://example.com"
+        )
 
     def test_dict_result_renders_as_key_value(self):
         update = update_of(
@@ -296,7 +321,28 @@ class TestGenericDisplay:
         )
 
         text = update["content"][0]["content"]["text"]
-        assert text == "status: ok\ndetail:\n  line one\n  line two"
+        assert text == (
+            "-------Result-------\nstatus: ok\ndetail:\n  line one\n  line two"
+        )
+
+    def test_args_section_is_dropped_when_the_call_has_no_args(self):
+        update = update_of(
+            tool_call_update(
+                SESSION_ID, CALL_ID, "done", "completed", {}, "memory_insert"
+            )
+        )
+
+        text = update["content"][0]["content"]["text"]
+        assert text == "-------Result-------\ndone"
+
+    def test_result_section_is_dropped_while_the_call_is_in_progress(self):
+        update = update_of(
+            tool_call(SESSION_ID, CALL_ID, "memory_insert", {"label": "persona"})
+        )
+
+        text = update["content"][0]["content"]["text"]
+        assert text == "--------Args--------\nlabel: persona"
+        assert "Result" not in text
 
     def test_long_display_is_middle_truncated(self):
         long_result = "\n".join(f"line {i}" for i in range(20))
@@ -308,9 +354,10 @@ class TestGenericDisplay:
         )
 
         lines = update["content"][0]["content"]["text"].split("\n")
-        assert len(lines) == 15
-        assert lines[0] == "line 0"
-        assert lines[7] == "… +6 lines"
+        assert len(lines) == 16
+        assert lines[0] == "-------Result-------"
+        assert lines[1] == "line 0"
+        assert lines[8] == "… +6 lines"
         assert lines[-1] == "line 19"
 
     def test_structured_kinds_still_send_no_content(self):

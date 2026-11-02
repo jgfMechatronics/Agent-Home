@@ -185,6 +185,11 @@ _GENERIC_KINDS = frozenset({"fetch", "think", "other"})
 # Matches Nori's Execute-cell output cap, so generic cells truncate the same way.
 _GENERIC_DISPLAY_MAX_LINES = 15
 
+# Section labels for generic cells. Nori renders this text dim and unstyled, so
+# the labels are the only separation the reader gets. Both are 20 columns.
+_ARGS_HEADER = "--------Args--------"
+_RESULT_HEADER = "-------Result-------"
+
 
 def _format_display_entry(key: str, value: Any, indent: int) -> list[str]:
     pad = " " * indent
@@ -240,14 +245,19 @@ def _text_block(text: str) -> dict[str, Any]:
 
 
 def _generic_content(raw_input: dict[str, Any], result: Any) -> list[dict[str, Any]]:
-    """Display content for a generic tool: args, then result, as plain text.
+    """Display content for a generic tool: labelled args, then labelled result.
 
     ACP updates replace `content`, so the update repeats the args alongside the
-    result. Each section is capped separately.
+    result. Each section is capped separately, and an empty section is dropped
+    so its header never dangles.
     """
-    sections = [
-        text for text in (_display_text(raw_input), _display_text(result)) if text
-    ]
+    sections = []
+    args = _display_text(raw_input)
+    if args:
+        sections.append(f"{_ARGS_HEADER}\n{args}")
+    outcome = _display_text(result)
+    if outcome:
+        sections.append(f"{_RESULT_HEADER}\n{outcome}")
     return [_text_block("\n\n".join(sections))] if sections else []
 
 
