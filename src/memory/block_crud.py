@@ -29,6 +29,8 @@ from sqlalchemy.exc import IntegrityError
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.connection import ReadOnlySession
+
 if TYPE_CHECKING:
     from agent.deps import AgentDeps
 from agent.types import BlockSettings
@@ -119,12 +121,8 @@ async def get_block_or_raise(session: AsyncSession, agent_id: str, label: str) -
     return block
 
 
-async def raise_if_label_exists(session: AsyncSession, agent_id: str, label: str) -> None:
-    """Raise DuplicateBlockError if a block with this label already exists.
-    
-    TODO: If converted to return DTO, narrow session type to ReadOnlySession.
-    This helper only reads but is called within write scopes.
-    """
+async def raise_if_label_exists(session: ReadOnlySession, agent_id: str, label: str) -> None:
+    """Raise DuplicateBlockError if a block with this label already exists."""
     existing = await get_block(session, agent_id, label)
     if existing is not None:
         raise DuplicateBlockError(f"block with label '{label}' already exists")
@@ -164,8 +162,10 @@ async def create_block(
     If settings.position is None, appends to end (max existing position + 1).
     Raises if label already exists for this agent.
     """
+    async with deps.read_scope() as ro_session:
+        await raise_if_label_exists(ro_session, deps.agent_id, settings.label)
+
     async with deps.write_scope() as session:
-        await raise_if_label_exists(session, deps.agent_id, settings.label)
 
         # Auto-assign position if not specified
         position = settings.position
@@ -257,7 +257,8 @@ async def update_block_settings(
 
         # Check for label conflict on rename (before mutations)
         if settings.label != label:
-            await raise_if_label_exists(session, deps.agent_id, settings.label)
+            async with deps.read_scope() as ro_session:
+                await raise_if_label_exists(ro_session, deps.agent_id, settings.label)
 
         if settings.char_limit < len(block.content):
             raise ContentExceedsLimitError("new char_limit is less than current content length")
