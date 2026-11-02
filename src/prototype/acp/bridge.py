@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -264,21 +265,64 @@ def _generic_content(raw_input: dict[str, Any], result: Any) -> list[dict[str, A
     return [_text_block("\n\n".join(sections))] if sections else []
 
 
+# Line range carried in Claude Code's native Read result header:
+#   [/path/to/file.py — lines 98-102 of 1065]
+# Written by mcp_tools.cc_result_format._format_read on the CC-tools branch.
+# This is a deliberate coupling: if that formatting changes, the range quietly
+# stops being reported (the exploring cell still renders, just without it).
+_CC_READ_HEADER = re.compile(
+    r"^\[(?P<path>.+) — lines (?P<start>\d+)-(?P<end>\d+) of (?P<total>\d+)\]$"
+)
+
+
+def _read_line_range(result: Any) -> dict[str, int] | None:
+    """Line range from a Claude Code Read result, if the header is present."""
+    if not isinstance(result, str):
+        return None
+    first_line = result.split("\n", 1)[0]
+    match = _CC_READ_HEADER.match(first_line)
+    if match is None:
+        return None
+    return {
+        "start": int(match["start"]),
+        "end": int(match["end"]),
+        "total": int(match["total"]),
+    }
+
+
+def _tool_metadata(tool_name: str | None, result: Any) -> dict[str, Any]:
+    """Display metadata Nori's exploring cell appends after a middle dot.
+
+    Nori reads "lines" and "count" from rawOutput; both are optional there, so
+    an unmapped tool or an unrecognised result shape simply shows no metadata.
+    """
+    if tool_name == "Read":
+        lines = _read_line_range(result)
+        return {"lines": lines} if lines else {}
+    if tool_name == "duckduckgo_search" and isinstance(result, list):
+        return {"count": len(result)}
+    return {}
+
+
 def _raw_output(tool_name: str | None, result: Any, status: str) -> Any:
     """Shape rawOutput for Nori's structured cells.
 
     Execute cells read stdout from rawOutput; putting the text there keeps
     multi-line output intact instead of wrapping it in a JSON string. Failed
-    calls expose "error" so Nori can show the message under the header.
+    calls expose "error" so Nori can show the message under the header. Any
+    display metadata Nori can use (see `_tool_metadata`) is merged in alongside.
     """
     text = _result_text(result)
     if tool_kind(tool_name) == "execute":
-        return {"stdout": text}
-    if status == "failed":
-        return {"error": text}
-    if isinstance(result, dict):
-        return result
-    return {"result": result}
+        output: dict[str, Any] = {"stdout": text}
+    elif status == "failed":
+        output = {"error": text}
+    elif isinstance(result, dict):
+        output = dict(result)
+    else:
+        output = {"result": result}
+    output.update(_tool_metadata(tool_name, result))
+    return output
 
 
 def _invocation_content(tool_name: str, raw_input: dict[str, Any]) -> list[dict[str, Any]]:

@@ -381,6 +381,94 @@ class TestGenericDisplay:
         assert update["content"][0]["content"]["text"] == "--------Args--------\nquery: nori"
 
 
+class TestToolMetadata:
+    """rawOutput carries the display metadata Nori's exploring cell appends.
+
+    Read's range comes from Claude Code's native result header, written by
+    mcp_tools.cc_result_format._format_read; that coupling is intentional and
+    pinned here so a formatting change fails loudly.
+    """
+
+    READ_RESULT = (
+        "[/repo/src/app.py — lines 98-102 of 1065]\n"
+        "98\tfirst line\n"
+        "99\tsecond line"
+    )
+
+    def test_read_reports_its_line_range(self):
+        update = update_of(
+            tool_call_update(
+                SESSION_ID, CALL_ID, self.READ_RESULT, "completed",
+                {"file_path": "/repo/src/app.py"}, "Read",
+            )
+        )
+
+        assert update["rawOutput"]["lines"] == {"start": 98, "end": 102, "total": 1065}
+        assert update["rawOutput"]["result"] == self.READ_RESULT
+
+    def test_read_without_the_header_reports_no_range(self):
+        update = update_of(
+            tool_call_update(
+                SESSION_ID, CALL_ID, "plain text", "completed",
+                {"file_path": "/repo/src/app.py"}, "Read",
+            )
+        )
+
+        assert "lines" not in update["rawOutput"]
+
+    def test_read_with_a_malformed_header_reports_no_range(self):
+        update = update_of(
+            tool_call_update(
+                SESSION_ID, CALL_ID, "[/repo/src/app.py — lines nope]\n1\tx",
+                "completed", {}, "Read",
+            )
+        )
+
+        assert "lines" not in update["rawOutput"]
+
+    def test_search_reports_its_result_count(self):
+        results = [{"title": "a"}, {"title": "b"}, {"title": "c"}]
+
+        update = update_of(
+            tool_call_update(
+                SESSION_ID, CALL_ID, results, "completed",
+                {"query": "x"}, "duckduckgo_search",
+            )
+        )
+
+        assert update["rawOutput"]["count"] == 3
+        assert update["rawOutput"]["result"] == results
+
+    def test_search_with_a_non_list_result_reports_no_count(self):
+        update = update_of(
+            tool_call_update(
+                SESSION_ID, CALL_ID, "boom", "completed",
+                {"query": "x"}, "duckduckgo_search",
+            )
+        )
+
+        assert "count" not in update["rawOutput"]
+
+    def test_other_tools_report_no_metadata(self):
+        update = update_of(
+            tool_call_update(
+                SESSION_ID, CALL_ID, "ok", "completed", {}, "memory_insert"
+            )
+        )
+
+        assert set(update["rawOutput"]) == {"result"}
+
+    def test_replay_carries_the_same_metadata(self):
+        update = update_of(
+            tool_call_complete(
+                SESSION_ID, CALL_ID, "Read", {"file_path": "/repo/src/app.py"},
+                self.READ_RESULT, "completed",
+            )
+        )
+
+        assert update["rawOutput"]["lines"] == {"start": 98, "end": 102, "total": 1065}
+
+
 class TestToolCallComplete:
     def test_replay_payload_uses_the_same_shaping(self):
         update = update_of(
