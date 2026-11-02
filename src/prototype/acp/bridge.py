@@ -145,7 +145,15 @@ def _tool_locations(raw_input: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _edit_diff(tool_name: str | None, raw_input: dict[str, Any]) -> dict[str, Any] | None:
-    """ACP Diff content for Edit calls, so Nori renders the changed lines."""
+    """ACP Diff content for Edit calls, so Nori renders the changed lines.
+
+    Only the raw snippets cross the wire; Nori diffs them itself (diffy) and
+    reads ``path`` off its own filesystem to derive the gutter line numbers
+    (acp-host/src/patch.rs::create_patch_with_context). If the file is not
+    readable there, or neither snippet is found in it, Nori still renders a
+    correct diff but numbers lines from 1. Mounted-path mismatches between this
+    container and wherever Nori runs degrade that way, not into an error.
+    """
     if tool_name != "Edit":
         return None
     path = _tool_path(raw_input)
