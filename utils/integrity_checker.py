@@ -11,7 +11,7 @@ from enum import Enum
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeGuard, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import TypeAdapter
@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 from db.models import MessageRecord
+from db.connection import ReadOnlySession
 from messages.messages import load_messages, deserialize_messages, is_system_alert
 from common.constants import INTEGRITY_LOCKFILE_NAME
 
@@ -206,6 +207,11 @@ class ContentBearingPart(Protocol):
     part_kind: str
 
 
+def _has_content(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[ContentBearingPart]:
+    """Type guard to narrow parts to those with content attribute."""
+    return hasattr(part, 'content')
+
+
 @dataclass
 class PartAndMetadata:
     part: ContentBearingPart
@@ -214,7 +220,7 @@ class PartAndMetadata:
 
 
 def _build_part_hash_table(
-    messages: list,
+    messages: Sequence[ModelMessage],
     records: Sequence[MessageRecord],
 ) -> tuple[dict[str, list[PartAndMetadata]], list[str]]:
     part_hash_table: dict[str, list[PartAndMetadata]] = {}
@@ -222,8 +228,8 @@ def _build_part_hash_table(
 
     for i, message in enumerate(messages):
         for part in message.parts:
-            # Skip parts without content attribute (structural guard for type narrowing)
-            if not hasattr(part, 'content'):
+            # Skip parts without content attribute (type guard narrows to ContentBearingPart)
+            if not _has_content(part):
                 continue
             # Skip parts prone to valid duplication, and empty content
             if isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) or len(part.content) == 0:
@@ -289,7 +295,8 @@ def _find_issues_in_suspect_parts(
                 check_type="content_duplicate",
                 severity=severity,
                 seq_ids=bad_seq_ids,
-                details=detail_preamble + f" Duplication occurred at seq_ids: {bad_seq_ids}. Content: {content_preview!r}",
+                # pyright can't see that severity != NO_ERROR implies detail_preamble was set
+                details=detail_preamble + f" Duplication occurred at seq_ids: {bad_seq_ids}. Content: {content_preview!r}",  # type: ignore[reportPossiblyUnboundVariable]
                 duplicate_content=raw_content,
             ))
 
@@ -438,7 +445,8 @@ async def check_agent_integrity(
         List of all IntegrityIssues found across all checks.
     """
     # Load all messages once (in seq_id order)
-    records = await load_messages(session, agent_id)
+    # AsyncSession is RW superset of ReadOnlySession; cast documents read-only intent
+    records = await load_messages(cast("ReadOnlySession", session), agent_id)
 
     if not records:
         return []
