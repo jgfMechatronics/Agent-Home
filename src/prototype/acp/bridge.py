@@ -270,6 +270,8 @@ def _generic_content(raw_input: dict[str, Any], result: Any) -> list[dict[str, A
 # Written by mcp_tools.cc_result_format._format_read on the CC-tools branch.
 # This is a deliberate coupling: if that formatting changes, the range quietly
 # stops being reported (the exploring cell still renders, just without it).
+# An end-to-end test waits on the CC-tools merge; see the TODO in
+# tests/e2e/prototype/test_bridge.py.
 _CC_READ_HEADER = re.compile(
     r"^\[(?P<path>.+) — lines (?P<start>\d+)-(?P<end>\d+) of (?P<total>\d+)\]$"
 )
