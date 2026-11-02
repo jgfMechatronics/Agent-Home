@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from db.connection import ReadOnlySession
+from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
     from agent.deps import AgentDeps
@@ -77,8 +77,12 @@ class DuplicatePositionError(Exception):
 
 # --- Read operations (no lock) ---
 
-async def get_blocks(session: ReadOnlySession, agent_id: str) -> Sequence[MemoryBlockRecord]:
-    """Load all blocks for agent, ordered by position ascending."""
+async def get_blocks(session: AsyncSession, agent_id: str) -> Sequence[MemoryBlockRecord]:
+    """Load all blocks for agent, ordered by position ascending.
+    
+    TODO: If converted to return DTO, narrow session type to ReadOnlySession.
+    Currently returns ORM model which callers may mutate within their write scope.
+    """
     stmt = (
         select(MemoryBlockRecord)
         .where(MemoryBlockRecord.agent_id == agent_id)
@@ -88,8 +92,12 @@ async def get_blocks(session: ReadOnlySession, agent_id: str) -> Sequence[Memory
     return result.scalars().all()
 
 
-async def get_block(session: ReadOnlySession, agent_id: str, label: str) -> MemoryBlockRecord | None:
-    """Load single block by label. Returns None if not found."""
+async def get_block(session: AsyncSession, agent_id: str, label: str) -> MemoryBlockRecord | None:
+    """Load single block by label. Returns None if not found.
+    
+    TODO: If converted to return DTO, narrow session type to ReadOnlySession.
+    Currently returns ORM model which callers may mutate within their write scope.
+    """
     stmt = (
         select(MemoryBlockRecord)
         .where(MemoryBlockRecord.agent_id == agent_id)
@@ -99,16 +107,24 @@ async def get_block(session: ReadOnlySession, agent_id: str, label: str) -> Memo
     return result.scalars().one_or_none()
 
 
-async def get_block_or_raise(session: ReadOnlySession, agent_id: str, label: str) -> MemoryBlockRecord:
-    """Load single block by label. Raises BlockNotFoundError if not found."""
+async def get_block_or_raise(session: AsyncSession, agent_id: str, label: str) -> MemoryBlockRecord:
+    """Load single block by label. Raises BlockNotFoundError if not found.
+    
+    TODO: If converted to return DTO, narrow session type to ReadOnlySession.
+    Currently returns ORM model which callers may mutate within their write scope.
+    """
     block = await get_block(session, agent_id, label)
     if block is None:
         raise BlockNotFoundError(f"block with label '{label}' not found")
     return block
 
 
-async def raise_if_label_exists(session: ReadOnlySession, agent_id: str, label: str) -> None:
-    """Raise DuplicateBlockError if a block with this label already exists."""
+async def raise_if_label_exists(session: AsyncSession, agent_id: str, label: str) -> None:
+    """Raise DuplicateBlockError if a block with this label already exists.
+    
+    TODO: If converted to return DTO, narrow session type to ReadOnlySession.
+    This helper only reads but is called within write scopes.
+    """
     existing = await get_block(session, agent_id, label)
     if existing is not None:
         raise DuplicateBlockError(f"block with label '{label}' already exists")
