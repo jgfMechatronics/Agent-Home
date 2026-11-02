@@ -11,10 +11,18 @@ from enum import Enum
 import hashlib
 import json
 from pathlib import Path
+from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import TypeAdapter
-from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequestPart, ModelResponsePart
+from pydantic_ai.messages import (
+    ModelRequestPart,
+    ModelResponsePart,
+    RetryPromptPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 from db.models import MessageRecord
@@ -187,11 +195,22 @@ def _check_modelmessage_timestamps(
 # Duplicate Content Detection
 # ---------------------------------------------------------------------------
 
+
+class ContentBearingPart(Protocol):
+    """Structural type for message parts with content.
+    
+    Intended to represent the subset of ModelRequestPart | ModelResponsePart
+    that has a content attribute. Used for type narrowing after hasattr filtering.
+    """
+    content: Any
+    part_kind: str
+
+
 @dataclass
 class PartAndMetadata:
-    part: ModelRequestPart | ModelResponsePart 
-    idx: int # index of the msg where this part originated
-    seq_id: int # seq_id of the msg where this part originated
+    part: ContentBearingPart
+    idx: int  # index of the msg where this part originated
+    seq_id: int  # seq_id of the msg where this part originated
 
 
 def _build_part_hash_table(
@@ -203,9 +222,11 @@ def _build_part_hash_table(
 
     for i, message in enumerate(messages):
         for part in message.parts:
-            # These situations too ripe for "valid" duplication. Short circuiting should narrow type of part
-            # enough that len comparison is valid
-            if isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) or (len(part.content) == 0):
+            # Skip parts without content attribute (structural guard for type narrowing)
+            if not hasattr(part, 'content'):
+                continue
+            # Skip parts prone to valid duplication, and empty content
+            if isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) or len(part.content) == 0:
                 continue
             # System alerts (compaction warnings, etc.) are expected to repeat
             if is_system_alert(part.content):
