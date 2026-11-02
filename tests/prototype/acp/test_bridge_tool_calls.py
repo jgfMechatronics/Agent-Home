@@ -406,6 +406,27 @@ class TestToolMetadata:
         assert update["rawOutput"]["lines"] == {"start": 98, "end": 102, "total": 1065}
         assert update["rawOutput"]["result"] == self.READ_RESULT
 
+    TIMESTAMP_PREFIX = "⏰ [Nov 02, 2026 12:00:00 UTC]\n"
+
+    def test_read_range_is_found_after_the_timestamp_prefix(self):
+        update = update_of(
+            tool_call_update(
+                SESSION_ID, CALL_ID, self.TIMESTAMP_PREFIX + self.READ_RESULT,
+                "completed", {"file_path": "/repo/src/app.py"}, "Read",
+            )
+        )
+
+        assert update["rawOutput"]["lines"] == {"start": 98, "end": 102, "total": 1065}
+
+    def test_read_range_beyond_the_scan_window_is_ignored(self):
+        buried = "\n".join(["a", "b", "c", "d", "e"]) + "\n" + self.READ_RESULT
+
+        update = update_of(
+            tool_call_update(SESSION_ID, CALL_ID, buried, "completed", {}, "Read")
+        )
+
+        assert "lines" not in update["rawOutput"]
+
     def test_read_without_the_header_reports_no_range(self):
         update = update_of(
             tool_call_update(
