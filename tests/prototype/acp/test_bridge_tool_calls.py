@@ -53,7 +53,6 @@ class TestToolKind:
             ("Edit", "edit"),
             ("Write", "edit"),
             ("web_fetch", "fetch"),
-            ("duckduckgo_search", "search"),
         ],
     )
     def test_maps_known_tools(self, tool_name: str, expected: str):
@@ -61,6 +60,11 @@ class TestToolKind:
 
     def test_unmapped_tool_falls_back_to_other(self):
         assert tool_kind("memory_insert") == "other"
+
+    def test_search_falls_back_to_other_so_its_results_are_visible(self):
+        # Nori's exploring cell prints only the query for a Search, so a search
+        # tool loses its entire payload there; the generic cell renders results.
+        assert tool_kind("duckduckgo_search") == "other"
 
     def test_missing_name_falls_back_to_other(self):
         assert tool_kind(None) == "other"
@@ -364,10 +368,17 @@ class TestGenericDisplay:
         for tool_name, args in (
             ("Bash", {"command": "ls"}),
             ("Read", {"file_path": "/repo/a.py"}),
-            ("duckduckgo_search", {"query": "nori"}),
         ):
             update = update_of(tool_call(SESSION_ID, CALL_ID, tool_name, args))
             assert update["content"] == [], tool_name
+
+    def test_search_call_renders_its_query(self):
+        update = update_of(
+            tool_call(SESSION_ID, CALL_ID, "duckduckgo_search", {"query": "nori"})
+        )
+
+        assert update["kind"] == "other"
+        assert update["content"][0]["content"]["text"] == "--------Args--------\nquery: nori"
 
 
 class TestToolCallComplete:

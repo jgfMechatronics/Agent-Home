@@ -96,15 +96,18 @@ def user_message_chunk(session_id: str, text: str) -> dict[str, Any]:
 
 
 # Agent Home tool name → ACP ToolKind. Nori selects its per-kind cell from this:
-# execute/read/edit/search get structured rendering, and anything unmapped falls
-# back to "other" (Nori's generic tool cell), which loses presentation only.
+# execute/read/edit get structured rendering, and anything unmapped falls back
+# to "other" (Nori's generic tool cell), which loses presentation only.
+#
+# duckduckgo_search is deliberately unmapped. Nori's exploring cell renders a
+# Search as its query alone and ignores the results, which for a search tool is
+# the entire payload; the generic cell shows them.
 TOOL_KINDS: dict[str, str] = {
     "Bash": "execute",
     "Read": "read",
     "Edit": "edit",
     "Write": "edit",
     "web_fetch": "fetch",
-    "duckduckgo_search": "search",
 }
 
 _PATH_ARG_KEYS = ("file_path", "path", "file")
