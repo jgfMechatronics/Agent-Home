@@ -287,6 +287,12 @@ def _update_payloads(msgs: list[dict], session_update: str) -> list[dict]:
     ]
 
 
+# TODO(e2e): cover Read's rawOutput["lines"] end to end. It cannot run from
+# this branch: the bridge derives the range from Claude Code's native Read
+# result header ("[path — lines X-Y of Z]"), which is produced by fs_proxy's
+# cc_result_format on the CC-tools branch (fs_proxy -> `claude mcp serve`) —
+# a branch this one does not contain. Once both are merged, prompt a fresh
+# agent to Read a known file and assert the reported range matches it.
 async def test_tool_call_flows_through_with_structured_fields(
     tool_bridge: BridgeProcess, tool_agent: str
 ):
