@@ -136,7 +136,7 @@ async def _get_context_window_start_msg_id(
     return result.scalar()
 
 
-async def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset]", agent_id: str) -> list[ToolDefinition]:
+async def _extract_tool_definitions(toolsets: "Sequence[AbstractToolset[AgentDeps]]", agent_id: str) -> list[ToolDefinition]:
     """Extract ToolDefinition schemas from all attached toolsets.
 
     Called once per persist_messages invocation so schemas are always fresh
@@ -185,7 +185,7 @@ async def _persist_error_warnings(
     deps: AgentDeps,
     session: AsyncSession,
     errors: Sequence[tuple[datetime | None, str]],
-    toolsets: "Sequence[AbstractToolset]",
+    toolsets: "Sequence[AbstractToolset[AgentDeps]]",
 ) -> None:
     """Build and persist error warning messages via recursive call to _persist_messages."""
     warning_messages = [
@@ -207,7 +207,7 @@ async def _persist_error_warnings(
 async def persist_messages(
     deps: AgentDeps,
     messages: list[ModelMessage],
-    toolsets: "Sequence[AbstractToolset]",
+    toolsets: "Sequence[AbstractToolset[AgentDeps]]",
 ) -> int | None:
     """Save each ModelMessage as its own row; set total_tokens from ModelResponse.usage where available.
 
@@ -246,7 +246,7 @@ async def _persist_messages(
     deps: AgentDeps,
     session: AsyncSession,
     messages: Sequence[ModelMessage],
-    toolsets: "Sequence[AbstractToolset]",
+    toolsets: "Sequence[AbstractToolset[AgentDeps]]",
     *,
     _is_error_pass: bool = False,
 ) -> int | None:
