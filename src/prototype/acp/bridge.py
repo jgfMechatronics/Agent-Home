@@ -272,17 +272,30 @@ def _generic_content(raw_input: dict[str, Any], result: Any) -> list[dict[str, A
 # stops being reported (the exploring cell still renders, just without it).
 # An end-to-end test waits on the CC-tools merge; see the TODO in
 # tests/e2e/prototype/test_bridge.py.
+#
+# TODO: compute this server-side and deliver it through ToolReturn.metadata
+# instead of scraping. pydantic-ai carries that to ToolReturnPart.metadata and
+# the SSE part, and it is explicitly not sent to the model. MCP's own `_meta`
+# is not an option: pydantic-ai's MCP toolset drops it for tool returns
+# (see the comment in pydantic_ai/mcp.py::_map_mcp_tool_result).
 _CC_READ_HEADER = re.compile(
-    r"^\[(?P<path>.+) — lines (?P<start>\d+)-(?P<end>\d+) of (?P<total>\d+)\]$"
+    r"^\[(?P<path>.+) — lines (?P<start>\d+)-(?P<end>\d+) of (?P<total>\d+)\]$",
+    re.MULTILINE,
 )
+
+# The header is normally the first line, but Agent Home's timestamp capability
+# prefixes string tool returns with a clock line, so look a few lines in.
+_CC_READ_HEADER_SCAN_LINES = 4
 
 
 def _read_line_range(result: Any) -> dict[str, int] | None:
     """Line range from a Claude Code Read result, if the header is present."""
     if not isinstance(result, str):
         return None
-    first_line = result.split("\n", 1)[0]
-    match = _CC_READ_HEADER.match(first_line)
+    head = "\n".join(
+        result.split("\n", _CC_READ_HEADER_SCAN_LINES)[:_CC_READ_HEADER_SCAN_LINES]
+    )
+    match = _CC_READ_HEADER.search(head)
     if match is None:
         return None
     return {
