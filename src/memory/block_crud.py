@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
@@ -79,12 +79,8 @@ class DuplicatePositionError(Exception):
 
 # --- Read operations (no lock) ---
 
-async def get_blocks(session: AsyncSession, agent_id: str) -> Sequence[MemoryBlockRecord]:
-    """Load all blocks for agent, ordered by position ascending.
-    
-    TODO: If converted to return DTO, narrow session type to ReadOnlySession.
-    Currently returns ORM model which callers may mutate within their write scope.
-    """
+async def get_blocks(session: ReadOnlySession, agent_id: str) -> Sequence[MemoryBlockRecord]:
+    """Load all blocks for agent, ordered by position ascending."""
     stmt = (
         select(MemoryBlockRecord)
         .where(MemoryBlockRecord.agent_id == agent_id)
@@ -94,12 +90,8 @@ async def get_blocks(session: AsyncSession, agent_id: str) -> Sequence[MemoryBlo
     return result.scalars().all()
 
 
-async def get_block(session: AsyncSession, agent_id: str, label: str) -> MemoryBlockRecord | None:
-    """Load single block by label. Returns None if not found.
-    
-    TODO: If converted to return DTO, narrow session type to ReadOnlySession.
-    Currently returns ORM model which callers may mutate within their write scope.
-    """
+async def get_block(session: ReadOnlySession, agent_id: str, label: str) -> MemoryBlockRecord | None:
+    """Load single block by label. Returns None if not found."""
     stmt = (
         select(MemoryBlockRecord)
         .where(MemoryBlockRecord.agent_id == agent_id)
@@ -109,12 +101,8 @@ async def get_block(session: AsyncSession, agent_id: str, label: str) -> MemoryB
     return result.scalars().one_or_none()
 
 
-async def get_block_or_raise(session: AsyncSession, agent_id: str, label: str) -> MemoryBlockRecord:
-    """Load single block by label. Raises BlockNotFoundError if not found.
-    
-    TODO: If converted to return DTO, narrow session type to ReadOnlySession.
-    Currently returns ORM model which callers may mutate within their write scope.
-    """
+async def get_block_or_raise(session: ReadOnlySession, agent_id: str, label: str) -> MemoryBlockRecord:
+    """Load single block by label. Raises BlockNotFoundError if not found."""
     block = await get_block(session, agent_id, label)
     if block is None:
         raise BlockNotFoundError(f"block with label '{label}' not found")
@@ -141,7 +129,8 @@ async def update_block(
     Raises if block doesn't exist or content exceeds char_limit.
     """
     async with deps.write_scope() as session:
-        block = await get_block_or_raise(session, deps.agent_id, label)
+        # Cast: getter is RO but we mutate the result. If getters return DTOs, use read_scope instead.
+        block = await get_block_or_raise(cast(ReadOnlySession, session), deps.agent_id, label)
 
         if len(content) > block.char_limit:
             raise ContentExceedsLimitError("new content exceeds char limit")
@@ -193,7 +182,8 @@ async def create_block(
 async def delete_block(deps: AgentDeps, label: str) -> None:
     """Remove block. Raises if block doesn't exist (fail loudly)."""
     async with deps.write_scope() as session:
-        block = await get_block_or_raise(session, deps.agent_id, label)
+        # Cast: getter is RO but we delete the result. If getters return DTOs, use read_scope instead.
+        block = await get_block_or_raise(cast(ReadOnlySession, session), deps.agent_id, label)
         await session.delete(block)
 
 
@@ -204,7 +194,8 @@ async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str]) -> None:
     Raises if list doesn't include all blocks for agent or contains unknown labels.
     """
     async with deps.write_scope() as session:
-        blocks = await get_blocks(session, deps.agent_id)
+        # Cast: getter is RO but we mutate positions. If getters return DTOs, use read_scope instead.
+        blocks = await get_blocks(cast(ReadOnlySession, session), deps.agent_id)
         existing_labels = {b.label for b in blocks}
         provided_labels = set(labels_in_order)
 
@@ -253,7 +244,8 @@ async def update_block_settings(
     Raises DuplicatePositionError if setting position to one already held by another block.
     """
     async with deps.write_scope() as session:
-        block = await get_block_or_raise(session, deps.agent_id, label)
+        # Cast: getter is RO but we mutate the result. If getters return DTOs, use read_scope instead.
+        block = await get_block_or_raise(cast(ReadOnlySession, session), deps.agent_id, label)
 
         # Check for label conflict on rename (before mutations)
         if settings.label != label:
