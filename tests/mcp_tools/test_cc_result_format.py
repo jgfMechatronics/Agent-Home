@@ -24,6 +24,11 @@ def _read_json(content: str, start_line: int = 1) -> str:
 
 
 class TestRead:
+    # The header these vectors pin — "[path — lines X-Y of Z]" — is the one
+    # thing the Agent Home ACP bridge reads out of a Read result, to populate
+    # rawOutput["lines"] for Nori's exploring cell (bridge.py,
+    # _CC_READ_HEADER on Cursed/TempPseudoMain / ImproveNoriToolDisplay).
+    # Changing the header shape here means updating that parser and its tests.
     def test_numbered_lines_with_trailing_newline(self):
         """[doc] file `alpha\\nbeta\\ngamma\\n` renders as numbered lines incl. final empty,
         under a file header (structural stamp/content separation)."""
