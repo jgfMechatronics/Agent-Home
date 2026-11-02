@@ -155,7 +155,6 @@ async def create_block(
         await raise_if_label_exists(ro_session, deps.agent_id, settings.label)
 
     async with deps.write_scope() as session:
-
         # Auto-assign position if not specified
         position = settings.position
         if position is None:
