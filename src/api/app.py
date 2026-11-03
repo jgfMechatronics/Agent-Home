@@ -129,8 +129,8 @@ def _create_app() -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     app.state.agent_app_state_reg = {}
     app.include_router(router)
-    # type: ignore — FastAPI/Starlette types ExceptionHandler as (Request, Exception) -> Response,
-    # so specific exception types fail contravariance. Runtime routing is correct; ignoring until upstream fixes.
+    # Ignores below: FastAPI/Starlette types ExceptionHandler as (Request, Exception) -> Response,
+    # so handlers for specific exception types fail contravariance. Runtime routing is correct.
     app.add_exception_handler(AgentNotFoundError, agent_not_found_handler)  # type: ignore[arg-type]
     app.add_exception_handler(AgentLockedError, agent_locked_handler)  # type: ignore[arg-type]
     app.add_exception_handler(BlockNotFoundError, block_not_found_handler)  # type: ignore[arg-type]

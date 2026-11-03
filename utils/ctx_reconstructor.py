@@ -12,7 +12,6 @@ from dataclasses import dataclass
 
 from pydantic_ai.tools import ToolDefinition
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig
 from db.connection import ReadOnlySession

@@ -13,17 +13,17 @@ import json
 from pathlib import Path
 from typing import Any, Protocol, TypeGuard
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import TypeAdapter
 from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
     ModelRequestPart,
+    ModelResponse,
     ModelResponsePart,
     RetryPromptPart,
     ToolCallPart,
     ToolReturnPart,
 )
-
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 from db.models import MessageRecord
 from db.connection import ReadOnlySession
@@ -284,6 +284,7 @@ def _find_issues_in_suspect_parts(
         else:
             # Short content that didn't occur adjacently. Likely natural repetition, not that sus.
             severity = NO_ERROR
+            detail_preamble = ""
 
         if severity != NO_ERROR:
             bad_seq_ids = [p.seq_id for p in suspect_part_and_meta_list]
@@ -295,8 +296,7 @@ def _find_issues_in_suspect_parts(
                 check_type="content_duplicate",
                 severity=severity,
                 seq_ids=bad_seq_ids,
-                # pyright can't see that severity != NO_ERROR implies detail_preamble was set
-                details=detail_preamble + f" Duplication occurred at seq_ids: {bad_seq_ids}. Content: {content_preview!r}",  # type: ignore[reportPossiblyUnboundVariable]
+                details=detail_preamble + f" Duplication occurred at seq_ids: {bad_seq_ids}. Content: {content_preview!r}",
                 duplicate_content=raw_content,
             ))
 
