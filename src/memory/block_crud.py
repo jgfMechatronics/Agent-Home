@@ -27,8 +27,6 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from db.connection import ReadOnlySession
 
 if TYPE_CHECKING:
@@ -117,6 +115,11 @@ async def raise_if_label_exists(session: ReadOnlySession, agent_id: str, label: 
 
 
 # --- Write operations (require deps → lock held) ---
+#
+# Read-only helpers get a genuine RO session via a nested deps.read_scope(), even inside a
+# write scope. Exception: when the returned record must be attached to the write session
+# (mutate/delete), cast the write session to ReadOnlySession as an explicit bypass.
+# Nested RO reads see committed state only, so run guard checks before any flush.
 
 async def update_block(
     deps: AgentDeps,
@@ -151,10 +154,10 @@ async def create_block(
     If settings.position is None, appends to end (max existing position + 1).
     Raises if label already exists for this agent.
     """
-    async with deps.read_scope() as ro_session:
-        await raise_if_label_exists(ro_session, deps.agent_id, settings.label)
-
     async with deps.write_scope() as session:
+        async with deps.read_scope() as ro_session:
+            await raise_if_label_exists(ro_session, deps.agent_id, settings.label)
+
         # Auto-assign position if not specified
         position = settings.position
         if position is None:
