@@ -432,7 +432,7 @@ def _check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: 
 
 
 async def check_agent_integrity(
-    session: AsyncSession,
+    session: ReadOnlySession,
     agent_id: str,
 ) -> list[IntegrityIssue]:
     """Check agent's message history for integrity issues.
@@ -445,8 +445,7 @@ async def check_agent_integrity(
         List of all IntegrityIssues found across all checks.
     """
     # Load all messages once (in seq_id order)
-    # AsyncSession is RW superset of ReadOnlySession; cast documents read-only intent
-    records = await load_messages(cast("ReadOnlySession", session), agent_id)
+    records = await load_messages(session, agent_id)
 
     if not records:
         return []
