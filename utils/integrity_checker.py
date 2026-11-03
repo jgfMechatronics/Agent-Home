@@ -11,13 +11,22 @@ from enum import Enum
 import hashlib
 import json
 from pathlib import Path
+from typing import Any, Protocol, TypeGuard
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import TypeAdapter
-from pydantic_ai import ToolCallPart, ToolReturnPart, RetryPromptPart, ModelRequestPart, ModelResponsePart
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    ModelResponsePart,
+    RetryPromptPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 
 from db.models import MessageRecord
+from db.connection import ReadOnlySession
 from messages.messages import load_messages, deserialize_messages, is_system_alert
 from common.constants import INTEGRITY_LOCKFILE_NAME
 
@@ -187,15 +196,31 @@ def _check_modelmessage_timestamps(
 # Duplicate Content Detection
 # ---------------------------------------------------------------------------
 
+
+class ContentBearingPart(Protocol):
+    """Structural type for message parts with content.
+    
+    Intended to represent the subset of ModelRequestPart | ModelResponsePart
+    that has a content attribute. Used for type narrowing after hasattr filtering.
+    """
+    content: Any
+    part_kind: str
+
+
+def _has_content(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[ContentBearingPart]:
+    """Type guard to narrow parts to those with content attribute."""
+    return hasattr(part, 'content')
+
+
 @dataclass
 class PartAndMetadata:
-    part: ModelRequestPart | ModelResponsePart 
-    idx: int # index of the msg where this part originated
-    seq_id: int # seq_id of the msg where this part originated
+    part: ContentBearingPart
+    idx: int  # index of the msg where this part originated
+    seq_id: int  # seq_id of the msg where this part originated
 
 
 def _build_part_hash_table(
-    messages: list,
+    messages: Sequence[ModelMessage],
     records: Sequence[MessageRecord],
 ) -> tuple[dict[str, list[PartAndMetadata]], list[str]]:
     part_hash_table: dict[str, list[PartAndMetadata]] = {}
@@ -203,9 +228,11 @@ def _build_part_hash_table(
 
     for i, message in enumerate(messages):
         for part in message.parts:
-            # These situations too ripe for "valid" duplication. Short circuiting should narrow type of part
-            # enough that len comparison is valid
-            if isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) or (len(part.content) == 0):
+            # Skip parts without content attribute (type guard narrows to ContentBearingPart)
+            if not _has_content(part):
+                continue
+            # Skip parts prone to valid duplication, and empty content
+            if isinstance(part, (ToolCallPart, ToolReturnPart, RetryPromptPart)) or len(part.content) == 0:
                 continue
             # System alerts (compaction warnings, etc.) are expected to repeat
             if is_system_alert(part.content):
@@ -257,6 +284,7 @@ def _find_issues_in_suspect_parts(
         else:
             # Short content that didn't occur adjacently. Likely natural repetition, not that sus.
             severity = NO_ERROR
+            detail_preamble = ""
 
         if severity != NO_ERROR:
             bad_seq_ids = [p.seq_id for p in suspect_part_and_meta_list]
@@ -404,7 +432,7 @@ def _check_tool_call_return_pairing(records: Sequence[MessageRecord], messages: 
 
 
 async def check_agent_integrity(
-    session: AsyncSession,
+    session: ReadOnlySession,
     agent_id: str,
 ) -> list[IntegrityIssue]:
     """Check agent's message history for integrity issues.

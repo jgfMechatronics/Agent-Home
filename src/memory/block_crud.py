@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
@@ -115,6 +115,11 @@ async def raise_if_label_exists(session: ReadOnlySession, agent_id: str, label: 
 
 
 # --- Write operations (require deps → lock held) ---
+#
+# Read-only helpers get a genuine RO session via a nested deps.read_scope(), even inside a
+# write scope. Exception: when the returned record must be attached to the write session
+# (mutate/delete), cast the write session to ReadOnlySession as an explicit bypass.
+# Nested RO reads see committed state only, so run guard checks before any flush.
 
 async def update_block(
     deps: AgentDeps,
@@ -127,7 +132,8 @@ async def update_block(
     Raises if block doesn't exist or content exceeds char_limit.
     """
     async with deps.write_scope() as session:
-        block = await get_block_or_raise(session, deps.agent_id, label)
+        # Cast: getter is RO but we mutate the result. If getters return DTOs, use read_scope instead.
+        block = await get_block_or_raise(cast(ReadOnlySession, session), deps.agent_id, label)
 
         if len(content) > block.char_limit:
             raise ContentExceedsLimitError("new content exceeds char limit")
@@ -149,7 +155,8 @@ async def create_block(
     Raises if label already exists for this agent.
     """
     async with deps.write_scope() as session:
-        await raise_if_label_exists(session, deps.agent_id, settings.label)
+        async with deps.read_scope() as ro_session:
+            await raise_if_label_exists(ro_session, deps.agent_id, settings.label)
 
         # Auto-assign position if not specified
         position = settings.position
@@ -177,7 +184,8 @@ async def create_block(
 async def delete_block(deps: AgentDeps, label: str) -> None:
     """Remove block. Raises if block doesn't exist (fail loudly)."""
     async with deps.write_scope() as session:
-        block = await get_block_or_raise(session, deps.agent_id, label)
+        # Cast: getter is RO but we delete the result. If getters return DTOs, use read_scope instead.
+        block = await get_block_or_raise(cast(ReadOnlySession, session), deps.agent_id, label)
         await session.delete(block)
 
 
@@ -188,7 +196,8 @@ async def reorder_blocks(deps: AgentDeps, labels_in_order: list[str]) -> None:
     Raises if list doesn't include all blocks for agent or contains unknown labels.
     """
     async with deps.write_scope() as session:
-        blocks = await get_blocks(session, deps.agent_id)
+        # Cast: getter is RO but we mutate positions. If getters return DTOs, use read_scope instead.
+        blocks = await get_blocks(cast(ReadOnlySession, session), deps.agent_id)
         existing_labels = {b.label for b in blocks}
         provided_labels = set(labels_in_order)
 
@@ -237,11 +246,13 @@ async def update_block_settings(
     Raises DuplicatePositionError if setting position to one already held by another block.
     """
     async with deps.write_scope() as session:
-        block = await get_block_or_raise(session, deps.agent_id, label)
+        # Cast: getter is RO but we mutate the result. If getters return DTOs, use read_scope instead.
+        block = await get_block_or_raise(cast(ReadOnlySession, session), deps.agent_id, label)
 
         # Check for label conflict on rename (before mutations)
         if settings.label != label:
-            await raise_if_label_exists(session, deps.agent_id, settings.label)
+            async with deps.read_scope() as ro_session:
+                await raise_if_label_exists(ro_session, deps.agent_id, settings.label)
 
         if settings.char_limit < len(block.content):
             raise ContentExceedsLimitError("new char_limit is less than current content length")

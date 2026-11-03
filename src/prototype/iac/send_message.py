@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import ModelRetry
 
 from agent.crud import get_all_agents
 from agent.deps import AgentDeps
+from db.connection import AsyncEngine, ReadOnlyEngine
 
 if TYPE_CHECKING:
     from agent.types import AgentAppState
@@ -125,8 +126,8 @@ async def send_message(
 async def _deliver_message(
     agent_id: str,
     user_prompt: str,
-    rw_engine: object,
-    ro_engine: object,
+    rw_engine: AsyncEngine,
+    ro_engine: ReadOnlyEngine,
     agent_app_state_reg: dict,
     broadcast_hub: "BroadcastHub",
     delivery_future: "asyncio.Future[bool]",

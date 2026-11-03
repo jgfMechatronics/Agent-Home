@@ -10,7 +10,8 @@ from typing import Callable
 
 from pydantic_ai import RunContext
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
-from pydantic_ai.common_tools.web_fetch import web_fetch_tool, BinaryContent
+from pydantic_ai.common_tools.web_fetch import web_fetch_tool
+from pydantic_ai.messages import BinaryContent
 from pydantic_ai.tools import Tool
 from pydantic_ai.exceptions import ModelRetry
 
@@ -340,8 +341,10 @@ async def web_fetch(ctx: RunContext[AgentDeps], url: str) -> str | BinaryContent
         read_tool_result if spilled). Binary (images, PDFs, audio): BinaryContent
         passed through for native handling.
     """
-    # Call the underlying tool — returns WebFetchResult (TypedDict) or BinaryContent
-    result = await _underlying_web_fetch.function(url)
+    # Call the underlying tool — returns WebFetchResult (TypedDict) or BinaryContent.
+    # Ignore: Tool.function is typed as a takes-ctx | plain union, but web_fetch_tool()
+    # wraps a plain (url) -> ... method. Passing ctx raises TypeError at runtime.
+    result = await _underlying_web_fetch.function(url)  # type: ignore[arg-type]
 
     # BinaryContent passes through unchanged for pydantic-ai's native handling
     if isinstance(result, BinaryContent):

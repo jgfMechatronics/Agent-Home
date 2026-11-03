@@ -78,7 +78,7 @@ def _count_adjacent_message_merges(messages: list) -> int:
 async def _check_and_handle_cancel(
     agent_app_state: AgentAppState,
     deps: AgentDeps,
-    toolsets: "Sequence[AbstractToolset]",
+    toolsets: "Sequence[AbstractToolset[AgentDeps]]",
 ) -> bool:
     if not agent_app_state.cancel_requested.is_set():
         return False
@@ -89,7 +89,7 @@ async def _check_and_handle_cancel(
     return True
 
 
-async def run_stateful_agent(agent: Agent,
+async def run_stateful_agent(agent: Agent[AgentDeps, AgentOutput],
                              deps: AgentDeps,
                              agent_app_state: AgentAppState,
                              user_prompt: str) -> AsyncGenerator[AgentStreamEvent | AgentRunResultEvent[AgentOutput], None]:

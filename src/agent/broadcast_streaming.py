@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
     from agent.runner import AgentAppState
     from agent.deps import AgentDeps
+    from agent.types import AgentOutput
 
 # ---------------------------------------------------------------------------
 # Synthetic event types (not emitted by pydantic-ai)
@@ -132,7 +133,7 @@ class BroadcastHub:
 # ---------------------------------------------------------------------------
 
 async def run_agent_with_broadcast(
-    agent: "Agent",
+    agent: "Agent[AgentDeps, AgentOutput]",
     deps: "AgentDeps",
     agent_app_state: "AgentAppState",
     user_prompt: str,

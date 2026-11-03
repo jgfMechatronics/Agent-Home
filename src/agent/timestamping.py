@@ -23,7 +23,7 @@ from pydantic_ai.tools import ToolDefinition
 from agent.deps import AgentDeps
 
 if TYPE_CHECKING:
-    from pydantic_ai.tools import ValidatedToolArgs
+    from pydantic_ai.capabilities import ValidatedToolArgs
 
 logger = logging.getLogger(__name__)
 

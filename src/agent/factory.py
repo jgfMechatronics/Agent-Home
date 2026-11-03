@@ -21,7 +21,7 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.models import infer_model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings, OpenRouterProviderConfig
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai_harness.tool_output_limits import (
     Band,
@@ -106,7 +106,7 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     elif isinstance(m, OpenRouterModel):
         # Default routing uses cache-adjusted "effective price" — smarter than raw list price.
         # Only override with provider.order when we need explicit provider control.
-        provider_config: dict = {"data_collection": "deny"}
+        provider_config: OpenRouterProviderConfig = {"data_collection": "deny"}
         # Optional provider pinning via env var (comma-separated slugs, e.g. "anthropic,aws-bedrock")
         if pinned := os.environ.get("OPENROUTER_PROVIDER_ORDER"):
             provider_config["order"] = [p.strip() for p in pinned.split(",")]
