@@ -11,7 +11,7 @@ from enum import Enum
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Protocol, TypeGuard, cast
+from typing import Any, Protocol, TypeGuard
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import TypeAdapter
