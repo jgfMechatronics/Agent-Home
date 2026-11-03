@@ -341,8 +341,10 @@ async def web_fetch(ctx: RunContext[AgentDeps], url: str) -> str | BinaryContent
         read_tool_result if spilled). Binary (images, PDFs, audio): BinaryContent
         passed through for native handling.
     """
-    # Call the underlying tool — returns WebFetchResult (TypedDict) or BinaryContent
-    result = await _underlying_web_fetch.function(ctx, url)
+    # Call the underlying tool — returns WebFetchResult (TypedDict) or BinaryContent.
+    # Ignore: Tool.function is typed as a takes-ctx | plain union, but web_fetch_tool()
+    # wraps a plain (url) -> ... method. Passing ctx raises TypeError at runtime.
+    result = await _underlying_web_fetch.function(url)  # type: ignore[arg-type]
 
     # BinaryContent passes through unchanged for pydantic-ai's native handling
     if isinstance(result, BinaryContent):
