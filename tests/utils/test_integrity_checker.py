@@ -10,7 +10,6 @@ from dataclasses import asdict
 import json
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime, timezone
 
