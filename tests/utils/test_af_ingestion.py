@@ -16,6 +16,7 @@ from httpx import AsyncClient
 from utils.af_ingestion import AFIngestionError, import_agent_file, _add_provider_prefix
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from agent.types import AgentConfig
+from conftest import DBTestBase
 
 FIXTURE_PATH = Path(__file__).parent / "AF_Ingestion_Integration.af"
 
@@ -56,7 +57,7 @@ class TestAddProviderPrefix:
 
 
 @pytest.mark.asyncio
-class TestAFIngestion:
+class TestAFIngestion(DBTestBase):
     """Integration tests for importing agents from Letta .AF files."""
 
     @pytest_asyncio.fixture(autouse=True)
@@ -108,7 +109,7 @@ class TestAFIngestion:
         data = await self._get("/system-instructions")
         assert data["system_instructions"] == EXPECTED_SYSTEM_PROMPT
 
-    async def test_memory_blocks(self, session):
+    async def test_memory_blocks(self):
         """Imported agent has all memory blocks with correct content."""
         from datetime import datetime
         from agent.crud import get_agent_record
@@ -146,7 +147,7 @@ class TestAFIngestion:
             assert returned_block == expected_block
 
         # Verify system prompt was recompiled with blocks included
-        agent_record = await get_agent_record(session, self.agent_id)
+        agent_record = await get_agent_record(self.ro_session, self.agent_id)
         assert agent_record is not None
         compiled_prompt = agent_record.compiled_system_prompt
         assert compiled_prompt is not None and compiled_prompt != ""
