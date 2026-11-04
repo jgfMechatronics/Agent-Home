@@ -21,7 +21,7 @@ def test_create_app_includes_router():
     """Sanity check that _create_app() wires up the routes."""
     app = _create_app()
     
-    # app.routes holds Mounts and other BaseRoutes too; only APIRoutes expose .path
+    # API routes only: app.routes also carries the /docs, /redoc and /openapi.json Routes
     app_paths = {r.path for r in app.routes if isinstance(r, APIRoute)}
     router_paths = {r.path for r in router.routes if isinstance(r, APIRoute)}
     
