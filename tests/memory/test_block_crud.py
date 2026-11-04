@@ -10,12 +10,14 @@ import asyncio
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.deps import AgentDeps
 from agent.types import BlockSettings
 from conftest import SAMPLE_AGENT_CONFIG, make_deps, commit_and_detach_fixture_record
+from db.connection import ReadOnlySession
 from db.models import AgentRecord, MemoryBlockRecord
 
 from memory.block_crud import (
@@ -33,6 +35,16 @@ from memory.block_crud import (
     DuplicatePositionError,
     InvalidBlockOrderListError,
 )
+
+
+def column_state(record) -> dict[str, object]:
+    """All column values of an ORM row.
+
+    ORM rows compare by identity, so rows loaded through a different session (the read
+    path) never equal the fixture's instances even when the data matches. Comparing the
+    column values keeps the assertion as strong as equality without the session coupling.
+    """
+    return {attr.key: getattr(record, attr.key) for attr in inspect(record).mapper.column_attrs}
 
 
 # --- Fixtures ---
@@ -107,50 +119,53 @@ async def test_read_ops_handle_nonexistent_agent_gracefully(session: AsyncSessio
 
 # --- get_blocks tests ---
 
-async def test_get_blocks_in_order_from_correct_agent(session: AsyncSession, multi_tenant_agents_with_core_memory: dict):
+async def test_get_blocks_in_order_from_correct_agent(ro_session: ReadOnlySession, multi_tenant_agents_with_core_memory: dict):
     agent_id = multi_tenant_agents_with_core_memory["agent_a"].id
     expected_blocks = multi_tenant_agents_with_core_memory["blocks_a"]
-    got_blocks = await get_blocks(session, agent_id)
-    assert got_blocks == expected_blocks
+    got_blocks = await get_blocks(ro_session, agent_id)
+    assert [column_state(b) for b in got_blocks] == [column_state(b) for b in expected_blocks]
 
 
 async def test_get_blocks_returns_empty_list_for_agent_with_no_blocks(
-    session: AsyncSession, multi_tenant_agents_with_core_memory: dict
+    session: AsyncSession, ro_session: ReadOnlySession, multi_tenant_agents_with_core_memory: dict
 ):
     _ = multi_tenant_agents_with_core_memory  # this fixture being included populates DB with agents that HAVE blocks
-    
-    # Create a third agent with no blocks to test isolation
-    agent = AgentRecord(name="empty-agent", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Empty")
-    session.add(agent)
-    await session.flush()
-    
-    got_blocks = await get_blocks(session, agent.id)
+
+    # Create a third agent with no blocks to test isolation. Committed (not just flushed)
+    # so the read path, which runs on its own connection, can see it.
+    agent = await commit_and_detach_fixture_record(
+        session,
+        AgentRecord(name="empty-agent", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Empty"),
+    )
+
+    got_blocks = await get_blocks(ro_session, agent.id)
     assert got_blocks == []
 
 
 # --- get_block tests ---
 
-async def test_get_block_returns_correct_block_by_label(session: AsyncSession, multi_tenant_agents_with_core_memory: dict):
+async def test_get_block_returns_correct_block_by_label(ro_session: ReadOnlySession, multi_tenant_agents_with_core_memory: dict):
     agent_a = multi_tenant_agents_with_core_memory["agent_a"]
     expected_block = multi_tenant_agents_with_core_memory["blocks_a"][1]  # human block at position 1
     
-    got_block = await get_block(session, agent_a.id, expected_block.label)
-    assert got_block == expected_block
+    got_block = await get_block(ro_session, agent_a.id, expected_block.label)
+    assert got_block is not None
+    assert column_state(got_block) == column_state(expected_block)
 
 
-async def test_get_block_returns_none_for_nonexistent_label(session: AsyncSession, multi_tenant_agents_with_core_memory: dict):
+async def test_get_block_returns_none_for_nonexistent_label(ro_session: ReadOnlySession, multi_tenant_agents_with_core_memory: dict):
     agent_a = multi_tenant_agents_with_core_memory["agent_a"]
     
-    got_block = await get_block(session, agent_a.id, "nonexistent")
+    got_block = await get_block(ro_session, agent_a.id, "nonexistent")
     assert got_block is None
 
 
-async def test_get_block_isolates_by_agent(session: AsyncSession, multi_tenant_agents_with_core_memory: dict):
+async def test_get_block_isolates_by_agent(ro_session: ReadOnlySession, multi_tenant_agents_with_core_memory: dict):
     """Agent A's 'system' block should not be returned when querying Agent B."""
     agent_b = multi_tenant_agents_with_core_memory["agent_b"]
     
     # Agent A has 'system' block, Agent B does not — verify no cross-agent leakage
-    got_block = await get_block(session, agent_b.id, "system")
+    got_block = await get_block(ro_session, agent_b.id, "system")
     assert got_block is None
 
 

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 # Conftest is imported first by pytest, making this the right place for it.
 os.environ.setdefault("AGENT_HOME_DB_PATH", os.path.expanduser("~/.agent-home_pytest/db.sqlite"))
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import Mock
@@ -19,7 +20,7 @@ import time_machine
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.orm import object_session
-from db.connection import Engines, ReadOnlyEngine, create_readonly_sqlite_engine, create_sqlite_engine
+from db.connection import Engines, ReadOnlyEngine, ReadOnlySession, create_readonly_sqlite_engine, create_sqlite_engine
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -307,6 +308,24 @@ async def session(test_engine):
     """
     async with AsyncSession(test_engine) as async_session:
         yield async_session
+
+
+@pytest.fixture
+def ro_engine(test_engine) -> ReadOnlyEngine:
+    """Read-only engine over the test DB, built by the same constructor prod uses."""
+    return make_ro_engine(test_engine)
+
+
+@pytest_asyncio.fixture
+async def ro_session(ro_engine: ReadOnlyEngine) -> AsyncIterator[ReadOnlySession]:
+    """Read-only session over the test DB — what read-path functions take.
+
+    Separate connection from `session`, so it sees only COMMITTED data: fixture setup
+    that the read path must observe goes through commit_and_detach_fixture_record.
+    Writes through it fail at runtime with the same readonly-database error prod raises.
+    """
+    async with AsyncSession(ro_engine) as async_session:
+        yield ReadOnlySession(async_session)
 
 
 async def commit_and_detach_fixture_record(session: AsyncSession, record):

@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import create_agent_record, get_agent_record, get_agent_record_by_name, replace_agent_config, replace_system_instructions
 from agent.deps import AgentDeps
-from conftest import SAMPLE_AGENT_CONFIG
+from conftest import SAMPLE_AGENT_CONFIG, commit_and_detach_fixture_record
+from db.connection import ReadOnlySession
 from db.models import AgentRecord
 from messages.messages import load_messages
 
@@ -20,11 +21,14 @@ class TestCreateAgentRecord:
     """Tests share the same setup: one created record per test."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def created_record(self, session: AsyncSession):
-        self.session = session
+    async def created_record(self, session: AsyncSession, ro_session: ReadOnlySession):
+        self.ro_session = ro_session
         self.record = await create_agent_record(
             session, "test-agent", "You are helpful.", SAMPLE_AGENT_CONFIG
         )
+        # create_agent_record flushes only; publish it so the read path (its own
+        # connection) can see the row, exactly as prod does before anything queries it.
+        self.record = await commit_and_detach_fixture_record(session, self.record)
 
     async def assert_record_as_expected(self, record_to_check):
         assert uuid.UUID(record_to_check.id)  # raises ValueError if not a valid UUID
@@ -32,7 +36,7 @@ class TestCreateAgentRecord:
         assert record_to_check.system_instructions == "You are helpful."
         assert record_to_check.agent_config == SAMPLE_AGENT_CONFIG
         assert record_to_check.context_window_start == 0
-        assert await load_messages(self.session, self.record.id) == []
+        assert await load_messages(self.ro_session, self.record.id) == []
 
     async def test_returns_agent_record_with_correct_fields(self):
         """Returned record has expected values — UUID valid, fields match inputs, no history, expected config"""
@@ -40,9 +44,10 @@ class TestCreateAgentRecord:
 
     async def test_config_and_data_survive_db_round_trip(self):
         """Record is actually flushed to DB and config deserializes correctly on re-fetch."""
-        record_id = self.record.id  # capture before expiry — accessing after expire() triggers sync lazy load
-        self.session.expire(self.record)  # invalidate identity map, force real DB read
-        fetched = await get_agent_record(self.session, record_id)
+        record_id = self.record.id
+        # Read through the read path: no identity map to hit, so this is a real DB read.
+        fetched = await get_agent_record(self.ro_session, record_id)
+        assert fetched is not None
         await self.assert_record_as_expected(fetched)
 
 
@@ -71,16 +76,16 @@ _GET_AGENT_FUNCTIONS = [
 class TestGetAgentRecordFunctions:
     """Tests for get_agent_record and get_agent_record_by_name."""
 
-    async def test_returns_record_for_known_key(self, session: AsyncSession, agent_record, get_fn, key_extractor, unknown_key):
-        result = await get_fn(session, key_extractor(agent_record))
+    async def test_returns_record_for_known_key(self, ro_session: ReadOnlySession, agent_record, get_fn, key_extractor, unknown_key):
+        result = await get_fn(ro_session, key_extractor(agent_record))
         assert isinstance(result, AgentRecord)
         assert result.id == agent_record.id
         assert result.name == agent_record.name
         assert result.agent_config == agent_record.agent_config
         assert result.system_instructions == agent_record.system_instructions
 
-    async def test_returns_none_for_unknown_key(self, session: AsyncSession, get_fn, key_extractor, unknown_key):
-        result = await get_fn(session, unknown_key)
+    async def test_returns_none_for_unknown_key(self, ro_session: ReadOnlySession, get_fn, key_extractor, unknown_key):
+        result = await get_fn(ro_session, unknown_key)
         assert result is None
 
 
@@ -116,7 +121,7 @@ class TestReplaceFunctionCommonBehaviors:
     """Common behaviors shared by all replace_* functions."""
 
     async def test_updates_db_and_returns_new_value(
-        self, session: AsyncSession, agent_record, agent_deps: AgentDeps, replace_fn, new_value, attr_name
+        self, ro_session: ReadOnlySession, agent_record, agent_deps: AgentDeps, replace_fn, new_value, attr_name
     ):
         """Replace functions update DB and return the new value."""
         agent_id = agent_record.id  # capture before expire — post-expire attr access triggers async lazy load
@@ -124,7 +129,8 @@ class TestReplaceFunctionCommonBehaviors:
 
         assert result == new_value
         # agent_record is detached (conftest expunges) — get_agent_record fetches fresh
-        refreshed = await get_agent_record(session, agent_id)
+        refreshed = await get_agent_record(ro_session, agent_id)
+        assert refreshed is not None
         assert getattr(refreshed, attr_name) == new_value
 
 
@@ -138,7 +144,6 @@ class TestReplaceAgentConfig:
     ])
     async def test_compaction_warning_reset_depends_on_limit_direction(
         self,
-        session: AsyncSession,
         agent_record,
         agent_deps: AgentDeps,
         limit_delta: int,
@@ -158,7 +163,7 @@ class TestReplaceAgentConfig:
 class TestReplaceSystemInstructions:
     """Function-specific tests for replace_system_instructions."""
 
-    async def test_triggers_recompilation(self, session: AsyncSession, agent_record, agent_deps: AgentDeps):
+    async def test_triggers_recompilation(self, ro_session: ReadOnlySession, agent_record, agent_deps: AgentDeps):
         """System prompt is recompiled after updating instructions."""
         agent_id = agent_record.id  # capture before expire — post-expire attr access triggers async lazy load
         new_instructions = "You are a helpful assistant who loves cats."
@@ -166,5 +171,7 @@ class TestReplaceSystemInstructions:
         await replace_system_instructions(agent_deps, new_instructions)
 
         # agent_record is detached (conftest expunges) — get_agent_record fetches fresh
-        refreshed = await get_agent_record(session, agent_id)
+        refreshed = await get_agent_record(ro_session, agent_id)
+        assert refreshed is not None
+        assert refreshed.compiled_system_prompt is not None
         assert new_instructions in refreshed.compiled_system_prompt

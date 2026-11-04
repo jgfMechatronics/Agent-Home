@@ -29,6 +29,7 @@ from conftest import (
     make_retry_pair,
     make_tool_pair,
 )
+from db.connection import ReadOnlySession
 from db.models import AgentRecord, MessageRecord
 
 
@@ -157,11 +158,13 @@ class CompactTestBase:
 
     async def _fresh_agent(self, session: AsyncSession) -> AgentRecord:
         """Fetch fresh agent record from DB (self.agent is detached)."""
-        return await session.get(AgentRecord, self.agent.id)
+        record = await session.get(AgentRecord, self.agent.id)
+        assert record is not None, f"agent {self.agent.id!r} missing from DB"
+        return record
 
-    async def _fresh_messages(self, session: AsyncSession) -> list[MessageRecord]:
-        """Fetch fresh message records from DB."""
-        return await load_messages(session, self.agent.id)
+    async def _fresh_messages(self, ro_session: ReadOnlySession) -> list[MessageRecord]:
+        """Fetch fresh message records from DB (read path)."""
+        return await load_messages(ro_session, self.agent.id)
 
 class TestCompactCommon(CompactTestBase):
     """Tests with standard config: 500 limit, 0.5 target, 10 messages, 1100 tokens."""
@@ -224,14 +227,14 @@ class TestCompactReturnValue(CompactTestBase):
 class TestCompactEdgeCases(CompactTestBase):
     """Tests for edge cases requiring per-test bespoke setup params"""
 
-    async def test_minimum_history_guard_preserves_recent_messages(self, session: AsyncSession, test_engine):
+    async def test_minimum_history_guard_preserves_recent_messages(self, session: AsyncSession, ro_session: ReadOnlySession, test_engine):
         """compact never evicts the most recent 4 messages."""
         await self._setup(session, test_engine, limit=100, target=0.01, msg_count=10, total_tokens=5000)
         
         await compact(self.deps)
 
         fresh = await self._fresh_agent(session)
-        fresh_msgs = await self._fresh_messages(session)
+        fresh_msgs = await self._fresh_messages(ro_session)
         assert fresh.context_window_start <= fresh_msgs[-4].seq_id
 
     async def test_no_op_with_four_or_fewer_messages(self, session: AsyncSession, test_engine):
@@ -244,7 +247,7 @@ class TestCompactEdgeCases(CompactTestBase):
         # Should remain 0 — nothing to compact
         assert fresh.context_window_start == 0
 
-    async def test_targets_percentage_of_message_tokens(self, session: AsyncSession, test_engine):
+    async def test_targets_percentage_of_message_tokens(self, session: AsyncSession, ro_session: ReadOnlySession, test_engine):
         """compact retains compaction_target_fraction of current message tokens.
 
         Setup: 400 char prompt ≈ 100 sys_tokens, 20 messages, total_tokens=2100
@@ -259,7 +262,7 @@ class TestCompactEdgeCases(CompactTestBase):
         await compact(self.deps)
 
         fresh = await self._fresh_agent(session)
-        fresh_msgs = await self._fresh_messages(session)
+        fresh_msgs = await self._fresh_messages(ro_session)
 
         # Count messages still in context (seq_id >= context_window_start)
         in_context = [m for m in fresh_msgs if m.seq_id >= fresh.context_window_start]
@@ -381,20 +384,20 @@ class TestClearContext:
         records = await _persist_messages_load_records(session, agent_deps, msgs)
         return records
 
-    async def test_old_messages_excluded_new_messages_visible_after_clear(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
+    async def test_old_messages_excluded_new_messages_visible_after_clear(self, ro_session: ReadOnlySession, agent_deps: AgentDeps, persist_some_messages):
         """After clear_context, windowed load shows no old messages; new messages after clear are visible."""
         result = await clear_context(agent_deps)
 
         assert result is True
 
         # Old messages excluded from windowed view
-        visible = await load_messages(session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
+        visible = await load_messages(ro_session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
         assert not visible
 
         # New message added after clear IS visible in windowed view
         new_msg = make_request("test message after clear")
         await persist_messages(agent_deps, [new_msg], [])
-        visible = await load_messages(session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
+        visible = await load_messages(ro_session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
         assert len(visible) == 1
 
     async def test_no_messages_is_noop_and_returns_false(self, agent_deps: AgentDeps):

@@ -7,7 +7,7 @@ BinaryContent (images, PDFs, audio) passes through unchanged.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from pydantic_ai.common_tools.web_fetch import BinaryContent
+from pydantic_ai.messages import BinaryContent
 
 from agent.tools import web_fetch, _underlying_web_fetch
 
