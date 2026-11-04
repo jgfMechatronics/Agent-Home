@@ -314,7 +314,7 @@ class TestPersistMessages(DBTestBase):
         assert my_restored[1] == my_second_expected_msg
 
         assert len(other_records) == 1
-        assert ModelMessagesTypeAdapter.validate_json(f"[{other_records[0].content}]")[0] == expected_other_msg
+        assert deserialize_messages([other_records[0]])[0] == expected_other_msg
 
 
     # ------------Tests for handling non-persistable messages -----------------------
@@ -324,7 +324,7 @@ class TestPersistMessages(DBTestBase):
         """Assert the last record in records is a summary warning matching the expected format."""
         record = records[-1]
         assert record.type == "ModelResponse"
-        restored = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
+        restored = deserialize_messages([record])
 
         # Timestamp is persist time (utcnow()) — check stable prefix only.
         # Warning is system-alert formatted (persist machinery injects it, not the model).
@@ -353,7 +353,7 @@ class TestPersistMessages(DBTestBase):
         assert records[0].type == "ModelResponse"
         # Synthesized return added — ToolReturnPart with matching tool_call_id
         assert records[1].type == "ModelRequest"
-        restored_return = ModelMessagesTypeAdapter.validate_json(f"[{records[1].content}]")[0]
+        restored_return = deserialize_messages([records[1]])[0]
         synthesized = [p for p in restored_return.parts if isinstance(p, ToolReturnPart)]
         assert len(synthesized) == 1
         assert synthesized[0].tool_call_id == call_part.tool_call_id
@@ -431,12 +431,12 @@ class TestPersistMessages(DBTestBase):
         error_text = "[persist_messages serialization error]: ValueError: sim failure"
 
         # Good messages before and after the bad one are stored intact
-        assert ModelMessagesTypeAdapter.validate_json(f"[{records[0].content}]")[0] == good
-        assert ModelMessagesTypeAdapter.validate_json(f"[{records[2].content}]")[0] == good2
+        assert deserialize_messages([records[0]])[0] == good
+        assert deserialize_messages([records[2]])[0] == good2
 
         # Positional error record replaces bad in-place, system-alert formatted
         assert records[1].type == "ModelResponse"
-        positional = ModelMessagesTypeAdapter.validate_json(f"[{records[1].content}]")
+        positional = deserialize_messages([records[1]])
         positional_part = positional[0].parts[0]
         assert isinstance(positional_part, TextPart), f"expected the alert to be a TextPart, got {type(positional_part)}"
         assert positional_part.content == format_system_alert(error_text)
