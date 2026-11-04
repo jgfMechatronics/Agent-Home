@@ -1,8 +1,10 @@
 """Tests for memory cleanup utility."""
 import stat
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
+import httpx
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
@@ -191,7 +193,9 @@ class TestRunCleanupFlowIntegration:
         # TestClient WITHOUT context manager = no lifespan run
         # app fixture supplies app.state._engines; routes use real get_ro_session_dep
         # base_url required for TrustedHostMiddleware validation
-        self.test_client = TestClient(app, base_url="http://localhost")
+        # TestClient is an httpx.Client at runtime, but its stricter overrides make it
+        # nominally incompatible. run_cleanup_flow only uses the plain client interface.
+        self.test_client = cast(httpx.Client, TestClient(app, base_url="http://localhost"))
     
     @pytest.fixture
     def cleanup_skill_file(self, tmp_path):

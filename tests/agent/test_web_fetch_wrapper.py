@@ -69,6 +69,7 @@ class TestWebFetchWrapper:
         # Header: URL, Title, ---, then 10 content lines = 13 total
         expected = "URL: https://example.com\nTitle: Test\n---\n" + content
         assert result == expected
+        assert isinstance(result, str), f"expected plain text, got {type(result)}"
         assert len(result.split("\n")) == 13  # Verify line count assumption
 
     async def test_passes_url_to_underlying_tool(self, mock_ctx):

@@ -101,6 +101,7 @@ class TestHandleRecompile:
             result = await _handle_recompile(deps)
 
         mock_compile.assert_awaited_once()
+        assert mock_compile.await_args is not None
         assert mock_compile.await_args.args[0] is deps
         assert mock_compile.await_args.args[1] is mock_session
         assert result.event == "SlashCommandResult"

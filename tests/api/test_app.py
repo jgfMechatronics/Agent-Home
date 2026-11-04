@@ -10,6 +10,8 @@ from httpx import ASGITransport, AsyncClient
 
 from agent.types import AgentLockedError, AgentNotFoundError
 from memory.block_crud import BlockNotFoundError, DuplicateBlockError, DuplicatePositionError
+from fastapi.routing import APIRoute
+
 from api.app import _create_app
 from api.routes import router
 from tests.conftest import TEST_BASE_URL
@@ -19,8 +21,9 @@ def test_create_app_includes_router():
     """Sanity check that _create_app() wires up the routes."""
     app = _create_app()
     
-    app_paths = {r.path for r in app.routes}
-    router_paths = {r.path for r in router.routes}
+    # app.routes holds Mounts and other BaseRoutes too; only APIRoutes expose .path
+    app_paths = {r.path for r in app.routes if isinstance(r, APIRoute)}
+    router_paths = {r.path for r in router.routes if isinstance(r, APIRoute)}
     
     assert router_paths.issubset(app_paths)
     assert "/health" in app_paths

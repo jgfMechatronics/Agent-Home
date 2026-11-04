@@ -12,9 +12,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import load_only, sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import load_only
 
+from db.connection import ReadOnlySession
 from db.models import AgentRecord
 from utils.integrity_checker import check_agent_integrity, load_dismissals, filter_dismissed_issues
 
@@ -30,7 +31,7 @@ _DISMISSALS_FILE = _DIR / "dismissals.json"
 async def _check_db(db_path: Path) -> str:
     # Read-only engine — diagnostic tool, never mutates the DB
     engine = create_async_engine(f"sqlite+aiosqlite:///file:{db_path.absolute()}?mode=ro&uri=true")
-    session_factory = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     lines = [f"{'=' * 60}", f"  {db_path.name}", f"{'=' * 60}"]
 
@@ -45,7 +46,8 @@ async def _check_db(db_path: Path) -> str:
         else:
             for record in records:
                 lines.append(f"\n  Agent: {record.name}  ({record.id})")
-                issues = await check_agent_integrity(session, record.id)
+                # engine is opened mode=ro; ReadOnlySession is a nominal NewType
+                issues = await check_agent_integrity(ReadOnlySession(session), record.id)
                 dismissals = load_dismissals(_DISMISSALS_FILE, record.id)
                 issues = filter_dismissed_issues(issues, dismissals)
                 if not issues:

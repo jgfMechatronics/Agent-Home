@@ -196,7 +196,7 @@ class _SenderTestAgent(FunctionModelTestAgent):
         super().__init__()
         self.set_steps([[self.SEND_MSG_CALL], self.COMPLETION_TEXT])
 
-    def _build(self) -> Agent:
+    def _build(self) -> Agent[AgentDeps, str]:
         """Agent with send_message as its only tool."""
         agent = Agent(FunctionModel(stream_function=self._stream), deps_type=AgentDeps)
         agent.tool(send_message)

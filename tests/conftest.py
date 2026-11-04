@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 # Conftest is imported first by pytest, making this the right place for it.
 os.environ.setdefault("AGENT_HOME_DB_PATH", os.path.expanduser("~/.agent-home_pytest/db.sqlite"))
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import Mock
@@ -484,7 +484,7 @@ async def app(test_engine) -> FastAPI:
 
 
 @pytest_asyncio.fixture
-async def client(app: FastAPI) -> AsyncClient:
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     """Async HTTP client bound to the test app.
 
     raise_app_exceptions=False so that app-level Exception handlers (ServerErrorMiddleware)
@@ -506,6 +506,10 @@ async def local_dummy_tool(ctx: RunContext, text: str) -> str:
     return text
 
 
+ScriptedStep = ModelResponse | Callable[[list[ModelMessage]], ModelResponse]
+"""One scripted model step: a fixed response, or a callable given the live history."""
+
+
 class ScriptedFunction:
     """FunctionModel non-streamed function consuming one step per model invocation.
 
@@ -519,11 +523,11 @@ class ScriptedFunction:
     or at least inspire it.
     """
 
-    def __init__(self, steps: list):
+    def __init__(self, steps: list[ScriptedStep]):
         self._steps = steps
         self.invocation = 0
 
-    def __call__(self, messages, info) -> ModelResponse:
+    def __call__(self, messages: list[ModelMessage], info) -> ModelResponse:
         step = self._steps[self.invocation]
         self.invocation += 1
         if callable(step):

@@ -29,7 +29,12 @@ class BridgeProcess:
     """Wrapper around a bridge subprocess for sending/receiving ACP messages."""
 
     def __init__(self, proc: asyncio.subprocess.Process, agent_id: str):
+        # Both streams are created with PIPE, so they exist; asserting here narrows the
+        # Optional types once instead of at every call site.
+        assert proc.stdin is not None and proc.stdout is not None, "bridge subprocess pipes not captured"
         self._proc = proc
+        self._stdin = proc.stdin
+        self._stdout = proc.stdout
         self._agent_id = agent_id
         self._id_counter = 0
 
@@ -42,8 +47,8 @@ class BridgeProcess:
         msg_id = self._next_id()
         msg = {"jsonrpc": "2.0", "id": msg_id, "method": method, "params": params}
         line = json.dumps(msg).encode() + b"\n"
-        self._proc.stdin.write(line)
-        await self._proc.stdin.drain()
+        self._stdin.write(line)
+        await self._stdin.drain()
         return msg_id
 
     async def read_until(self, stop_condition, timeout: float = BRIDGE_TIMEOUT) -> list[dict]:
@@ -55,7 +60,7 @@ class BridgeProcess:
         messages = []
         async def _read():
             while True:
-                line = await self._proc.stdout.readline()
+                line = await self._stdout.readline()
                 if not line:
                     break
                 msg = json.loads(line.decode())
@@ -68,7 +73,7 @@ class BridgeProcess:
     async def close(self):
         """Terminate the bridge process."""
         try:
-            self._proc.stdin.close()
+            self._stdin.close()
             self._proc.terminate()
             await asyncio.wait_for(self._proc.wait(), timeout=5.0)
         except Exception:

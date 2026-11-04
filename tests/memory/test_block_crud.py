@@ -186,6 +186,7 @@ async def test_update_block_modifies_content_and_updated_at(multi_tenant_with_de
     session = multi_tenant_with_deps["session"]
     session.expire_all()
     fetched = await get_block(session, deps.agent_id, "persona")
+    assert fetched is not None, "persona block missing after update"
     assert fetched.content == result.content  # sanity check: DB has the new content
 
 
@@ -307,6 +308,7 @@ async def test_create_block_inserts_with_defaults(multi_tenant_with_deps: dict):
     session = multi_tenant_with_deps["session"]
     session.expire_all()
     fetched = await get_block(session, deps.agent_id, "notes")
+    assert fetched is not None, "notes block missing after create"
     assert fetched.description == result.description
     assert fetched.char_limit == result.char_limit
 

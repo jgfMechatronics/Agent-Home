@@ -275,7 +275,7 @@ class TestCompactEdgeCases(CompactTestBase):
 
     async def test_returns_false_when_no_model_responses_in_context(self, session: AsyncSession, agent_deps: AgentDeps):
         """compact returns False without error when context contains only ModelRequests."""
-        requests_only = [make_request(f"msg {i}") for i in range(6)]
+        requests_only: list[ModelMessage] = [make_request(f"msg {i}") for i in range(6)]
         await _persist_messages_load_records(session, agent_deps, requests_only)
 
         result = await compact(agent_deps)
@@ -372,6 +372,8 @@ class TestCompactToolPairAtomicity:
 
         fresh_agent = await session.get(AgentRecord, data["agent"].id)
         fresh_record_5 = await session.get(MessageRecord, data["records"][5].id)
+        assert fresh_agent is not None
+        assert fresh_record_5 is not None
         assert fresh_agent.context_window_start == fresh_record_5.seq_id
 
 
@@ -444,4 +446,5 @@ class TestClearContext:
 
         # Verify by re-reading from DB (clear_context commits on write_scope's session)
         fresh = await session.get(AgentRecord, agent_deps.agent_id)
+        assert fresh is not None
         assert fresh.context_window_start > 0
