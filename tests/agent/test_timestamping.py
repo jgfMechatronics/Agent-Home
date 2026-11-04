@@ -48,8 +48,13 @@ class TestToolReturnTimestamper:
         self.cap = ToolReturnTimestamper()
 
     async def run_hook(self, result):
-        """Helper to execute the hook with minimal boilerplate."""
-        return await self.cap.after_tool_execute(None, call=None, tool_def=None, args=None, result=result)
+        """Helper to execute the hook with minimal boilerplate.
+
+        The capability only gates on `result`, so ctx/call/tool_def/args are deliberately
+        None: if the hook ever starts depending on them, this fails loudly instead of
+        silently absorbing a mock.
+        """
+        return await self.cap.after_tool_execute(None, call=None, tool_def=None, args=None, result=result)  # pyright: ignore[reportArgumentType]
 
     @pytest.mark.parametrize(
         "result",

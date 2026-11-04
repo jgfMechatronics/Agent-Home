@@ -263,10 +263,12 @@ def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
     (RetryPromptPart instead of ToolReturnPart).
     """
     call_response, _ = make_tool_pair()
+    call_part = call_response.parts[0]
+    assert isinstance(call_part, ToolCallPart)
     retry_part = RetryPromptPart(
         content="block 'x' not found",
         tool_name="mem_replace",
-        tool_call_id=call_response.parts[0].tool_call_id,
+        tool_call_id=call_part.tool_call_id,
     )
     return (
         call_response,
@@ -508,25 +510,28 @@ def assert_ModelMessage_list_eq(
         assert type(actual_msg) is type(expected_msg), f"Message {i}: type mismatch {type(actual_msg)} != {type(expected_msg)}"
         assert len(actual_msg.parts) == len(expected_msg.parts), f"Message {i}: part count mismatch"
         for j, (actual_part, expected_part) in enumerate(zip(actual_msg.parts, expected_msg.parts)):
-            assert type(actual_part) is type(expected_part), f"Message {i} part {j}: type mismatch"
-            match expected_part:
-                case UserPromptPart():
-                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
-                case ToolCallPart():
-                    assert actual_part.tool_name == expected_part.tool_name, f"Message {i} part {j}: tool_name mismatch"
-                    assert actual_part.args == expected_part.args, f"Message {i} part {j}: args mismatch"
-                    assert actual_part.tool_call_id == expected_part.tool_call_id, f"Message {i} part {j}: tool_call_id mismatch"
-                case ToolReturnPart():
-                    assert actual_part.tool_name == expected_part.tool_name, f"Message {i} part {j}: tool_name mismatch"
-                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
-                    assert actual_part.tool_call_id == expected_part.tool_call_id, f"Message {i} part {j}: tool_call_id mismatch"
-                case TextPart():
-                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
-                case ThinkingPart():
-                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
+            where = f"Message {i} part {j}"
+            assert type(actual_part) is type(expected_part), f"{where}: type mismatch"
+            # Match on the pair, not just one side: `assert type(a) is type(b)` doesn't narrow
+            # either operand for static analysis, so both must be matched to reach their fields.
+            match actual_part, expected_part:
+                case UserPromptPart() as a, UserPromptPart() as e:
+                    assert a.content == e.content, f"{where}: content mismatch"
+                case ToolCallPart() as a, ToolCallPart() as e:
+                    assert a.tool_name == e.tool_name, f"{where}: tool_name mismatch"
+                    assert a.args == e.args, f"{where}: args mismatch"
+                    assert a.tool_call_id == e.tool_call_id, f"{where}: tool_call_id mismatch"
+                case ToolReturnPart() as a, ToolReturnPart() as e:
+                    assert a.tool_name == e.tool_name, f"{where}: tool_name mismatch"
+                    assert a.content == e.content, f"{where}: content mismatch"
+                    assert a.tool_call_id == e.tool_call_id, f"{where}: tool_call_id mismatch"
+                case TextPart() as a, TextPart() as e:
+                    assert a.content == e.content, f"{where}: content mismatch"
+                case ThinkingPart() as a, ThinkingPart() as e:
+                    assert a.content == e.content, f"{where}: content mismatch"
                 case _:
-                    assert actual_part == expected_part, (f"Message {i} part {j}: equality mismatch.\n"
-                                                          "Comparison helper may not be accountinng for this type.")
+                    assert actual_part == expected_part, (f"{where}: equality mismatch.\n"
+                                                          "Comparison helper may not be accounting for this type.")
 
 
 def in_process_mcp_toolset_factory():

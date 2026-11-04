@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import Model
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate, indented_json
@@ -145,6 +146,9 @@ class TestBuildAgentAndDeps:
             # model_name on the resolved object is the model part only (after the colon).
             # NOTE: This assumes pydantic-ai exposes model_name on resolved models consistently.
             # If pydantic-ai changes how it reports model names, this assertion may need updating.
+            # agent.model is Model | KnownModelName | str | None — assert it resolved to a Model
+            # instance rather than staying a config string (which has no model_name).
+            assert isinstance(agent.model, Model)
             assert agent.model.model_name == self.agent_record.agent_config.model_name.split(":", 1)[1]
 
     async def test_output_type_is_agent_output(self):

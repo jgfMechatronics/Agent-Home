@@ -5,6 +5,7 @@ import json
 import logging
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 
 import pytest
 import pytest_asyncio
@@ -317,7 +318,9 @@ class TestPersistMessages(DBTestBase):
             f"'{error_text}'. A warning was injected in place of the problematic message, "
             "error occurred at "
         )
-        assert restored[0].parts[0].content.startswith(expected_prefix)
+        warning_part = restored[0].parts[0]
+        assert isinstance(warning_part, TextPart), f"expected the warning to be a TextPart, got {type(warning_part)}"
+        assert warning_part.content.startswith(expected_prefix)
 
     # -------------- Tests -------------------
     async def test_orphaned_tool_call_repaired_by_persist(self):
@@ -325,7 +328,9 @@ class TestPersistMessages(DBTestBase):
         results in both the original ModelResponse and a synthesized ModelRequest(ToolReturnPart)
         being stored in the DB."""
         orphan_response, _ = make_tool_pair()  # discard the matching return
-        tool_call_id = orphan_response.parts[0].tool_call_id
+        orphan_call = orphan_response.parts[0]
+        assert isinstance(orphan_call, ToolCallPart)
+        tool_call_id = orphan_call.tool_call_id
 
         records = await self._persist_and_fetch([orphan_response])
 
@@ -363,7 +368,12 @@ class TestPersistMessages(DBTestBase):
         break the pairing check — its synthetic tool_call_id is excluded from comparison
         because it has no tool_name."""
         call_response, return_request = make_tool_pair()
-        return_request.parts.append(RetryPromptPart(content="Please return text or call a tool."))
+        # ModelRequest.parts is a Sequence — rebuild the message rather than mutating it,
+        # and use dataclasses.replace so the request's other fields survive untouched.
+        return_request = replace(
+            return_request,
+            parts=[*return_request.parts, RetryPromptPart(content="Please return text or call a tool.")],
+        )
         records = await self._persist_and_fetch([call_response, return_request])
 
         assert len(records) == 2
@@ -415,7 +425,9 @@ class TestPersistMessages(DBTestBase):
         # Positional error record replaces bad in-place, system-alert formatted
         assert records[1].type == "ModelResponse"
         positional = ModelMessagesTypeAdapter.validate_json(f"[{records[1].content}]")
-        assert positional[0].parts[0].content == format_system_alert(error_text)
+        positional_part = positional[0].parts[0]
+        assert isinstance(positional_part, TextPart), f"expected the alert to be a TextPart, got {type(positional_part)}"
+        assert positional_part.content == format_system_alert(error_text)
 
         # Summary warning appended at end, referencing the error
         self._assert_summary_warning_appended(records, error_text)
