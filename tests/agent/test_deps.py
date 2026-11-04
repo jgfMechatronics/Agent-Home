@@ -2,6 +2,7 @@
 import asyncio
 import time
 from datetime import datetime
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -50,6 +51,11 @@ class TestWriteScopeExceptionRecovery:
 
 # --- AgentDeps construction ---
 
+# Constructor-guard tests never touch the engines, so plain objects stand in for both.
+# cast records that the junk types are deliberate rather than an oversight.
+_JUNK_ENGINES = cast(tuple[Any, Any], (object(), object()))
+
+
 @pytest.mark.parametrize("missing_field", ["rw_engine", "ro_engine", "agent_record"])
 def test_agentdeps_requires_field(missing_field: str):
     """AgentDeps should raise TypeError when a required constructor argument is missing."""
@@ -68,12 +74,12 @@ def test_agentdeps_requires_field(missing_field: str):
 def test_agentdeps_factory_guard_blocks_direct_construction():
     """AgentDeps must be constructed via build_deps or with explicit bypass."""
     with pytest.raises(RuntimeError, match="must be constructed via build_deps"):
-        AgentDeps(object(), object(), MagicMock())
+        AgentDeps(*_JUNK_ENGINES, MagicMock())
 
 
 def test_agentdeps_factory_guard_bypass_allows_direct_construction():
     """bypass_factory_guard=True should allow direct construction without raising."""
-    deps = AgentDeps(object(), object(), MagicMock(), bypass_factory_guard=True)
+    deps = AgentDeps(*_JUNK_ENGINES, MagicMock(), bypass_factory_guard=True)
     assert isinstance(deps, AgentDeps)
 
 
@@ -120,8 +126,9 @@ def create_spied_lock(agent_id: str, agent_app_state_reg: dict, mocker: MockerFi
 
 def assert_lock_acquired_and_released(lock: asyncio.Lock) -> None:
     """Assert acquire and release were each called exactly once."""
-    assert lock.acquire.call_count == 1
-    assert lock.release.call_count == 1
+    # mocker.spy swaps in a MagicMock, which static analysis still sees as the bound method.
+    assert cast(MagicMock, lock.acquire).call_count == 1
+    assert cast(MagicMock, lock.release).call_count == 1
 
 
 @pytest.fixture

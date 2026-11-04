@@ -139,7 +139,9 @@ class TestCompileSystemPrompt:
         """Metadata section should contain accurate chars_current, chars_limit, and lines_current values."""
         for block in self.blocks:
             block_section = _extract_tag(self.compiled, block.label)
+            assert block_section is not None, f"no <{block.label}> section in compiled prompt"
             meta_section = _extract_tag(block_section, "metadata")
+            assert meta_section is not None, f"no <metadata> section for {block.label}"
 
             expected_chars = len(block.content)
             assert f"chars_current: {expected_chars}" in meta_section, (

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart
 
-from conftest import PARTIAL_MESSAGE_FIELDS, make_request, make_response, make_retry_pair, make_tool_pair
+from conftest import PARTIAL_MESSAGE_FIELDS, as_read_session, make_request, make_response, make_retry_pair, make_tool_pair
 from messages.messages import dump_msg_json, format_system_alert
 from db.models import AgentRecord, MessageRecord
 from messages.messages import deserialize_messages
@@ -80,6 +80,15 @@ def make_message_record(agent_id: str, *, seq_id: int, **overrides) -> MessageRe
 
 # Type alias for the callable that builds records given an agent_id
 RecordBuilder = Callable[[str], list[MessageRecord]]
+
+
+def record_state(record: MessageRecord) -> dict[str, object]:
+    """Public attribute values of an ORM row.
+
+    ORM models have no __eq__, and a deep copy keeps a private _sa_instance_state that
+    never compares equal to the original's, so compare the public attribute dict instead.
+    """
+    return {k: v for k, v in vars(record).items() if not k.startswith("_")}
 
 
 def make_message_sequence(agent_id: str, overrides_list: list[dict]) -> list[MessageRecord]:
@@ -771,7 +780,7 @@ class TestCheckAgentIntegrity:
         records = build_records(self.agent.id)
         self.session.add_all(records)
         await self.session.flush()
-        issues = await check_agent_integrity(self.session, self.agent.id)
+        issues = await check_agent_integrity(as_read_session(self.session), self.agent.id)
         assert issues == expected_issues
 
     # Per-category test methods (test_clean, test_seq_id, …) are generated via
@@ -780,24 +789,23 @@ class TestCheckAgentIntegrity:
     @pytest.mark.parametrize("checker", _RECORD_ONLY_CHECKERS)
     async def test_record_only_checkers_do_not_mutate_input(self, checker):
         records = make_message_sequence(self.agent.id, [{}, {}, {}, {}])
-        snapshot = copy.deepcopy(records)
+        before = [record_state(r) for r in records]
+
         checker(records)
 
-        # No native __eq__ for Sqlalchemy ORM, have to do some funny stuff
-        for r, s in zip(records, snapshot):
-            s._sa_instance_state = r._sa_instance_state
-        assert [vars(r) for r in records] == [vars(s) for s in snapshot]
+        assert [record_state(r) for r in records] == before
 
     @pytest.mark.parametrize("checker", _RECORD_AND_MESSAGE_CHECKERS)
     async def test_record_and_message_checkers_do_not_mutate_input(self, checker):
         records = make_message_sequence(self.agent.id, [{}, {}, {}, {}])
         messages = deserialize_messages(records)
-        records_snapshot, messages_snapshot = copy.deepcopy(records), copy.deepcopy(messages)
+        records_before = [record_state(r) for r in records]
+        messages_before = copy.deepcopy(messages)
+
         checker(records, messages)
-        for r, s in zip(records, records_snapshot):
-            s._sa_instance_state = r._sa_instance_state
-        assert [vars(r) for r in records] == [vars(s) for s in records_snapshot]
-        assert messages == messages_snapshot
+
+        assert [record_state(r) for r in records] == records_before
+        assert messages == messages_before
 
 
 def _make_check_test(name: str, cases: list) -> Callable:

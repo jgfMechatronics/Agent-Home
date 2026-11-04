@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 import pytest_asyncio
-from conftest import make_ro_engine
+from db.connection import ReadOnlyEngine, ReadOnlySession
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -13,8 +13,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters, ModelSettings
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.compaction import compact
@@ -67,11 +68,17 @@ class TestCompactionWarnerIntegration:
         via build_agent_and_deps, then overrides the model with TestModel."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord, test_engine):
-        self.session = session
+    async def setup(
+        self,
+        agent_record: AgentRecord,
+        test_engine,
+        ro_engine: ReadOnlyEngine,
+        ro_session: ReadOnlySession,
+    ):
         self.agent_record = agent_record
         self.test_engine = test_engine
-        self.ro_engine = make_ro_engine(test_engine)
+        self.ro_engine = ro_engine
+        self.ro_session = ro_session
 
     async def _update_record(self, **fields) -> None:
         """Update agent record fields directly in the DB (test setup)."""
@@ -82,9 +89,14 @@ class TestCompactionWarnerIntegration:
             await update_session.commit()
 
     async def _fresh_record(self) -> AgentRecord:
-        """Fetch the agent record fresh from the DB (self.agent_record is detached/stale)."""
-        async with AsyncSession(self.ro_engine) as check_session:
-            return await check_session.get(AgentRecord, self.agent_record.id)
+        """Fetch the agent record fresh from the DB (self.agent_record is detached/stale).
+
+        populate_existing: ro_session is shared across the test, so a plain get() would
+        return the identity-map copy from an earlier call instead of re-reading the row.
+        """
+        record = await self.ro_session.get(AgentRecord, self.agent_record.id, populate_existing=True)
+        assert record is not None, f"agent {self.agent_record.id!r} missing from DB"
+        return record
 
     async def _run_and_get_messages(self, model: TestModel, soft_limit: int = 100) -> list[ModelMessage]:
         """Run agent with given model and return persisted messages."""
@@ -104,7 +116,7 @@ class TestCompactionWarnerIntegration:
                     )]
         assert events, "Should have received events"
 
-        records = await load_messages(self.session, self.agent_record.id)
+        records = await load_messages(self.ro_session, self.agent_record.id)
         return deserialize_messages(records)
 
     def _find_warning_index(self, messages: list[ModelMessage]) -> int | None:

@@ -10,7 +10,7 @@ import logging
 import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart, RetryPromptPart
 
@@ -29,6 +29,7 @@ from conftest import (
     make_retry_pair,
     make_tool_pair,
 )
+from db.connection import ReadOnlySession
 from db.models import AgentRecord, MessageRecord
 
 
@@ -47,19 +48,41 @@ def _make_config(
     )
 
 
+class _DBTestBase:
+    """Stores the DB fixtures every test class in this file needs on `self`.
+
+    TODO(hoist): duplicate of the shared test base this suite should import from conftest.
+    Local for now so tests and helpers read fixtures off `self` instead of repeating them
+    in every signature; the hoist should be a deletion here plus an import.
+    """
+    session: AsyncSession
+    ro_session: ReadOnlySession
+    test_engine: AsyncEngine
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def _store_db_fixtures(
+        self, session: AsyncSession, ro_session: ReadOnlySession, test_engine: AsyncEngine
+    ):
+        self.session = session
+        self.ro_session = ro_session
+        self.test_engine = test_engine
+
+
 async def _persist_messages_load_records(
     session: AsyncSession,
+    ro_session: ReadOnlySession,
     deps: AgentDeps,
     messages: list[ModelMessage],
 ) -> list[MessageRecord]:
     """Persist messages via the official persist_messages, then load and return the MessageRecords."""
     await session.commit()  # close any open write transaction so persist_messages' own connection can write (SQLite single-writer)
     await persist_messages(deps, messages, [])
-    return await load_messages(session, deps.agent_id)
+    return await load_messages(ro_session, deps.agent_id)
 
 
 async def _make_agent_with_messages(
     session: AsyncSession,
+    ro_session: ReadOnlySession,
     test_engine,
     message_count: int,
     *,
@@ -90,7 +113,7 @@ async def _make_agent_with_messages(
     if total_tokens is not None:
         # Replace the last message (always a response for even counts) with one carrying usage data
         pydantic_msgs[-1] = make_response(total_tokens=total_tokens)
-    messages = await _persist_messages_load_records(session, deps, pydantic_msgs)
+    messages = await _persist_messages_load_records(session, ro_session, deps, pydantic_msgs)
 
     return {"agent": agent, "messages": messages, "deps": deps}
 
@@ -121,7 +144,7 @@ class TestIsCompactionNeeded:
 
 # --- compact tests ---
 
-class CompactTestBase:
+class CompactTestBase(_DBTestBase):
     """
     Base class for compact tests. Allows easier commonization of setup
     
@@ -133,8 +156,6 @@ class CompactTestBase:
 
     async def _setup(
         self,
-        session: AsyncSession,
-        test_engine,
         *,
         limit: int,
         target: float,
@@ -148,20 +169,22 @@ class CompactTestBase:
         """
         config = _make_config(soft_compaction_limit=limit, compaction_target_fraction=target)
         data = await _make_agent_with_messages(
-            session, test_engine, message_count=msg_count, config=config, system_prompt_chars=400,
+            self.session, self.ro_session, self.test_engine, message_count=msg_count, config=config, system_prompt_chars=400,
             total_tokens=total_tokens,
         )
         self.agent = data["agent"]
         self.messages = data["messages"]
         self.deps = data["deps"]
 
-    async def _fresh_agent(self, session: AsyncSession) -> AgentRecord:
+    async def _fresh_agent(self) -> AgentRecord:
         """Fetch fresh agent record from DB (self.agent is detached)."""
-        return await session.get(AgentRecord, self.agent.id)
+        record = await self.session.get(AgentRecord, self.agent.id)
+        assert record is not None, f"agent {self.agent.id!r} missing from DB"
+        return record
 
-    async def _fresh_messages(self, session: AsyncSession) -> list[MessageRecord]:
-        """Fetch fresh message records from DB."""
-        return await load_messages(session, self.agent.id)
+    async def _fresh_messages(self) -> list[MessageRecord]:
+        """Fetch fresh message records from DB (read path)."""
+        return await load_messages(self.ro_session, self.agent.id)
 
 class TestCompactCommon(CompactTestBase):
     """Tests with standard config: 500 limit, 0.5 target, 10 messages, 1100 tokens."""
@@ -169,24 +192,24 @@ class TestCompactCommon(CompactTestBase):
     MSG_COUNT = 10
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, test_engine):
-        await self._setup(session, test_engine, limit=500, target=0.5, msg_count=self.MSG_COUNT, total_tokens=1100)
+    async def setup(self):
+        await self._setup(limit=500, target=0.5, msg_count=self.MSG_COUNT, total_tokens=1100)
 
-    async def test_advances_context_window_start(self, session: AsyncSession):
+    async def test_advances_context_window_start(self):
         """compact advances context_window_start pointer in DB."""
         assert self.agent.context_window_start == 0  # Defaults to 0 for fresh agents
         
         await compact(self.deps)
 
-        fresh = await self._fresh_agent(session)
+        fresh = await self._fresh_agent()
         assert fresh.context_window_start > 0
 
-    async def test_does_not_delete_messages(self, session: AsyncSession):
+    async def test_does_not_delete_messages(self):
         """compact does NOT delete any messages — pointer only."""
         await compact(self.deps)
 
         # Verify all messages still exist in DB via count query
-        result = await session.execute(
+        result = await self.session.execute(
             select(func.count()).select_from(MessageRecord).where(
                 MessageRecord.agent_id == self.agent.id
             )
@@ -209,14 +232,14 @@ class TestCompactCommon(CompactTestBase):
 class TestCompactReturnValue(CompactTestBase):
     """compact() returns True when it advances the pointer, False when it's a no-op."""
 
-    async def test_returns_true_when_compaction_occurs(self, session: AsyncSession, test_engine):
-        await self._setup(session, test_engine, limit=500, target=0.5, msg_count=10, total_tokens=1100)
+    async def test_returns_true_when_compaction_occurs(self):
+        await self._setup(limit=500, target=0.5, msg_count=10, total_tokens=1100)
         result = await compact(self.deps)
         assert result is True
 
-    async def test_returns_false_when_context_too_small(self, session: AsyncSession, test_engine):
+    async def test_returns_false_when_context_too_small(self):
         """MIN_MESSAGES_AFTER_COMPACTION guard prevents compaction; compact returns False."""
-        await self._setup(session, test_engine, limit=100, target=0.5, msg_count=2, total_tokens=1100)
+        await self._setup(limit=100, target=0.5, msg_count=2, total_tokens=1100)
         result = await compact(self.deps)
         assert result is False
 
@@ -224,27 +247,27 @@ class TestCompactReturnValue(CompactTestBase):
 class TestCompactEdgeCases(CompactTestBase):
     """Tests for edge cases requiring per-test bespoke setup params"""
 
-    async def test_minimum_history_guard_preserves_recent_messages(self, session: AsyncSession, test_engine):
+    async def test_minimum_history_guard_preserves_recent_messages(self):
         """compact never evicts the most recent 4 messages."""
-        await self._setup(session, test_engine, limit=100, target=0.01, msg_count=10, total_tokens=5000)
+        await self._setup(limit=100, target=0.01, msg_count=10, total_tokens=5000)
         
         await compact(self.deps)
 
-        fresh = await self._fresh_agent(session)
-        fresh_msgs = await self._fresh_messages(session)
+        fresh = await self._fresh_agent()
+        fresh_msgs = await self._fresh_messages()
         assert fresh.context_window_start <= fresh_msgs[-4].seq_id
 
-    async def test_no_op_with_four_or_fewer_messages(self, session: AsyncSession, test_engine):
+    async def test_no_op_with_four_or_fewer_messages(self):
         """compact is a no-op when agent has 4 or fewer messages in context."""
-        await self._setup(session, test_engine, limit=100, target=0.1, msg_count=4, total_tokens=5000)
+        await self._setup(limit=100, target=0.1, msg_count=4, total_tokens=5000)
         
         await compact(self.deps)
 
-        fresh = await self._fresh_agent(session)
+        fresh = await self._fresh_agent()
         # Should remain 0 — nothing to compact
         assert fresh.context_window_start == 0
 
-    async def test_targets_percentage_of_message_tokens(self, session: AsyncSession, test_engine):
+    async def test_targets_percentage_of_message_tokens(self):
         """compact retains compaction_target_fraction of current message tokens.
 
         Setup: 400 char prompt ≈ 100 sys_tokens, 20 messages, total_tokens=2100
@@ -254,12 +277,12 @@ class TestCompactEdgeCases(CompactTestBase):
         The soft_compaction_limit is deliberately set high (10000) to confirm the target
         is relative to message tokens, not the limit.
         """
-        await self._setup(session, test_engine, limit=10000, target=0.5, msg_count=20, total_tokens=2100)
+        await self._setup(limit=10000, target=0.5, msg_count=20, total_tokens=2100)
         
         await compact(self.deps)
 
-        fresh = await self._fresh_agent(session)
-        fresh_msgs = await self._fresh_messages(session)
+        fresh = await self._fresh_agent()
+        fresh_msgs = await self._fresh_messages()
 
         # Count messages still in context (seq_id >= context_window_start)
         in_context = [m for m in fresh_msgs if m.seq_id >= fresh.context_window_start]
@@ -267,37 +290,37 @@ class TestCompactEdgeCases(CompactTestBase):
         # Expect exactly 10 (50% of 20); allow ±1 for integer rounding
         assert 9 <= len(in_context) <= 11
 
-    async def test_returns_false_when_no_model_responses_in_context(self, session: AsyncSession, agent_deps: AgentDeps):
+    async def test_returns_false_when_no_model_responses_in_context(self, agent_deps: AgentDeps):
         """compact returns False without error when context contains only ModelRequests."""
-        requests_only = [make_request(f"msg {i}") for i in range(6)]
-        await _persist_messages_load_records(session, agent_deps, requests_only)
+        requests_only: list[ModelMessage] = [make_request(f"msg {i}") for i in range(6)]
+        await _persist_messages_load_records(self.session, self.ro_session, agent_deps, requests_only)
 
         result = await compact(agent_deps)
 
         assert result is False
         assert agent_deps.context_window_start == 0
 
-    async def test_crawls_back_past_trailing_request_for_total_tokens(self, session: AsyncSession, agent_deps: AgentDeps):
+    async def test_crawls_back_past_trailing_request_for_total_tokens(self, agent_deps: AgentDeps):
         """compact() correctly finds total_tokens when the last message in context is a ModelRequest."""
         msgs = make_alternating_messages(10)   # ends with response at index 9
         msgs[-1] = make_response(total_tokens=1100)
         msgs.append(make_request("new user message"))  # trailing request — compact() must skip it
-        await _persist_messages_load_records(session, agent_deps, msgs)
+        await _persist_messages_load_records(self.session, self.ro_session, agent_deps, msgs)
 
         result = await compact(agent_deps)
 
         assert result is True  # found total_tokens on the response, compaction proceeded
 
-    async def test_raises_when_model_response_total_tokens_is_none(self, session: AsyncSession, test_engine):
+    async def test_raises_when_model_response_total_tokens_is_none(self):
         """compact raises RuntimeError when the last ModelResponse has no usage data."""
         # make_response() without total_tokens produces a record with total_tokens=None in DB
-        await self._setup(session, test_engine, limit=500, target=0.5, msg_count=10, total_tokens=None)
+        await self._setup(limit=500, target=0.5, msg_count=10, total_tokens=None)
 
         with pytest.raises(RuntimeError, match="total_tokens=None"):
             await compact(self.deps)
 
 
-class TestCompactToolPairAtomicity:
+class TestCompactToolPairAtomicity(_DBTestBase):
     """compact() must never split a tool call/return pair at context_window_start.
 
     When the naive trim point lands on a ModelRequest whose parts are ToolReturnPart or
@@ -312,7 +335,6 @@ class TestCompactToolPairAtomicity:
 
     async def _make_agent_with_tool_sequence(
         self,
-        session: AsyncSession,
         agent_deps: AgentDeps,
         tool_pair_generator,
         *,
@@ -334,11 +356,11 @@ class TestCompactToolPairAtomicity:
             make_request("msg 8"),
             make_response("resp 9", total_tokens=self.TOTAL_TOKENS),
         ]
-        records = await _persist_messages_load_records(session, agent_deps, pydantic_msgs)
+        records = await _persist_messages_load_records(self.session, self.ro_session, agent_deps, pydantic_msgs)
         return {"agent": agent_deps._agent_record, "records": records, "deps": agent_deps}
 
     @pytest.mark.parametrize("tool_pair_generator", [make_tool_pair, make_retry_pair])
-    async def test_does_not_orphan_tool_response(self, session: AsyncSession, agent_deps: AgentDeps, tool_pair_generator):
+    async def test_does_not_orphan_tool_response(self, agent_deps: AgentDeps, tool_pair_generator):
         """compact() walks back from the naive trim point to preserve tool pair atomicity.
 
         Token math — engineered to force the naive trim to land at records[6] (tool
@@ -355,7 +377,7 @@ class TestCompactToolPairAtomicity:
         Fixed result: context_window_start = records[5].seq_id  ← pair kept intact
         """
         config = _make_config(soft_compaction_limit=1000, compaction_target_fraction=0.5)
-        data = await self._make_agent_with_tool_sequence(session, agent_deps, tool_pair_generator, config=config)
+        data = await self._make_agent_with_tool_sequence(agent_deps, tool_pair_generator, config=config)
 
         # sanity check: records[5] and [6] are the tool pair (assumed in ending assertion)
         call_record, return_record = deserialize_messages(data["records"][5:7])
@@ -364,37 +386,39 @@ class TestCompactToolPairAtomicity:
 
         await compact(data["deps"])
 
-        fresh_agent = await session.get(AgentRecord, data["agent"].id)
-        fresh_record_5 = await session.get(MessageRecord, data["records"][5].id)
+        fresh_agent = await self.session.get(AgentRecord, data["agent"].id)
+        fresh_record_5 = await self.session.get(MessageRecord, data["records"][5].id)
+        assert fresh_agent is not None
+        assert fresh_record_5 is not None
         assert fresh_agent.context_window_start == fresh_record_5.seq_id
 
 
-class TestClearContext:
+class TestClearContext(_DBTestBase):
     """clear_context advances context_window_start past all existing messages."""
 
     N_MESSAGES = 4
 
     @pytest_asyncio.fixture
-    async def persist_some_messages(self, session: AsyncSession, agent_deps: AgentDeps):
+    async def persist_some_messages(self, agent_deps: AgentDeps):
         """Fixture that persists N_MESSAGES alternating messages for test setup."""
         msgs = make_alternating_messages(self.N_MESSAGES)
-        records = await _persist_messages_load_records(session, agent_deps, msgs)
+        records = await _persist_messages_load_records(self.session, self.ro_session, agent_deps, msgs)
         return records
 
-    async def test_old_messages_excluded_new_messages_visible_after_clear(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
+    async def test_old_messages_excluded_new_messages_visible_after_clear(self, agent_deps: AgentDeps, persist_some_messages):
         """After clear_context, windowed load shows no old messages; new messages after clear are visible."""
         result = await clear_context(agent_deps)
 
         assert result is True
 
         # Old messages excluded from windowed view
-        visible = await load_messages(session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
+        visible = await load_messages(self.ro_session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
         assert not visible
 
         # New message added after clear IS visible in windowed view
         new_msg = make_request("test message after clear")
         await persist_messages(agent_deps, [new_msg], [])
-        visible = await load_messages(session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
+        visible = await load_messages(self.ro_session, agent_deps.agent_id, start_seq_id=agent_deps.context_window_start)
         assert len(visible) == 1
 
     async def test_no_messages_is_noop_and_returns_false(self, agent_deps: AgentDeps):
@@ -423,19 +447,20 @@ class TestClearContext:
 
         assert agent_deps.compaction_warning_fired is False
 
-    async def test_messages_remain_in_db(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
+    async def test_messages_remain_in_db(self, agent_deps: AgentDeps, persist_some_messages):
         """Messages before the clear are preserved in the DB, not deleted."""
         await clear_context(agent_deps)
 
-        all_records = await session.execute(
+        all_records = await self.session.execute(
             select(MessageRecord).where(MessageRecord.agent_id == agent_deps.agent_id)
         )
         assert len(all_records.scalars().all()) == self.N_MESSAGES
 
-    async def test_commits_changes(self, session: AsyncSession, agent_deps: AgentDeps, persist_some_messages):
+    async def test_commits_changes(self, agent_deps: AgentDeps, persist_some_messages):
         """clear_context commits so the new pointer survives a session expiry."""
         await clear_context(agent_deps)
 
         # Verify by re-reading from DB (clear_context commits on write_scope's session)
-        fresh = await session.get(AgentRecord, agent_deps.agent_id)
+        fresh = await self.session.get(AgentRecord, agent_deps.agent_id)
+        assert fresh is not None
         assert fresh.context_window_start > 0

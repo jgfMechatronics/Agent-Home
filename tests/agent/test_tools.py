@@ -427,10 +427,12 @@ class TestMemoryToolsShared(UsesEditableBlock):
 
         # Agent A's block should be modified (re-fetch — blocks are detached)
         agent_a["block"] = await session.get(MemoryBlockRecord, agent_a["block"].id)
+        assert agent_a["block"] is not None, "agent A's block missing after re-fetch"
         assert agent_a["block"].content == "MODIFIED"
 
         # Agent B's block should be untouched
         agent_b["block"] = await session.get(MemoryBlockRecord, agent_b["block"].id)
+        assert agent_b["block"] is not None, "agent B's block missing after re-fetch"
         assert agent_b["block"].content == "Agent B: Line one."
 
 
@@ -579,6 +581,7 @@ class TestMemoryInsertLineBoundary(UsesEditableBlock):
         deps = self.ctx.deps
         async with deps.read_scope() as session:
             fresh_block = await get_block(session, deps.agent_id, self.block.label)
+            assert fresh_block is not None, f"block {self.block.label!r} missing after insert"
             return fresh_block.content
 
     @pytest.mark.parametrize(

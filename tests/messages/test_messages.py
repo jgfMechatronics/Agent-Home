@@ -31,6 +31,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig
+from db.connection import ReadOnlySession
 from db.models import AgentConfigSnapshot, AgentRecord, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
 from messages.messages import _extract_tool_definitions, deserialize_messages, load_messages, persist_messages, format_system_alert, is_system_alert
 
@@ -45,7 +46,9 @@ from conftest import (
     make_request,
     make_response,
     make_retry_pair,
+    make_tool_call_part,
     make_tool_pair,
+    make_tool_return_part,
 )
 from agent.deps import AgentDeps
 
@@ -130,11 +133,24 @@ def make_messages_batch(n: int) -> list[ModelMessage]:
 # ---------------------------------------------------------------------------
 
 class DBTestBase:
-    """Base class for test classes that need a database session and agent."""
+    """Base class for test classes that need a database session and agent.
+
+    `session` is the read-write session for fixture setup; `ro_session` is the
+    read-only session the read-path functions (load_messages, fetch_all_records)
+    expect. persist_messages commits through its own write scope, so its output is
+    visible to the read path.
+    """
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_deps: AgentDeps, agent_record: AgentRecord):
+    async def setup(
+        self,
+        session: AsyncSession,
+        ro_session: ReadOnlySession,
+        agent_deps: AgentDeps,
+        agent_record: AgentRecord,
+    ):
         self.session = session
+        self.ro_session = ro_session
         self.agent = agent_record
         self.deps = agent_deps
 
@@ -148,7 +164,7 @@ class DBTestBase:
 
     async def _persist_and_fetch(self, messages: list[ModelMessage], toolsets: Sequence[AbstractToolset] | None = None) -> list[MessageRecord]:
         await self._persist(messages, toolsets)
-        return await fetch_all_records(self.session, self.agent.id)
+        return await fetch_all_records(self.ro_session, self.agent.id)
 
 
 @pytest.mark.asyncio
@@ -246,7 +262,7 @@ class TestPersistMessages(DBTestBase):
         await self._persist(make_alternating_messages(new_count, "new"))
 
         # Load all and verify seq_ids
-        all_records = await load_messages(self.session, self.agent.id)
+        all_records = await load_messages(self.ro_session, self.agent.id)
         assert len(all_records) == existing_count + new_count
 
         # All records should have sequential seq_ids starting from 0
@@ -265,7 +281,7 @@ class TestPersistMessages(DBTestBase):
         assert len(records) == 2
         assert records[0].type == "ModelResponse"
         assert records[1].type == "ModelRequest"
-        restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
+        restored = deserialize_messages(records)
         assert restored == [response_with_call, request_with_response]
 
     async def test_records_isolated_per_agent(self, test_engine):
@@ -289,16 +305,16 @@ class TestPersistMessages(DBTestBase):
         await self._persist([my_first_expected_msg])
         await self._persist([my_second_expected_msg])
 
-        my_records = await fetch_all_records(self.session, self.agent.id)
-        other_records = await fetch_all_records(self.session, other_agent.id)
+        my_records = await fetch_all_records(self.ro_session, self.agent.id)
+        other_records = await fetch_all_records(self.ro_session, other_agent.id)
 
         assert len(my_records) == 2
-        my_restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in my_records]
+        my_restored = deserialize_messages(my_records)
         assert my_restored[0] == my_first_expected_msg
         assert my_restored[1] == my_second_expected_msg
 
         assert len(other_records) == 1
-        assert ModelMessagesTypeAdapter.validate_json(f"[{other_records[0].content}]")[0] == expected_other_msg
+        assert deserialize_messages([other_records[0]])[0] == expected_other_msg
 
 
     # ------------Tests for handling non-persistable messages -----------------------
@@ -308,7 +324,7 @@ class TestPersistMessages(DBTestBase):
         """Assert the last record in records is a summary warning matching the expected format."""
         record = records[-1]
         assert record.type == "ModelResponse"
-        restored = ModelMessagesTypeAdapter.validate_json(f"[{record.content}]")
+        restored = deserialize_messages([record])
 
         # Timestamp is persist time (utcnow()) — check stable prefix only.
         # Warning is system-alert formatted (persist machinery injects it, not the model).
@@ -317,15 +333,18 @@ class TestPersistMessages(DBTestBase):
             f"'{error_text}'. A warning was injected in place of the problematic message, "
             "error occurred at "
         )
-        assert restored[0].parts[0].content.startswith(expected_prefix)
+        warning_part = restored[0].parts[0]
+        assert isinstance(warning_part, TextPart), f"expected the warning to be a TextPart, got {type(warning_part)}"
+        assert warning_part.content.startswith(expected_prefix)
 
     # -------------- Tests -------------------
     async def test_orphaned_tool_call_repaired_by_persist(self):
         """persist_messages calls repair_messages(): an orphaned tool call (no matching return)
         results in both the original ModelResponse and a synthesized ModelRequest(ToolReturnPart)
         being stored in the DB."""
-        orphan_response, _ = make_tool_pair()  # discard the matching return
-        tool_call_id = orphan_response.parts[0].tool_call_id
+        # Orphan: a call response whose matching return is never persisted.
+        call_part = make_tool_call_part()
+        orphan_response = ModelResponse(parts=[call_part])
 
         records = await self._persist_and_fetch([orphan_response])
 
@@ -334,40 +353,43 @@ class TestPersistMessages(DBTestBase):
         assert records[0].type == "ModelResponse"
         # Synthesized return added — ToolReturnPart with matching tool_call_id
         assert records[1].type == "ModelRequest"
-        restored_return = ModelMessagesTypeAdapter.validate_json(f"[{records[1].content}]")[0]
+        restored_return = deserialize_messages([records[1]])[0]
         synthesized = [p for p in restored_return.parts if isinstance(p, ToolReturnPart)]
         assert len(synthesized) == 1
-        assert synthesized[0].tool_call_id == tool_call_id
+        assert synthesized[0].tool_call_id == call_part.tool_call_id
 
-    def _make_output_retry_request(self) -> ModelRequest:
-        """An output-retry ModelRequest as pydantic-ai constructs it after a model response
-        which was judged invalid: RetryPromptPart with no tool_name (its tool_call_id is auto-generated
+    def _make_output_retry_part(self) -> RetryPromptPart:
+        """An output-retry part as pydantic-ai constructs it after a model response which was
+        judged invalid: RetryPromptPart with no tool_name (its tool_call_id is auto-generated
         and matches no real tool call)."""
-        return ModelRequest(parts=[RetryPromptPart(content="Please return text or call a tool.")])
+        return RetryPromptPart(content="Please return text or call a tool.")
 
     async def test_output_retry_after_empty_response_is_preserved(self):
         """The pydantic-ai v2 output-retry path: model returns an invalid response, pydantic-ai inserts a
         RetryPromptPart with no tool_name. It responds to the empty response, not to any
         tool call, so it must NOT be treated as an orphaned tool retry."""
         empty_response = ModelResponse(parts=[])
-        retry_request = self._make_output_retry_request()
+        retry_request = ModelRequest(parts=[self._make_output_retry_part()])
         records = await self._persist_and_fetch([empty_response, retry_request])
 
         # Both messages stored as-is; no error replacement, no summary warning appended
         assert len(records) == 2
-        restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
+        restored = deserialize_messages(records)
         assert restored == [empty_response, retry_request]
 
     async def test_output_retry_alongside_matched_tool_return_is_preserved(self):
         """An output retry in the same ModelRequest as a matched ToolReturnPart must not
         break the pairing check — its synthetic tool_call_id is excluded from comparison
         because it has no tool_name."""
-        call_response, return_request = make_tool_pair()
-        return_request.parts.append(RetryPromptPart(content="Please return text or call a tool."))
+        # Matched return plus an output retry in the same request — built from parts, since
+        # ModelRequest.parts is a Sequence and cannot be appended to.
+        call_part = make_tool_call_part()
+        call_response = ModelResponse(parts=[call_part])
+        return_request = ModelRequest(parts=[make_tool_return_part(call_part), self._make_output_retry_part()])
         records = await self._persist_and_fetch([call_response, return_request])
 
         assert len(records) == 2
-        restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
+        restored = deserialize_messages(records)
         assert restored == [call_response, return_request]
 
     @pytest.mark.parametrize("toolsets", [
@@ -402,20 +424,22 @@ class TestPersistMessages(DBTestBase):
         with patch.object(ModelMessagesTypeAdapter, "dump_json", side_effect=controlled_dump):
             await self._persist([good, bad, good2], toolsets=toolsets)
 
-        records = await fetch_all_records(self.session, self.agent.id)
+        records = await fetch_all_records(self.ro_session, self.agent.id)
         assert len(records) == 4  # good, positional error, good2, summary warning
         assert [r.seq_id for r in records] == [0, 1, 2, 3]  # sequential including warning
 
         error_text = "[persist_messages serialization error]: ValueError: sim failure"
 
         # Good messages before and after the bad one are stored intact
-        assert ModelMessagesTypeAdapter.validate_json(f"[{records[0].content}]")[0] == good
-        assert ModelMessagesTypeAdapter.validate_json(f"[{records[2].content}]")[0] == good2
+        assert deserialize_messages([records[0]])[0] == good
+        assert deserialize_messages([records[2]])[0] == good2
 
         # Positional error record replaces bad in-place, system-alert formatted
         assert records[1].type == "ModelResponse"
-        positional = ModelMessagesTypeAdapter.validate_json(f"[{records[1].content}]")
-        assert positional[0].parts[0].content == format_system_alert(error_text)
+        positional = deserialize_messages([records[1]])
+        positional_part = positional[0].parts[0]
+        assert isinstance(positional_part, TextPart), f"expected the alert to be a TextPart, got {type(positional_part)}"
+        assert positional_part.content == format_system_alert(error_text)
 
         # Summary warning appended at end, referencing the error
         self._assert_summary_warning_appended(records, error_text)
@@ -431,12 +455,15 @@ class TestPersistMessages(DBTestBase):
 class TestPersistMessagesSnapshots(DBTestBase):
     """Tests for the snapshot and context-capture fields added to persist_messages.
 
-    Shadows _persist/_persist_and_fetch to patch _extract_tool_definitions, so tests
-    can supply exact ToolDefinition lists without needing real toolsets. This is appropriate
-    here because the point of these tests is to verify snapshot *content*, not extraction.
+    These tests need exact ToolDefinition lists, so the `*_with_schemas` helpers below patch
+    _extract_tool_definitions and persist with no toolsets. That is appropriate here because the
+    point is to verify snapshot *content*, not extraction.
+
+    The `_with_schemas` suffix marks the signature difference: their second parameter is tool
+    schemas, where the base helpers take toolsets.
     """
 
-    async def _persist(self, messages: list[ModelMessage], tool_schemas: list[ToolDefinition] | None = None, *, deps: AgentDeps | None = None) -> int | None:
+    async def _persist_with_schemas(self, messages: list[ModelMessage], tool_schemas: list[ToolDefinition] | None = None, *, deps: AgentDeps | None = None) -> int | None:
         schemas = tool_schemas if tool_schemas is not None else SAMPLE_TOOL_SCHEMAS
         with patch("messages.messages._extract_tool_definitions", AsyncMock(return_value=schemas)):
             return await persist_messages(
@@ -445,9 +472,9 @@ class TestPersistMessagesSnapshots(DBTestBase):
                 toolsets=[],
             )
 
-    async def _persist_and_fetch(self, messages: list[ModelMessage], tool_schemas: list[ToolDefinition] | None = None) -> list[MessageRecord]:
-        await self._persist(messages, tool_schemas)
-        return await fetch_all_records(self.session, self.agent.id)
+    async def _persist_and_fetch_with_schemas(self, messages: list[ModelMessage], tool_schemas: list[ToolDefinition] | None = None) -> list[MessageRecord]:
+        await self._persist_with_schemas(messages, tool_schemas)
+        return await fetch_all_records(self.ro_session, self.agent.id)
 
     async def _sys_snapshots(self):
         return (await self.session.execute(select(SystemPromptSnapshot))).scalars().all()
@@ -462,7 +489,7 @@ class TestPersistMessagesSnapshots(DBTestBase):
     async def test_snapshot_stores_correct_system_prompt_content(self, prompt):
         """Snapshot row stores the exact system prompt string (including empty); record hash points to it."""
         self.agent.compiled_system_prompt = prompt
-        records = await self._persist_and_fetch([make_request()])
+        records = await self._persist_and_fetch_with_schemas([make_request()])
         snap = (await self._sys_snapshots())[0]
         assert snap.content == prompt
         assert records[0].system_prompt_hash == snap.id
@@ -470,7 +497,7 @@ class TestPersistMessagesSnapshots(DBTestBase):
     @pytest.mark.parametrize("tool_schemas", [SAMPLE_TOOL_SCHEMAS, []])
     async def test_snapshot_stores_correct_tool_schema_content(self, tool_schemas):
         """Snapshot row stores the correct tool schemas (including empty list); record hash points to it."""
-        records = await self._persist_and_fetch([make_request()], tool_schemas=tool_schemas)
+        records = await self._persist_and_fetch_with_schemas([make_request()], tool_schemas=tool_schemas)
         snap = (await self._tool_snapshots())[0]
         assert [ToolDefinition(**d) for d in json.loads(snap.content)] == tool_schemas
         assert records[0].tool_definition_hash == snap.id
@@ -482,10 +509,10 @@ class TestPersistMessagesSnapshots(DBTestBase):
         """Same prompt reuses the existing snapshot row; a changed prompt creates a new one.
         Record hashes exactly match the set of snapshot IDs."""
         self.agent.compiled_system_prompt = "prompt A"
-        await self._persist([make_request()])
+        await self._persist_with_schemas([make_request()])
         self.agent.compiled_system_prompt = second_prompt
-        await self._persist([make_request()])
-        snaps, records = await self._sys_snapshots(), await fetch_all_records(self.session, self.agent.id)
+        await self._persist_with_schemas([make_request()])
+        snaps, records = await self._sys_snapshots(), await fetch_all_records(self.ro_session, self.agent.id)
         assert len(snaps) == expected_count
         assert {r.system_prompt_hash for r in records} == {s.id for s in snaps}
 
@@ -495,9 +522,9 @@ class TestPersistMessagesSnapshots(DBTestBase):
     async def test_tool_schema_snapshot_dedup(self, second_schemas, expected_count):
         """Same schemas reuse the existing snapshot row; changed schemas create a new one.
         Record hashes exactly match the set of snapshot IDs."""
-        await self._persist([make_request()])
-        await self._persist([make_request()], second_schemas)
-        snaps, records = await self._tool_snapshots(), await fetch_all_records(self.session, self.agent.id)
+        await self._persist_with_schemas([make_request()])
+        await self._persist_with_schemas([make_request()], second_schemas)
+        snaps, records = await self._tool_snapshots(), await fetch_all_records(self.ro_session, self.agent.id)
         assert len(snaps) == expected_count
         assert {r.tool_definition_hash for r in records} == {s.id for s in snaps}
 
@@ -505,12 +532,12 @@ class TestPersistMessagesSnapshots(DBTestBase):
     async def test_context_window_start_all_records_share_first_record_id(self, n_messages):
         """All records in one persist call share context_window_start_msg_id == first record's id.
         n=1 verifies the self-referential case; n=3 verifies the full-batch case."""
-        records = await self._persist_and_fetch(make_alternating_messages(n_messages))
+        records = await self._persist_and_fetch_with_schemas(make_alternating_messages(n_messages))
         assert all(r.context_window_start_msg_id == records[0].id for r in records)
 
     async def test_snapshot_stores_correct_agent_config_content(self):
         """Snapshot row stores the agent config as JSON that round-trips correctly; record hash points to it."""
-        records = await self._persist_and_fetch([make_request()])
+        records = await self._persist_and_fetch_with_schemas([make_request()])
         snap = (await self._config_snapshots())[0]
         assert AgentConfig.model_validate_json(snap.content) == self.agent.agent_config
         assert records[0].agent_config_hash == snap.id
@@ -521,10 +548,10 @@ class TestPersistMessagesSnapshots(DBTestBase):
     async def test_agent_config_snapshot_dedup(self, second_config, expected_count):
         """Same config reuses the existing snapshot row; a changed config creates a new one.
         Record hashes exactly match the set of snapshot IDs."""
-        await self._persist([make_request()])
+        await self._persist_with_schemas([make_request()])
         self.agent.agent_config = second_config
-        await self._persist([make_request()])
-        snaps, records = await self._config_snapshots(), await fetch_all_records(self.session, self.agent.id)
+        await self._persist_with_schemas([make_request()])
+        snaps, records = await self._config_snapshots(), await fetch_all_records(self.ro_session, self.agent.id)
         assert len(snaps) == expected_count
         assert {r.agent_config_hash for r in records} == {s.id for s in snaps}
 
@@ -532,7 +559,7 @@ class TestPersistMessagesSnapshots(DBTestBase):
         """Subsequent persist calls all reference the UUID of the very first message ever persisted."""
         first_records = await self._persist_and_fetch([make_request(), make_response()])
         await self._persist([make_request(), make_response()])
-        all_records = await fetch_all_records(self.session, self.agent.id)
+        all_records = await fetch_all_records(self.ro_session, self.agent.id)
         assert all(r.context_window_start_msg_id == first_records[0].id for r in all_records)
 
 
@@ -551,11 +578,11 @@ class TestLoadMessages(DBTestBase):
         messages = [make_request(), make_response(), make_request(), make_response()]
         await self._persist(messages)
 
-        records = await load_messages(self.session, self.agent.id)
+        records = await load_messages(self.ro_session, self.agent.id)
         assert deserialize_messages(records) == messages
 
     async def test_returns_empty_list_when_no_messages(self):
-        records = await load_messages(self.session, self.agent.id)
+        records = await load_messages(self.ro_session, self.agent.id)
         assert records == []
 
     async def test_start_seq_id_filters_inclusive(self):
@@ -564,10 +591,10 @@ class TestLoadMessages(DBTestBase):
         await self._persist(first)
         await self._persist(second)
 
-        all_records = await load_messages(self.session, self.agent.id)
+        all_records = await load_messages(self.ro_session, self.agent.id)
         cutoff_seq_id = all_records[1].seq_id  # trim to second record (first reply) and on
 
-        records = await load_messages(self.session, self.agent.id, start_seq_id=cutoff_seq_id)
+        records = await load_messages(self.ro_session, self.agent.id, start_seq_id=cutoff_seq_id)
         # Should include the cutoff record and everything after (inclusive)
         assert deserialize_messages(records) == [first[1]] + second
 
@@ -576,10 +603,10 @@ class TestLoadMessages(DBTestBase):
         messages = [make_request("0"), make_response("1"), make_request("2"), make_response("3")]
         await self._persist(messages)
 
-        all_records = await load_messages(self.session, self.agent.id)
+        all_records = await load_messages(self.ro_session, self.agent.id)
         # Get messages 1 and 2 (exclusive of 0 and 3)
         records = await load_messages(
-            self.session, self.agent.id,
+            self.ro_session, self.agent.id,
             start_seq_id=all_records[1].seq_id,
             end_seq_id=all_records[3].seq_id,
         )
@@ -589,7 +616,7 @@ class TestLoadMessages(DBTestBase):
         messages = [make_request("first"), make_response("second"), make_request("third")]
         await self._persist(messages)
 
-        records = await load_messages(self.session, self.agent.id)
+        records = await load_messages(self.ro_session, self.agent.id)
         seq_ids = [r.seq_id for r in records]
         assert seq_ids == sorted(seq_ids)
 
@@ -606,13 +633,13 @@ class TestLoadMessages(DBTestBase):
         await self._persist([make_request(), make_response()])
         await self._persist([make_request(), make_response()], deps=other_deps)
 
-        records = await load_messages(self.session, self.agent.id)
+        records = await load_messages(self.ro_session, self.agent.id)
         assert len(records) == 2
         assert all(r.agent_id == self.agent.id for r in records)
 
     async def test_returns_list_of_message_records(self):
         await self._persist([make_request()])
-        records = await load_messages(self.session, self.agent.id)
+        records = await load_messages(self.ro_session, self.agent.id)
         assert len(records) == 1
         assert isinstance(records[0], MessageRecord)
 
@@ -620,7 +647,7 @@ class TestLoadMessages(DBTestBase):
         """When start_seq_id is larger than every message's seq_id, the result is empty."""
         await self._persist([make_request(), make_response()])
 
-        records = await load_messages(self.session, self.agent.id, start_seq_id=999999)
+        records = await load_messages(self.ro_session, self.agent.id, start_seq_id=999999)
         assert records == []
 
 
@@ -701,7 +728,7 @@ class TestRoundTrip(DBTestBase):
         original = [make_request("round-trip me"), make_response("got it")]
         await self._persist(original)
 
-        records = await load_messages(self.session, self.agent.id)
+        records = await load_messages(self.ro_session, self.agent.id)
         restored = deserialize_messages(records)
 
         assert restored == original
@@ -710,7 +737,7 @@ class TestRoundTrip(DBTestBase):
         response_with_call, request_with_return = make_tool_pair()
         await self._persist([response_with_call, request_with_return])
 
-        records = await load_messages(self.session, self.agent.id)
+        records = await load_messages(self.ro_session, self.agent.id)
         restored = deserialize_messages(records)
 
         assert restored[0] == response_with_call
@@ -731,7 +758,7 @@ class TestRoundTrip(DBTestBase):
         )
         await self._persist([msg_with_instructions])
 
-        records = await load_messages(self.session, self.agent.id)
+        records = await load_messages(self.ro_session, self.agent.id)
         assert len(records) == 1
 
         # Instructions must be absent from the stored JSON

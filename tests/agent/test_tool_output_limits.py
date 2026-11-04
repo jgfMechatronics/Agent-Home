@@ -116,7 +116,7 @@ TOOLSET_BUILDERS = [
 ]
 
 
-def _build_agent(steps: list, deps: AgentDeps, toolsets: list) -> Agent:
+def _build_agent(steps: list, deps: AgentDeps, toolsets: list) -> Agent[AgentDeps, str]:
     """Agent on the production capability pipeline with tools from `toolsets`.
 
     Takes real AgentDeps (fixture-built): the production pipeline always runs

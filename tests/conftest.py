@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 # Conftest is imported first by pytest, making this the right place for it.
 os.environ.setdefault("AGENT_HOME_DB_PATH", os.path.expanduser("~/.agent-home_pytest/db.sqlite"))
 
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import Mock
@@ -19,7 +20,7 @@ import time_machine
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.orm import object_session
-from db.connection import Engines, ReadOnlyEngine, create_readonly_sqlite_engine, create_sqlite_engine
+from db.connection import Engines, ReadOnlyEngine, ReadOnlySession, create_readonly_sqlite_engine, create_sqlite_engine
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -181,6 +182,18 @@ def make_ro_engine(engine) -> ReadOnlyEngine:
     return create_readonly_sqlite_engine(engine.url.database)
 
 
+def as_read_session(session: AsyncSession) -> ReadOnlySession:
+    """The test's own session, typed for read-path functions.
+
+    For tests that read rows they just flushed in the same session: a separate read
+    connection would see nothing (uncommitted), and committing would expire the
+    in-memory records their assertions hold. ReadOnlySession is a NewType erased at
+    runtime, so this is a typed pass-through that stays inside test code — every impl
+    call site still receives a real ReadOnlySession from ro_session or read_scope.
+    """
+    return ReadOnlySession(session)
+
+
 def make_deps(engine, agent_record) -> AgentDeps:
     """Test-side factory for AgentDeps — bypasses the factory guard (valid in tests only).
 
@@ -236,6 +249,16 @@ def make_alternating_messages(count: int, prefix: str = "msg") -> list[ModelMess
     ]
 
 
+def make_tool_call_part() -> ToolCallPart:
+    """A mem_replace tool-call part with a fresh tool_call_id."""
+    return ToolCallPart(tool_name="mem_replace", args='{"label":"x"}', tool_call_id=str(uuid.uuid4()))
+
+
+def make_tool_return_part(call: ToolCallPart) -> ToolReturnPart:
+    """The ToolReturnPart matching `call`: same tool name and tool_call_id."""
+    return ToolReturnPart(tool_name=call.tool_name, content="ok", tool_call_id=call.tool_call_id)
+
+
 def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
     """A matched tool-call / tool-return pair.
 
@@ -247,9 +270,8 @@ def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
     FunctionModel is useful for valid sequences; orphan tests still need hand-crafted invalid
     sequences (deliberately incomplete pairs) which could be produced by mutating the results of FunctionModel
     """
-    tool_call_id = str(uuid.uuid4())
-    call_part = ToolCallPart(tool_name="mem_replace", args='{"label":"x"}', tool_call_id=tool_call_id)
-    return_part = ToolReturnPart(tool_name="mem_replace", content="ok", tool_call_id=tool_call_id)
+    call_part = make_tool_call_part()
+    return_part = make_tool_return_part(call_part)
     return (
         ModelResponse(parts=[call_part]),
         ModelRequest(parts=[return_part]),
@@ -260,16 +282,17 @@ def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
     """A matched tool-call / retry-prompt pair (ModelRetry path).
 
     The call side is identical to make_tool_pair() — only the response side differs
-    (RetryPromptPart instead of ToolReturnPart).
+    (RetryPromptPart instead of ToolReturnPart). Built from parts rather than by poking at
+    make_tool_pair()'s ModelResponse, whose `parts` is a Sequence of the full part union.
     """
-    call_response, _ = make_tool_pair()
+    call_part = make_tool_call_part()
     retry_part = RetryPromptPart(
         content="block 'x' not found",
-        tool_name="mem_replace",
-        tool_call_id=call_response.parts[0].tool_call_id,
+        tool_name=call_part.tool_name,
+        tool_call_id=call_part.tool_call_id,
     )
     return (
-        call_response,
+        ModelResponse(parts=[call_part]),
         ModelRequest(parts=[retry_part]),
     )
 
@@ -305,6 +328,24 @@ async def session(test_engine):
     """
     async with AsyncSession(test_engine) as async_session:
         yield async_session
+
+
+@pytest.fixture
+def ro_engine(test_engine) -> ReadOnlyEngine:
+    """Read-only engine over the test DB, built by the same constructor prod uses."""
+    return make_ro_engine(test_engine)
+
+
+@pytest_asyncio.fixture
+async def ro_session(ro_engine: ReadOnlyEngine) -> AsyncIterator[ReadOnlySession]:
+    """Read-only session over the test DB — what read-path functions take.
+
+    Separate connection from `session`, so it sees only COMMITTED data: fixture setup
+    that the read path must observe goes through commit_and_detach_fixture_record.
+    Writes through it fail at runtime with the same readonly-database error prod raises.
+    """
+    async with AsyncSession(ro_engine) as async_session:
+        yield ReadOnlySession(async_session)
 
 
 async def commit_and_detach_fixture_record(session: AsyncSession, record):
@@ -451,7 +492,7 @@ async def app(test_engine) -> FastAPI:
 
 
 @pytest_asyncio.fixture
-async def client(app: FastAPI) -> AsyncClient:
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     """Async HTTP client bound to the test app.
 
     raise_app_exceptions=False so that app-level Exception handlers (ServerErrorMiddleware)
@@ -473,6 +514,10 @@ async def local_dummy_tool(ctx: RunContext, text: str) -> str:
     return text
 
 
+ScriptedStep = ModelResponse | Callable[[list[ModelMessage]], ModelResponse]
+"""One scripted model step: a fixed response, or a callable given the live history."""
+
+
 class ScriptedFunction:
     """FunctionModel non-streamed function consuming one step per model invocation.
 
@@ -486,11 +531,11 @@ class ScriptedFunction:
     or at least inspire it.
     """
 
-    def __init__(self, steps: list):
+    def __init__(self, steps: list[ScriptedStep]):
         self._steps = steps
         self.invocation = 0
 
-    def __call__(self, messages, info) -> ModelResponse:
+    def __call__(self, messages: list[ModelMessage], info) -> ModelResponse:
         step = self._steps[self.invocation]
         self.invocation += 1
         if callable(step):
@@ -508,25 +553,28 @@ def assert_ModelMessage_list_eq(
         assert type(actual_msg) is type(expected_msg), f"Message {i}: type mismatch {type(actual_msg)} != {type(expected_msg)}"
         assert len(actual_msg.parts) == len(expected_msg.parts), f"Message {i}: part count mismatch"
         for j, (actual_part, expected_part) in enumerate(zip(actual_msg.parts, expected_msg.parts)):
-            assert type(actual_part) is type(expected_part), f"Message {i} part {j}: type mismatch"
-            match expected_part:
-                case UserPromptPart():
-                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
-                case ToolCallPart():
-                    assert actual_part.tool_name == expected_part.tool_name, f"Message {i} part {j}: tool_name mismatch"
-                    assert actual_part.args == expected_part.args, f"Message {i} part {j}: args mismatch"
-                    assert actual_part.tool_call_id == expected_part.tool_call_id, f"Message {i} part {j}: tool_call_id mismatch"
-                case ToolReturnPart():
-                    assert actual_part.tool_name == expected_part.tool_name, f"Message {i} part {j}: tool_name mismatch"
-                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
-                    assert actual_part.tool_call_id == expected_part.tool_call_id, f"Message {i} part {j}: tool_call_id mismatch"
-                case TextPart():
-                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
-                case ThinkingPart():
-                    assert actual_part.content == expected_part.content, f"Message {i} part {j}: content mismatch"
+            where = f"Message {i} part {j}"
+            assert type(actual_part) is type(expected_part), f"{where}: type mismatch"
+            # Match on the pair, not just one side: `assert type(a) is type(b)` doesn't narrow
+            # either operand for static analysis, so both must be matched to reach their fields.
+            match actual_part, expected_part:
+                case UserPromptPart() as a, UserPromptPart() as e:
+                    assert a.content == e.content, f"{where}: content mismatch"
+                case ToolCallPart() as a, ToolCallPart() as e:
+                    assert a.tool_name == e.tool_name, f"{where}: tool_name mismatch"
+                    assert a.args == e.args, f"{where}: args mismatch"
+                    assert a.tool_call_id == e.tool_call_id, f"{where}: tool_call_id mismatch"
+                case ToolReturnPart() as a, ToolReturnPart() as e:
+                    assert a.tool_name == e.tool_name, f"{where}: tool_name mismatch"
+                    assert a.content == e.content, f"{where}: content mismatch"
+                    assert a.tool_call_id == e.tool_call_id, f"{where}: tool_call_id mismatch"
+                case TextPart() as a, TextPart() as e:
+                    assert a.content == e.content, f"{where}: content mismatch"
+                case ThinkingPart() as a, ThinkingPart() as e:
+                    assert a.content == e.content, f"{where}: content mismatch"
                 case _:
-                    assert actual_part == expected_part, (f"Message {i} part {j}: equality mismatch.\n"
-                                                          "Comparison helper may not be accountinng for this type.")
+                    assert actual_part == expected_part, (f"{where}: equality mismatch.\n"
+                                                          "Comparison helper may not be accounting for this type.")
 
 
 def in_process_mcp_toolset_factory():

@@ -147,10 +147,12 @@ class TestAFIngestion:
 
         # Verify system prompt was recompiled with blocks included
         agent_record = await get_agent_record(session, self.agent_id)
-        assert agent_record.compiled_system_prompt != ""
+        assert agent_record is not None
+        compiled_prompt = agent_record.compiled_system_prompt
+        assert compiled_prompt is not None and compiled_prompt != ""
         # Check that at least one block label appears in the compiled prompt
         # compilation accuracy is not our concern here, we just need to know that the (re)compilation endpoint was hit
-        assert expected_blocks[0].label in agent_record.compiled_system_prompt
+        assert expected_blocks[0].label in compiled_prompt
 
     async def test_empty_conversation_history(self):
         """Conversation history in the .AF is not imported — agent starts with no messages."""

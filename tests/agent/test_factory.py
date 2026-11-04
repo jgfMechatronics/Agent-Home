@@ -29,8 +29,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import Model
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP
+from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Spill, ToolOutputLimits, Truncate, indented_json
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -145,6 +147,9 @@ class TestBuildAgentAndDeps:
             # model_name on the resolved object is the model part only (after the colon).
             # NOTE: This assumes pydantic-ai exposes model_name on resolved models consistently.
             # If pydantic-ai changes how it reports model names, this assertion may need updating.
+            # agent.model is Model | KnownModelName | str | None — assert it resolved to a Model
+            # instance rather than staying a config string (which has no model_name).
+            assert isinstance(agent.model, Model)
             assert agent.model.model_name == self.agent_record.agent_config.model_name.split(":", 1)[1]
 
     async def test_output_type_is_agent_output(self):
@@ -166,6 +171,8 @@ class TestBuildAgentAndDeps:
         """
         async with self.factory.build_agent_and_deps() as (agent, deps):
             settings = agent.model_settings
+            # model_settings may be a static ModelSettings dict or a callable provider hook
+            assert isinstance(settings, dict), f"expected static model_settings, got {type(settings)}"
             assert settings.get("anthropic_cache_instructions") == True, "System prompt caching should be enabled with default TTL (5m)"
             assert settings.get("anthropic_cache_tool_definitions") == True, "Tool definition caching should be enabled with default TTL (5m)"
             assert settings.get("anthropic_cache_messages") == True, "Message caching should be enabled with default TTL (5m)"
@@ -320,7 +327,7 @@ class TestBuildModelSettings:
         "openrouter:z-ai/glm-5.3",
     ])
     @pytest.mark.parametrize("thinking_mode", [True, "high", "low"])
-    def test_base_settings_thinking_mode(self, model_name: str, thinking_mode: "bool | str"):
+    def test_base_settings_thinking_mode(self, model_name: str, thinking_mode: ThinkingLevel):
         """All providers: thinking passes through thinking_mode (bool or effort level)."""
         settings = _build_model_settings(self._config(model_name, thinking_mode=thinking_mode))
         assert settings.get("thinking") is thinking_mode
@@ -335,7 +342,7 @@ class TestBuildModelSettings:
         assert settings.get("anthropic_cache_messages") is True
 
     @pytest.mark.parametrize("thinking_mode", [True, *THINKING_EFFORT_LEVELS])
-    def test_anthropic_thinking_unified_no_override(self, thinking_mode: "bool | str"):
+    def test_anthropic_thinking_unified_no_override(self, thinking_mode: ThinkingLevel):
         """Every thinking level → unified 'thinking' passes through; no override; cap fits the budget.
 
         pydantic-ai maps the unified field natively (True/effort levels → budget_tokens
@@ -415,6 +422,7 @@ class TestBuildCapabilities:
     def test_tool_output_limits_config(self):
         """ToolOutputLimits is configured for straight spill with truncate fallback and a TTL'd local store."""
         tol = _build_capabilities()[2]
+        assert isinstance(tol, ToolOutputLimits)
 
         assert isinstance(tol.store, LocalFileStore)
         assert tol.store.cleanup_after == TOOL_OUTPUT_SPILL_CLEANUP_AFTER

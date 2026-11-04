@@ -6,6 +6,7 @@ from asgi_lifespan import LifespanManager
 from collections.abc import AsyncGenerator
 from unittest.mock import patch, AsyncMock, MagicMock
 
+from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 
 from agent.types import AgentLockedError, AgentNotFoundError
@@ -19,8 +20,9 @@ def test_create_app_includes_router():
     """Sanity check that _create_app() wires up the routes."""
     app = _create_app()
     
-    app_paths = {r.path for r in app.routes}
-    router_paths = {r.path for r in router.routes}
+    # API routes only: app.routes also carries the /docs, /redoc and /openapi.json Routes
+    app_paths = {r.path for r in app.routes if isinstance(r, APIRoute)}
+    router_paths = {r.path for r in router.routes if isinstance(r, APIRoute)}
     
     assert router_paths.issubset(app_paths)
     assert "/health" in app_paths

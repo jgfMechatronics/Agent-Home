@@ -17,8 +17,10 @@ import asyncio
 import importlib.metadata
 import inspect
 import json
+from collections.abc import AsyncIterator
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
+from typing import Any
 from uuid import uuid4
 
 # Third-party
@@ -50,6 +52,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaThinkingPart, DeltaThink
 
 # Local
 from messages.messages import format_system_alert, persist_messages
+from agent.deps import AgentDeps
 from agent.parallel_tool_call_trimmer import ParallelToolCallTrimmer
 from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
 from agent.timestamping import add_timestamp_prefix
@@ -513,8 +516,10 @@ class FunctionModelTestAgent:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _build(self) -> Agent:
-        agent: Agent = Agent(FunctionModel(stream_function=self._stream))
+    def _build(self) -> Agent[Any, str]:
+        # Any (not object) for deps: subclasses narrow it to their own deps type, and
+        # object would make those overrides incompatible.
+        agent: Agent[Any, str] = Agent(FunctionModel(stream_function=self._stream))
 
         async def dummy_tool(ctx: RunContext, arg: str) -> str:
             if self.enqueue_from_tool:
@@ -1004,7 +1009,7 @@ class TestCancellation(_PersistenceAndCancellationTestBase):
 
         # pydantic-ai assembles all parts of a step into one ModelResponse only at step-end.
         # Cancel fired mid-step means nothing from that in-progress step is in captured messages.
-        expected_msg_list = [
+        expected_msg_list: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart(content=add_timestamp_prefix(DEFAULT_USER_MESSAGE))]),
             self.CANCEL_NOTICE,
         ]
@@ -1271,7 +1276,7 @@ async def test_empty_model_response_parts_does_not_crash():
 # MCP connection/handling tests
 # ---------------------------------------------------------------------------
 
-async def _mcp_completion_stream(messages: list, info: AgentInfo) -> None:
+async def _mcp_completion_stream(messages: list, info: AgentInfo) -> AsyncIterator[str]:
     """Minimal FunctionModel stream: plain text completion, no tool calls."""
     yield FunctionModelTestAgent.COMPLETION_TEXT
 
@@ -1290,7 +1295,7 @@ class TestMCPTools(_BaseRouteTest):
     MCP_EXPECTED_RETURN = "contents of /test/file.txt"
 
     @staticmethod
-    async def _tool_call_stream(messages: list, info: AgentInfo) -> None:
+    async def _tool_call_stream(messages: list, info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
         """FunctionModel stream that calls the MCP tool, then completes."""
         if len(messages) == 1:  # First invocation: emit tool call
             yield DeltaToolCalls({0: DeltaToolCall(
@@ -1475,6 +1480,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         stream_fn = self._make_tool_stream(tool_name, args_list)
         agent = Agent(
             FunctionModel(stream_function=stream_fn),
+            deps_type=AgentDeps,
             tools=[TOOL_REGISTRY[tool_name]],
         )
         
@@ -1509,6 +1515,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         ])
         agent = Agent(
             FunctionModel(stream_function=stream_fn),
+            deps_type=AgentDeps,
             tools=[TOOL_REGISTRY["memory_insert"]],
             capabilities=[ParallelToolCallTrimmer()],
         )
