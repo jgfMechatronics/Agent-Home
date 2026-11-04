@@ -22,7 +22,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.orm import object_session
 from db.connection import Engines, ReadOnlyEngine, ReadOnlySession, create_readonly_sqlite_engine, create_sqlite_engine
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agent.deps import AgentDeps
 from agent.types import AgentAppState, AgentConfig
@@ -365,6 +365,30 @@ async def commit_and_detach_fixture_record(session: AsyncSession, record):
     await session.refresh(record)
     session.expunge(record)
     return record
+
+
+class DBTestBase:
+    """Stores the uniform DB fixtures on `self` for DB-touching test classes.
+
+    Inherit to read `self.session` / `self.ro_session` / `self.test_engine` instead of
+    repeating them in every test signature. Covers ONLY the uniform triple — same names
+    and semantics in every file, no per-file wiring. `agent_record`, `ro_engine`, and
+    per-file composite fixtures stay explicit: their fixture chains differ (e.g. an
+    autouse `agent_deps` would insert a committed AgentRecord into every test) or they
+    carry per-file setup work.
+    """
+
+    session: AsyncSession
+    ro_session: ReadOnlySession
+    test_engine: AsyncEngine
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def _store_db_fixtures(
+        self, session: AsyncSession, ro_session: ReadOnlySession, test_engine: AsyncEngine
+    ):
+        self.session = session
+        self.ro_session = ro_session
+        self.test_engine = test_engine
 
 
 @pytest.fixture
