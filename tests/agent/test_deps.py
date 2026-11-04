@@ -126,8 +126,9 @@ def create_spied_lock(agent_id: str, agent_app_state_reg: dict, mocker: MockerFi
 
 def assert_lock_acquired_and_released(lock: asyncio.Lock) -> None:
     """Assert acquire and release were each called exactly once."""
-    assert lock.acquire.call_count == 1
-    assert lock.release.call_count == 1
+    # mocker.spy swaps in a MagicMock, which static analysis still sees as the bound method.
+    assert cast(MagicMock, lock.acquire).call_count == 1
+    assert cast(MagicMock, lock.release).call_count == 1
 
 
 @pytest.fixture

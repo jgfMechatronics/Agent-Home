@@ -31,7 +31,8 @@ from agent.deps import AgentDeps
 from agent.types import AgentAppState, AgentConfig, BlockSettings
 from api.fastapi_deps import get_agent_deps
 from agent.crud import create_agent_record
-from conftest import SAMPLE_AGENT_CONFIG, make_deps, make_ro_engine
+from conftest import SAMPLE_AGENT_CONFIG, make_deps
+from db.connection import ReadOnlySession
 from db.models import AgentRecord, utcnow
 from api.schemas import AgentMetadataResponse, CoreMemoryResponse, MemoryBlockResponse
 from memory.block_crud import BlockNotFoundError, ContentExceedsLimitError, InvalidBlockOrderListError, MemoryBlock
@@ -122,16 +123,16 @@ class TestCreateAgentNameUniqueness:
 class TestCreateAgentInitialization:
     """POST /agents — real DB, no mocks: the agent is fully initialized at commit."""
 
-    async def test_system_prompt_compiled_on_create(self, client: AsyncClient, test_engine):
+    async def test_system_prompt_compiled_on_create(self, client: AsyncClient, ro_session: ReadOnlySession):
         """create_agent compiles the system prompt in the same transaction as the insert."""
         before = utcnow()
         response = await client.post("/agents", json=TestCreateAgent._VALID_BODY)
         after = utcnow()
         assert response.status_code == 201
 
-        async with AsyncSession(make_ro_engine(test_engine)) as check_session:
-            record = await check_session.get(AgentRecord, response.json()["id"])
-
+        record = await ro_session.get(AgentRecord, response.json()["id"])
+        assert record is not None
+        assert record.compiled_system_prompt is not None
         assert TestCreateAgent._VALID_BODY["system_instructions"] in record.compiled_system_prompt
         assert record.sys_prompt_compiled_at is not None
         assert before < record.sys_prompt_compiled_at < after
@@ -506,17 +507,16 @@ class TestAgentLocked:
 class _MemoryBlockEndpointBase:
     """Base for memory block endpoint tests that patch a crud function and override get_agent_deps.
     
-    Subclasses must define:
-    - crud_patch_target: str — the crud function to patch (e.g. "api.routes.create_block")
-    - crud_attr_name: str — attribute name for the mock (e.g. "mock_create_block")
-    
+    Subclasses must define crud_patch_target: the crud function to patch, e.g.
+    "api.routes.create_block".
+
     Provides:
     - self.agent_record: The agent from agent_with_blocks
     - self.blocks: The pre-existing blocks from agent_with_blocks
-    - self.<crud_attr_name>: The mocked crud function
+    - self.mock_crud: The patched crud function
     """
     crud_patch_target: str
-    crud_attr_name: str
+    mock_crud: AsyncMock
 
     @pytest.fixture(autouse=True)
     def _setup(self, app: FastAPI, agent_with_blocks: dict):
@@ -530,7 +530,7 @@ class _MemoryBlockEndpointBase:
         app.dependency_overrides[get_agent_deps] = _mock_dep
 
         with patch(self.crud_patch_target, new_callable=AsyncMock) as mock_crud:
-            setattr(self, self.crud_attr_name, mock_crud)
+            self.mock_crud = mock_crud
             yield
 
         app.dependency_overrides.pop(get_agent_deps)
@@ -539,7 +539,6 @@ class _MemoryBlockEndpointBase:
 class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
     """POST /agents/{agent_id}/memory/blocks — create a memory block."""
     crud_patch_target = "api.routes.create_block"
-    crud_attr_name = "mock_create_block"
 
     _VALID_BODY = {
         "label": "notes",
@@ -556,7 +555,7 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
             created_at=self._MOCK_UPDATED_AT, updated_at=self._MOCK_UPDATED_AT,
             **self._VALID_BODY,
         )
-        self.mock_create_block.return_value = mock_block
+        self.mock_crud.return_value = mock_block
 
         response = await client.post(
             f"/agents/{self.agent_record.id}/memory/blocks",
@@ -564,7 +563,7 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
         )
 
         assert response.status_code == 201
-        self.mock_create_block.assert_called_once()
+        self.mock_crud.assert_called_once()
         assert MemoryBlock.model_validate(response.json()) == mock_block
 
     # 404 tested via parametrized TestNotFound
@@ -586,7 +585,7 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
         Route propagates unexpected exceptions to the app-level handler, returning 500.
         Caught by an app level exception handler
         """
-        self.mock_create_block.side_effect = RuntimeError("DB failure")
+        self.mock_crud.side_effect = RuntimeError("DB failure")
 
         response = await client.post(
             f"/agents/{self.agent_record.id}/memory/blocks",
@@ -600,7 +599,6 @@ class TestCreateMemoryBlock(_MemoryBlockEndpointBase):
 class TestUpdateBlockContent(_MemoryBlockEndpointBase):
     """PUT /agents/{agent_id}/memory/blocks/{label}/content — update block content."""
     crud_patch_target = "api.routes.update_block"
-    crud_attr_name = "mock_update_block"
 
     _UPDATED_CONTENT = "This is the new content."
     _MOCK_UPDATED_AT = datetime(2026, 9, 10, 12, 0, 0)
@@ -611,7 +609,7 @@ class TestUpdateBlockContent(_MemoryBlockEndpointBase):
         # Mutate fixture to represent updated state (not persisted, just mock return value)
         target_block.content = self._UPDATED_CONTENT
         target_block.updated_at = self._MOCK_UPDATED_AT
-        self.mock_update_block.return_value = target_block
+        self.mock_crud.return_value = target_block
 
         response = await client.put(
             f"/agents/{self.agent_record.id}/memory/blocks/{target_block.label}/content",
@@ -619,8 +617,8 @@ class TestUpdateBlockContent(_MemoryBlockEndpointBase):
         )
 
         assert response.status_code == 200
-        self.mock_update_block.assert_called_once()
-        call_args = self.mock_update_block.call_args
+        self.mock_crud.assert_called_once()
+        call_args = self.mock_crud.call_args
         assert call_args.args[0].agent_id == self.agent_record.id
         assert call_args.args[1] == target_block.label
         assert call_args.args[2] == self._UPDATED_CONTENT
@@ -628,7 +626,7 @@ class TestUpdateBlockContent(_MemoryBlockEndpointBase):
 
     async def test_returns_404_for_unknown_label(self, client: AsyncClient):
         """Returns 404 when block label doesn't exist for this agent."""
-        self.mock_update_block.side_effect = BlockNotFoundError("block not found")
+        self.mock_crud.side_effect = BlockNotFoundError("block not found")
 
         response = await client.put(
             f"/agents/{self.agent_record.id}/memory/blocks/nonexistent-label/content",
@@ -640,7 +638,7 @@ class TestUpdateBlockContent(_MemoryBlockEndpointBase):
 
     async def test_returns_422_for_content_over_limit(self, client: AsyncClient):
         """Returns 422 when new content exceeds char_limit."""
-        self.mock_update_block.side_effect = ContentExceedsLimitError("new content exceeds char limit")
+        self.mock_crud.side_effect = ContentExceedsLimitError("new content exceeds char limit")
 
         response = await client.put(
             f"/agents/{self.agent_record.id}/memory/blocks/{self.blocks[0].label}/content",
@@ -654,12 +652,11 @@ class TestUpdateBlockContent(_MemoryBlockEndpointBase):
 class TestGetBlockSettings(_MemoryBlockEndpointBase):
     """GET /agents/{agent_id}/memory/blocks/{label}/settings — get block settings."""
     crud_patch_target = "api.routes.get_block"
-    crud_attr_name = "mock_get_block"
 
     async def test_returns_settings_for_existing_block(self, client: AsyncClient):
         """Returns 200 with settings schema for existing block."""
         target_block = self.blocks[0]
-        self.mock_get_block.return_value = target_block
+        self.mock_crud.return_value = target_block
 
         response = await client.get(
             f"/agents/{self.agent_record.id}/memory/blocks/{target_block.label}/settings",
@@ -676,7 +673,7 @@ class TestGetBlockSettings(_MemoryBlockEndpointBase):
 
     async def test_returns_404_for_unknown_label(self, client: AsyncClient):
         """Returns 404 when block label doesn't exist for this agent."""
-        self.mock_get_block.return_value = None
+        self.mock_crud.return_value = None
 
         response = await client.get(
             f"/agents/{self.agent_record.id}/memory/blocks/nonexistent-label/settings",
@@ -689,7 +686,6 @@ class TestGetBlockSettings(_MemoryBlockEndpointBase):
 class TestUpdateBlockSettings(_MemoryBlockEndpointBase):
     """PUT /agents/{agent_id}/memory/blocks/{label}/settings — update block settings."""
     crud_patch_target = "api.routes.update_block_settings"
-    crud_attr_name = "mock_update_block_settings"
 
     async def test_calls_update_block_settings_and_returns_200(self, client: AsyncClient):
         """Successful update calls update_block_settings and returns 200 with helper's output.
@@ -714,7 +710,7 @@ class TestUpdateBlockSettings(_MemoryBlockEndpointBase):
         target_block.description = "Helper changed this description."  # Different!
         target_block.char_limit = request_settings["char_limit"]
         target_block.position = 99  # Different!
-        self.mock_update_block_settings.return_value = target_block
+        self.mock_crud.return_value = target_block
 
         response = await client.put(
             f"/agents/{self.agent_record.id}/memory/blocks/{original_label}/settings",
@@ -723,8 +719,8 @@ class TestUpdateBlockSettings(_MemoryBlockEndpointBase):
 
         assert response.status_code == 200
         # Verify route called helper with correct args
-        self.mock_update_block_settings.assert_called_once()
-        call_args = self.mock_update_block_settings.call_args
+        self.mock_crud.assert_called_once()
+        call_args = self.mock_crud.call_args
         assert call_args.args[0].agent_id == self.agent_record.id  # deps
         assert call_args.args[1] == original_label  # current label from URL
         assert call_args.args[2] == BlockSettings(**request_settings)  # settings object
@@ -733,7 +729,7 @@ class TestUpdateBlockSettings(_MemoryBlockEndpointBase):
 
     async def test_returns_404_for_unknown_label(self, client: AsyncClient):
         """Returns 404 when block label doesn't exist for this agent."""
-        self.mock_update_block_settings.side_effect = BlockNotFoundError("block not found")
+        self.mock_crud.side_effect = BlockNotFoundError("block not found")
 
         response = await client.put(
             f"/agents/{self.agent_record.id}/memory/blocks/nonexistent-label/settings",
@@ -760,12 +756,11 @@ class TestReorderBlocks(_MemoryBlockEndpointBase):
     """Tests for PUT /agents/{agent_id}/memory/blocks/order"""
 
     crud_patch_target = "api.routes.reorder_blocks"
-    crud_attr_name = "mock_reorder_blocks"
 
     async def test_calls_reorder_blocks_and_returns_204(self, client: AsyncClient):
         """Successful reorder calls reorder_blocks helper and returns 204 No Content."""
         new_order = ["human", "persona", "system"]
-        self.mock_reorder_blocks.return_value = None  # reorder_blocks returns None
+        self.mock_crud.return_value = None  # reorder_blocks returns None
 
         response = await client.put(
             f"/agents/{self.agent_record.id}/memory/blocks/order",
@@ -775,14 +770,14 @@ class TestReorderBlocks(_MemoryBlockEndpointBase):
         assert response.status_code == 204
         assert response.content == b""  # No content
         # Verify route called helper with correct args
-        self.mock_reorder_blocks.assert_called_once()
-        call_args = self.mock_reorder_blocks.call_args
+        self.mock_crud.assert_called_once()
+        call_args = self.mock_crud.call_args
         assert call_args.args[0].agent_id == self.agent_record.id  # deps
         assert call_args.args[1] == new_order  # labels in order
 
     async def test_returns_422_for_invalid_label_list(self, client: AsyncClient):
         """Returns 422 when label list doesn't match agent's blocks."""
-        self.mock_reorder_blocks.side_effect = InvalidBlockOrderListError("missing labels: {'system'}")
+        self.mock_crud.side_effect = InvalidBlockOrderListError("missing labels: {'system'}")
 
         response = await client.put(
             f"/agents/{self.agent_record.id}/memory/blocks/order",
