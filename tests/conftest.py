@@ -249,6 +249,11 @@ def make_alternating_messages(count: int, prefix: str = "msg") -> list[ModelMess
     ]
 
 
+def make_tool_call_part() -> ToolCallPart:
+    """A mem_replace tool-call part with a fresh tool_call_id."""
+    return ToolCallPart(tool_name="mem_replace", args='{"label":"x"}', tool_call_id=str(uuid.uuid4()))
+
+
 def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
     """A matched tool-call / tool-return pair.
 
@@ -260,9 +265,8 @@ def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
     FunctionModel is useful for valid sequences; orphan tests still need hand-crafted invalid
     sequences (deliberately incomplete pairs) which could be produced by mutating the results of FunctionModel
     """
-    tool_call_id = str(uuid.uuid4())
-    call_part = ToolCallPart(tool_name="mem_replace", args='{"label":"x"}', tool_call_id=tool_call_id)
-    return_part = ToolReturnPart(tool_name="mem_replace", content="ok", tool_call_id=tool_call_id)
+    call_part = make_tool_call_part()
+    return_part = ToolReturnPart(tool_name=call_part.tool_name, content="ok", tool_call_id=call_part.tool_call_id)
     return (
         ModelResponse(parts=[call_part]),
         ModelRequest(parts=[return_part]),
@@ -273,18 +277,17 @@ def make_retry_pair() -> tuple[ModelResponse, ModelRequest]:
     """A matched tool-call / retry-prompt pair (ModelRetry path).
 
     The call side is identical to make_tool_pair() — only the response side differs
-    (RetryPromptPart instead of ToolReturnPart).
+    (RetryPromptPart instead of ToolReturnPart). Built from parts rather than by poking at
+    make_tool_pair()'s ModelResponse, whose `parts` is a Sequence of the full part union.
     """
-    call_response, _ = make_tool_pair()
-    call_part = call_response.parts[0]
-    assert isinstance(call_part, ToolCallPart)
+    call_part = make_tool_call_part()
     retry_part = RetryPromptPart(
         content="block 'x' not found",
-        tool_name="mem_replace",
+        tool_name=call_part.tool_name,
         tool_call_id=call_part.tool_call_id,
     )
     return (
-        call_response,
+        ModelResponse(parts=[call_part]),
         ModelRequest(parts=[retry_part]),
     )
 
