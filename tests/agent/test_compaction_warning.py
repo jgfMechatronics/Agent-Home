@@ -89,8 +89,12 @@ class TestCompactionWarnerIntegration:
             await update_session.commit()
 
     async def _fresh_record(self) -> AgentRecord:
-        """Fetch the agent record fresh from the DB (self.agent_record is detached/stale)."""
-        record = await self.ro_session.get(AgentRecord, self.agent_record.id)
+        """Fetch the agent record fresh from the DB (self.agent_record is detached/stale).
+
+        populate_existing: ro_session is shared across the test, so a plain get() would
+        return the identity-map copy from an earlier call instead of re-reading the row.
+        """
+        record = await self.ro_session.get(AgentRecord, self.agent_record.id, populate_existing=True)
         assert record is not None, f"agent {self.agent_record.id!r} missing from DB"
         return record
 

@@ -6,12 +6,11 @@ from asgi_lifespan import LifespanManager
 from collections.abc import AsyncGenerator
 from unittest.mock import patch, AsyncMock, MagicMock
 
+from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 
 from agent.types import AgentLockedError, AgentNotFoundError
 from memory.block_crud import BlockNotFoundError, DuplicateBlockError, DuplicatePositionError
-from fastapi.routing import APIRoute
-
 from api.app import _create_app
 from api.routes import router
 from tests.conftest import TEST_BASE_URL
