@@ -5,7 +5,6 @@ import json
 import logging
 import time
 from collections.abc import Sequence
-from dataclasses import replace
 
 import pytest
 import pytest_asyncio
@@ -47,7 +46,9 @@ from conftest import (
     make_request,
     make_response,
     make_retry_pair,
+    make_tool_call_part,
     make_tool_pair,
+    make_tool_return_part,
 )
 from agent.deps import AgentDeps
 
@@ -341,10 +342,9 @@ class TestPersistMessages(DBTestBase):
         """persist_messages calls repair_messages(): an orphaned tool call (no matching return)
         results in both the original ModelResponse and a synthesized ModelRequest(ToolReturnPart)
         being stored in the DB."""
-        orphan_response, _ = make_tool_pair()  # discard the matching return
-        orphan_call = orphan_response.parts[0]
-        assert isinstance(orphan_call, ToolCallPart)
-        tool_call_id = orphan_call.tool_call_id
+        # Orphan: a call response whose matching return is never persisted.
+        call_part = make_tool_call_part()
+        orphan_response = ModelResponse(parts=[call_part])
 
         records = await self._persist_and_fetch([orphan_response])
 
@@ -356,20 +356,20 @@ class TestPersistMessages(DBTestBase):
         restored_return = ModelMessagesTypeAdapter.validate_json(f"[{records[1].content}]")[0]
         synthesized = [p for p in restored_return.parts if isinstance(p, ToolReturnPart)]
         assert len(synthesized) == 1
-        assert synthesized[0].tool_call_id == tool_call_id
+        assert synthesized[0].tool_call_id == call_part.tool_call_id
 
-    def _make_output_retry_request(self) -> ModelRequest:
-        """An output-retry ModelRequest as pydantic-ai constructs it after a model response
-        which was judged invalid: RetryPromptPart with no tool_name (its tool_call_id is auto-generated
+    def _make_output_retry_part(self) -> RetryPromptPart:
+        """An output-retry part as pydantic-ai constructs it after a model response which was
+        judged invalid: RetryPromptPart with no tool_name (its tool_call_id is auto-generated
         and matches no real tool call)."""
-        return ModelRequest(parts=[RetryPromptPart(content="Please return text or call a tool.")])
+        return RetryPromptPart(content="Please return text or call a tool.")
 
     async def test_output_retry_after_empty_response_is_preserved(self):
         """The pydantic-ai v2 output-retry path: model returns an invalid response, pydantic-ai inserts a
         RetryPromptPart with no tool_name. It responds to the empty response, not to any
         tool call, so it must NOT be treated as an orphaned tool retry."""
         empty_response = ModelResponse(parts=[])
-        retry_request = self._make_output_retry_request()
+        retry_request = ModelRequest(parts=[self._make_output_retry_part()])
         records = await self._persist_and_fetch([empty_response, retry_request])
 
         # Both messages stored as-is; no error replacement, no summary warning appended
@@ -381,13 +381,11 @@ class TestPersistMessages(DBTestBase):
         """An output retry in the same ModelRequest as a matched ToolReturnPart must not
         break the pairing check — its synthetic tool_call_id is excluded from comparison
         because it has no tool_name."""
-        call_response, return_request = make_tool_pair()
-        # ModelRequest.parts is a Sequence — rebuild the message rather than mutating it,
-        # and use dataclasses.replace so the request's other fields survive untouched.
-        return_request = replace(
-            return_request,
-            parts=[*return_request.parts, RetryPromptPart(content="Please return text or call a tool.")],
-        )
+        # Matched return plus an output retry in the same request — built from parts, since
+        # ModelRequest.parts is a Sequence and cannot be appended to.
+        call_part = make_tool_call_part()
+        call_response = ModelResponse(parts=[call_part])
+        return_request = ModelRequest(parts=[make_tool_return_part(call_part), self._make_output_retry_part()])
         records = await self._persist_and_fetch([call_response, return_request])
 
         assert len(records) == 2
@@ -457,11 +455,12 @@ class TestPersistMessages(DBTestBase):
 class TestPersistMessagesSnapshots(DBTestBase):
     """Tests for the snapshot and context-capture fields added to persist_messages.
 
-    Shadows the base persist helpers to patch _extract_tool_definitions, so tests
-    can supply exact ToolDefinition lists without needing real toolsets. This is appropriate
-    here because the point of these tests is to verify snapshot *content*, not extraction.
-    Renamed rather than overridden: the second parameter is tool schemas, not toolsets,
-    so it is not a compatible override of the base signature.
+    These tests need exact ToolDefinition lists, so the `*_with_schemas` helpers below patch
+    _extract_tool_definitions and persist with no toolsets. That is appropriate here because the
+    point is to verify snapshot *content*, not extraction.
+
+    The `_with_schemas` suffix marks the signature difference: their second parameter is tool
+    schemas, where the base helpers take toolsets.
     """
 
     async def _persist_with_schemas(self, messages: list[ModelMessage], tool_schemas: list[ToolDefinition] | None = None, *, deps: AgentDeps | None = None) -> int | None:

@@ -254,6 +254,11 @@ def make_tool_call_part() -> ToolCallPart:
     return ToolCallPart(tool_name="mem_replace", args='{"label":"x"}', tool_call_id=str(uuid.uuid4()))
 
 
+def make_tool_return_part(call: ToolCallPart) -> ToolReturnPart:
+    """The ToolReturnPart matching `call`: same tool name and tool_call_id."""
+    return ToolReturnPart(tool_name=call.tool_name, content="ok", tool_call_id=call.tool_call_id)
+
+
 def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
     """A matched tool-call / tool-return pair.
 
@@ -266,7 +271,7 @@ def make_tool_pair() -> tuple[ModelResponse, ModelRequest]:
     sequences (deliberately incomplete pairs) which could be produced by mutating the results of FunctionModel
     """
     call_part = make_tool_call_part()
-    return_part = ToolReturnPart(tool_name=call_part.tool_name, content="ok", tool_call_id=call_part.tool_call_id)
+    return_part = make_tool_return_part(call_part)
     return (
         ModelResponse(parts=[call_part]),
         ModelRequest(parts=[return_part]),
