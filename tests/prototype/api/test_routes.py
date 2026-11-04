@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import AgentRecord
 
@@ -78,7 +77,7 @@ class TestGetMessages:
         assert len(response.json()["messages"]) == 2
         self._assert_load_called(agent_record.id, app, start_seq_id=0)
 
-    async def test_response_uses_message_item_format(self, client: AsyncClient, agent_record: AgentRecord, session: AsyncSession):
+    async def test_response_uses_message_item_format(self, client: AsyncClient, agent_record: AgentRecord):
         """Response items use MessageItem format: id, seq_id, type, content (raw JSON string), timestamp (ISO string)."""
         ts = datetime(2026, 6, 9, 12, 0, 0)
         raw_content = '{"kind": "response", "parts": [{"part_kind": "text", "content": "hello"}]}'

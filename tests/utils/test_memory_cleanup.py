@@ -173,9 +173,8 @@ class TestRunCleanupFlowIntegration:
     """
     
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session, test_engine, app, agent_with_blocks):
+    async def setup(self, test_engine, app, agent_with_blocks):
         """Set up test with agent_with_blocks fixture plus skill block."""
-        self.session = session
         self.agent = agent_with_blocks["agent"]
         self.agent_id = self.agent.id
         self.agent_name = self.agent.name
