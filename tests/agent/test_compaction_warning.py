@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 import pytest_asyncio
-from db.connection import ReadOnlyEngine, ReadOnlySession
+from db.connection import ReadOnlyEngine
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -26,6 +26,7 @@ from agent.runner import run_stateful_agent
 from agent.types import AgentAppState, AgentConfig
 from db.models import AgentRecord
 from messages.messages import deserialize_messages, load_messages
+from conftest import DBTestBase
 
 
 class SequentialTestModel(TestModel):
@@ -59,7 +60,7 @@ class SequentialTestModel(TestModel):
 
 
 @pytest.mark.asyncio
-class TestCompactionWarnerIntegration:
+class TestCompactionWarnerIntegration(DBTestBase):
     """Integration tests for CompactionWarner capability."""
 
     @pytest.fixture(autouse=True)
@@ -71,14 +72,10 @@ class TestCompactionWarnerIntegration:
     async def setup(
         self,
         agent_record: AgentRecord,
-        test_engine,
         ro_engine: ReadOnlyEngine,
-        ro_session: ReadOnlySession,
     ):
         self.agent_record = agent_record
-        self.test_engine = test_engine
         self.ro_engine = ro_engine
-        self.ro_session = ro_session
 
     async def _update_record(self, **fields) -> None:
         """Update agent record fields directly in the DB (test setup)."""

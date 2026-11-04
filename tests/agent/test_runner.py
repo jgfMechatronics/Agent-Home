@@ -58,7 +58,7 @@ from agent.runner import run_stateful_agent, COMPACTION_RESUME_NOTICE
 from agent.timestamping import add_timestamp_prefix
 from agent.types import AgentAppState, MCPConnError
 from api.fastapi_deps import get_agent_and_deps
-from conftest import make_mock_agent, local_dummy_tool, assert_ModelMessage_list_eq, make_deps
+from conftest import DBTestBase, make_mock_agent, local_dummy_tool, assert_ModelMessage_list_eq, make_deps
 from db.models import AgentRecord, MemoryBlockRecord
 from agent.tools import TOOL_REGISTRY
 
@@ -1381,7 +1381,7 @@ class TestMCPConnectionError(_BaseRouteTest):
 # Sequential tool execution tests (parallel tool call handling)
 # ---------------------------------------------------------------------------
 
-class TestMemoryToolsThroughRunner(_BaseRouteTest):
+class TestMemoryToolsThroughRunner(_BaseRouteTest, DBTestBase):
     """Test memory tools executing through run_stateful_agent.
     
     These tests verify that memory tools work correctly when run through our
@@ -1467,7 +1467,7 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
         ),
     ])
     async def test_memory_tool_through_runner(
-        self, session, test_engine, agent_record, agent_with_block, tool_name, args_list, expected_contents
+        self, agent_record, agent_with_block, tool_name, args_list, expected_contents
     ):
         """Memory tools execute correctly through run_stateful_agent.
         
@@ -1484,25 +1484,25 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
             tools=[TOOL_REGISTRY[tool_name]],
         )
         
-        deps = make_deps(test_engine, agent_record)
-        
+        deps = make_deps(self.test_engine, agent_record)
+
         events = []
         async for event in run_stateful_agent(agent, deps, AgentAppState(), f"call {tool_name}"):
             events.append(event)
-        
+
         # Verify correct number of tool results
         tool_results = [e for e in events if isinstance(e, FunctionToolResultEvent)]
         assert len(tool_results) == len(args_list), \
             f"Expected {len(args_list)} tool result(s), got {len(tool_results)}"
-        
+
         # Verify all expected content mutations happened
         if expected_contents:
-            await session.refresh(agent_with_block)
+            await self.session.refresh(agent_with_block)
             for expected in expected_contents:
                 assert expected in agent_with_block.content, \
                     f"Expected '{expected}' in block content after {tool_name}"
 
-    async def test_parallel_calls_trimmed_to_first(self, session, test_engine, agent_record, agent_with_block):
+    async def test_parallel_calls_trimmed_to_first(self, agent_record, agent_with_block):
         """BANDAID: ParallelToolCallTrimmer turns a parallel-call response into a single call.
 
         Simulates an OpenRouter provider ignoring parallel_tool_calls=False. Only the first call
@@ -1519,14 +1519,14 @@ class TestMemoryToolsThroughRunner(_BaseRouteTest):
             tools=[TOOL_REGISTRY["memory_insert"]],
             capabilities=[ParallelToolCallTrimmer()],
         )
-        deps = make_deps(test_engine, agent_record)
+        deps = make_deps(self.test_engine, agent_record)
 
         events = [e async for e in run_stateful_agent(agent, deps, AgentAppState(), "call memory_insert")]
 
         tool_results = [e for e in events if isinstance(e, FunctionToolResultEvent)]
         assert len(tool_results) == 1
 
-        await session.refresh(agent_with_block)
+        await self.session.refresh(agent_with_block)
         assert "first insert" in agent_with_block.content
         assert "second insert" not in agent_with_block.content
 

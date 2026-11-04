@@ -23,7 +23,7 @@ from agent.runner import COMPACTION_RESUME_NOTICE, run_stateful_agent, is_compac
 from agent.timestamping import add_timestamp_prefix
 from agent.deps import AgentDeps
 from agent.types import AgentAppState
-from conftest import SAMPLE_AGENT_CONFIG, make_alternating_messages, mock_run_context, assert_ModelMessage_list_eq, make_deps, commit_and_detach_fixture_record
+from conftest import DBTestBase, SAMPLE_AGENT_CONFIG, make_alternating_messages, mock_run_context, assert_ModelMessage_list_eq, make_deps, commit_and_detach_fixture_record
 from db.models import AgentRecord
 from prototype.iac.send_message import (
     _format_inter_agent_message,
@@ -41,7 +41,7 @@ from tests.agent.test_runner import FunctionModelTestAgent, _PersistenceAndCance
 pytestmark = pytest.mark.usefixtures("frozen_stamp_clock")
 
 
-class TestSendMessage:
+class TestSendMessage(DBTestBase):
     """send_message tool: inter-agent communication."""
 
     @pytest_asyncio.fixture(autouse=True)
@@ -53,7 +53,6 @@ class TestSendMessage:
             system_instructions="Sender",
         )
         self.sender = await commit_and_detach_fixture_record(session, sender)
-        self.session = session
         self.deps = make_deps(test_engine, sender)
         self.ctx = mock_run_context(self.deps)
         # Clear IAC module state before each test (some tests check unconfigured state)

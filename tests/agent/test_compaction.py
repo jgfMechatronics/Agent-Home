@@ -10,7 +10,7 @@ import logging
 import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart, RetryPromptPart
 
@@ -20,6 +20,7 @@ from agent.compaction import clear_context, compact, is_compaction_needed
 from agent.deps import AgentDeps
 from agent.types import AgentConfig
 from conftest import (
+    DBTestBase,
     commit_and_detach_fixture_record,
     make_deps,
     SAMPLE_AGENT_CONFIG,
@@ -46,26 +47,6 @@ def _make_config(
         soft_compaction_limit=soft_compaction_limit,
         compaction_target_fraction=compaction_target_fraction,
     )
-
-
-class _DBTestBase:
-    """Stores the DB fixtures every test class in this file needs on `self`.
-
-    TODO(hoist): duplicate of the shared test base this suite should import from conftest.
-    Local for now so tests and helpers read fixtures off `self` instead of repeating them
-    in every signature; the hoist should be a deletion here plus an import.
-    """
-    session: AsyncSession
-    ro_session: ReadOnlySession
-    test_engine: AsyncEngine
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def _store_db_fixtures(
-        self, session: AsyncSession, ro_session: ReadOnlySession, test_engine: AsyncEngine
-    ):
-        self.session = session
-        self.ro_session = ro_session
-        self.test_engine = test_engine
 
 
 async def _persist_messages_load_records(
@@ -144,7 +125,7 @@ class TestIsCompactionNeeded:
 
 # --- compact tests ---
 
-class CompactTestBase(_DBTestBase):
+class CompactTestBase(DBTestBase):
     """
     Base class for compact tests. Allows easier commonization of setup
     
@@ -320,7 +301,7 @@ class TestCompactEdgeCases(CompactTestBase):
             await compact(self.deps)
 
 
-class TestCompactToolPairAtomicity(_DBTestBase):
+class TestCompactToolPairAtomicity(DBTestBase):
     """compact() must never split a tool call/return pair at context_window_start.
 
     When the naive trim point lands on a ModelRequest whose parts are ToolReturnPart or
@@ -393,7 +374,7 @@ class TestCompactToolPairAtomicity(_DBTestBase):
         assert fresh_agent.context_window_start == fresh_record_5.seq_id
 
 
-class TestClearContext(_DBTestBase):
+class TestClearContext(DBTestBase):
     """clear_context advances context_window_start past all existing messages."""
 
     N_MESSAGES = 4

@@ -28,7 +28,7 @@ from db.models import (
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import _compute_sha256, deserialize_messages, load_messages
 from utils.ctx_reconstructor import ReconstructedContext, reconstruct_context
-from conftest import as_read_session, make_deps, make_ro_engine
+from conftest import DBTestBase, as_read_session, make_deps, make_ro_engine
 
 
 UNIT_TEST_TOOL_DEF = ToolDefinition(
@@ -54,13 +54,12 @@ UNIT_TEST_CONFIG_HASH = _compute_sha256(UNIT_TEST_CONFIG_JSON)
 
 
 @pytest.mark.asyncio
-class TestReconstructContext:
+class TestReconstructContext(DBTestBase):
     """Tests for reconstruct_context(session, message_id)."""
 
     @pytest_asyncio.fixture(autouse=True, params=[False, True], ids=["clean", "with_noise"])
     async def setup_snapshots(self, session: AsyncSession, agent_record: AgentRecord, request):
         """Create snapshots once per test. Parametrized to test with/without noise."""
-        self.session = session
         self.agent_record = agent_record
         
         # Create target snapshots
@@ -217,7 +216,7 @@ INTEGRATION_AGENT_CONFIG = AgentConfig(
 )
 
 @pytest.mark.asyncio
-class TestReconstructContextIntegration:
+class TestReconstructContextIntegration(DBTestBase):
     """Integration tests: run_stateful_agent → DB persistence → reconstruct_context.
 
     Also serves as the regression gate for message history round-trip validity: the
@@ -232,11 +231,9 @@ class TestReconstructContextIntegration:
         overridden with TestModel for the actual run."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord, agent_deps: AgentDeps, test_engine):
+    async def setup(self, agent_record: AgentRecord, agent_deps: AgentDeps):
         """Configure agent_record for integration tests, store common fixtures as member data."""
-        self.session = session
         self.agent_record = agent_record
-        self.test_engine = test_engine
         
         # Configure for integration tests: all tools, known system instructions
         # Must do this inside write_scope per compile_system_prompt requirements

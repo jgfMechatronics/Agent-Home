@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.crud import create_agent_record, get_agent_record, get_agent_record_by_name, replace_agent_config, replace_system_instructions
 from agent.deps import AgentDeps
-from conftest import SAMPLE_AGENT_CONFIG, commit_and_detach_fixture_record
+from conftest import DBTestBase, SAMPLE_AGENT_CONFIG, commit_and_detach_fixture_record
 from db.connection import ReadOnlySession
 from db.models import AgentRecord
 from messages.messages import load_messages
@@ -17,12 +17,11 @@ from messages.messages import load_messages
 
 # --- create_agent_record tests ---
 
-class TestCreateAgentRecord:
+class TestCreateAgentRecord(DBTestBase):
     """Tests share the same setup: one created record per test."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def created_record(self, session: AsyncSession, ro_session: ReadOnlySession):
-        self.ro_session = ro_session
+    async def created_record(self, session: AsyncSession):
         self.record = await create_agent_record(
             session, "test-agent", "You are helpful.", SAMPLE_AGENT_CONFIG
         )
@@ -73,19 +72,19 @@ _GET_AGENT_FUNCTIONS = [
 
 
 @pytest.mark.parametrize("get_fn,key_extractor,unknown_key", _GET_AGENT_FUNCTIONS)
-class TestGetAgentRecordFunctions:
+class TestGetAgentRecordFunctions(DBTestBase):
     """Tests for get_agent_record and get_agent_record_by_name."""
 
-    async def test_returns_record_for_known_key(self, ro_session: ReadOnlySession, agent_record, get_fn, key_extractor, unknown_key):
-        result = await get_fn(ro_session, key_extractor(agent_record))
+    async def test_returns_record_for_known_key(self, agent_record, get_fn, key_extractor, unknown_key):
+        result = await get_fn(self.ro_session, key_extractor(agent_record))
         assert isinstance(result, AgentRecord)
         assert result.id == agent_record.id
         assert result.name == agent_record.name
         assert result.agent_config == agent_record.agent_config
         assert result.system_instructions == agent_record.system_instructions
 
-    async def test_returns_none_for_unknown_key(self, ro_session: ReadOnlySession, get_fn, key_extractor, unknown_key):
-        result = await get_fn(ro_session, unknown_key)
+    async def test_returns_none_for_unknown_key(self, get_fn, key_extractor, unknown_key):
+        result = await get_fn(self.ro_session, unknown_key)
         assert result is None
 
 

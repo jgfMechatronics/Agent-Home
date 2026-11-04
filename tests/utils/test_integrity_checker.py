@@ -10,13 +10,12 @@ from dataclasses import asdict
 import json
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import datetime, timezone
 
 from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart
 
-from conftest import PARTIAL_MESSAGE_FIELDS, as_read_session, make_request, make_response, make_retry_pair, make_tool_pair
+from conftest import DBTestBase, PARTIAL_MESSAGE_FIELDS, as_read_session, make_request, make_response, make_retry_pair, make_tool_pair
 from messages.messages import dump_msg_json, format_system_alert
 from db.models import AgentRecord, MessageRecord
 from messages.messages import deserialize_messages
@@ -767,12 +766,11 @@ _RECORD_AND_MESSAGE_CHECKERS = [
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("seed_stub_snapshots")
-class TestCheckAgentIntegrity:
+class TestCheckAgentIntegrity(DBTestBase):
     """Top-down tests for check_agent_integrity(session, agent_id)."""
 
     @pytest_asyncio.fixture(autouse=True)
-    async def setup(self, session: AsyncSession, agent_record: AgentRecord):
-        self.session = session
+    async def setup(self, agent_record: AgentRecord):
         self.agent = agent_record
 
     async def _run_check(self, build_records: RecordBuilder, expected_issues: list[IntegrityIssue]):
