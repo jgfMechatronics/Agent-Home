@@ -31,12 +31,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig
-from db.connection import ReadOnlySession
 from db.models import AgentConfigSnapshot, AgentRecord, MessageRecord, SystemPromptSnapshot, ToolDefinitionSnapshot, utcnow
 from messages.messages import _extract_tool_definitions, deserialize_messages, load_messages, persist_messages, format_system_alert, is_system_alert
 
 # Plain helpers (not fixtures) — import directly for use in test bodies
 from conftest import (
+    DBTestBase,
     commit_and_detach_fixture_record,
     make_deps,
     in_process_mcp_toolset_factory,
@@ -132,25 +132,20 @@ def make_messages_batch(n: int) -> list[ModelMessage]:
 # TestPersistMessages
 # ---------------------------------------------------------------------------
 
-class DBTestBase:
+class PersistTestBase(DBTestBase):
     """Base class for test classes that need a database session and agent.
 
-    `session` is the read-write session for fixture setup; `ro_session` is the
-    read-only session the read-path functions (load_messages, fetch_all_records)
-    expect. persist_messages commits through its own write scope, so its output is
-    visible to the read path.
+    `session`/`ro_session` come from DBTestBase; this adds the persisted agent and
+    its deps. persist_messages commits through its own write scope, so its output is
+    visible to the read path (ro_session).
     """
 
     @pytest_asyncio.fixture(autouse=True)
     async def setup(
         self,
-        session: AsyncSession,
-        ro_session: ReadOnlySession,
         agent_deps: AgentDeps,
         agent_record: AgentRecord,
     ):
-        self.session = session
-        self.ro_session = ro_session
         self.agent = agent_record
         self.deps = agent_deps
 
@@ -168,7 +163,7 @@ class DBTestBase:
 
 
 @pytest.mark.asyncio
-class TestPersistMessages(DBTestBase):
+class TestPersistMessages(PersistTestBase):
     """Tests for persist_messages(deps, messages).
 
     Uses real in-memory DB. All tests share a session fixture from conftest.
@@ -452,7 +447,7 @@ class TestPersistMessages(DBTestBase):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-class TestPersistMessagesSnapshots(DBTestBase):
+class TestPersistMessagesSnapshots(PersistTestBase):
     """Tests for the snapshot and context-capture fields added to persist_messages.
 
     These tests need exact ToolDefinition lists, so the `*_with_schemas` helpers below patch
@@ -568,7 +563,7 @@ class TestPersistMessagesSnapshots(DBTestBase):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-class TestLoadMessages(DBTestBase):
+class TestLoadMessages(PersistTestBase):
     """Tests for load_messages(session, agent_id, start_seq_id=0).
 
     Pre-seeds DB via persist_messages to ensure realistic records.
@@ -721,7 +716,7 @@ class TestDeserializeMessages:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-class TestRoundTrip(DBTestBase):
+class TestRoundTrip(PersistTestBase):
     """Integration tests: persist → load → deserialize produces equivalent messages."""
 
     async def test_request_response_round_trip(self):
