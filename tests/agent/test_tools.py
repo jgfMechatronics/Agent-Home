@@ -60,7 +60,7 @@ async def _make_agent_with_block(
     return {"agent": agent, "block": block, "deps": deps, "ctx": ctx}
 
 
-class UsesEditableBlock(DBTestBase):
+class EditableBlockTestBase(DBTestBase):
     """Common setup for test classes operating on an agent with a single editable block.
 
     Provides self.ctx, self.block, and self.agent via an autouse fixture; session/
@@ -98,7 +98,7 @@ class UsesEditableBlock(DBTestBase):
 
         Asserts existence: None here means the row this test depends on vanished.
         """
-        block = await self.session.get(MemoryBlockRecord, self.block.id)
+        block = await self.ro_session.get(MemoryBlockRecord, self.block.id, populate_existing=True)
         assert block is not None, "block row missing after re-fetch"
         return block
 
@@ -191,13 +191,13 @@ class TestToolRegistry:
 # --- Shared Memory Tool Behaviors (parametrized) ---
 
 # Valid args for each tool (excluding label, which tests vary).
-# WARNING: MEMORY_REPLACE_ARGS targets "foo one." which must exist in UsesEditableBlock's default BLOCK_CONTENT.
+# WARNING: MEMORY_REPLACE_ARGS targets "foo one." which must exist in EditableBlockTestBase's default BLOCK_CONTENT.
 # If you change the fixture content, update these args to match.
 MEMORY_REPLACE_ARGS = {"old_string": "foo one.", "new_string": "NEW one."}
 MEMORY_INSERT_ARGS = {"content": "Inserted.", "after": "<end>"}
 
 
-class TestMemoryToolsShared(UsesEditableBlock):
+class TestMemoryToolsShared(EditableBlockTestBase):
     """
     Shared behaviors for memory_replace and memory_insert, parametrized.
     The use of mock_run_context in the particular position it is used in the fcn call enforces
@@ -452,7 +452,7 @@ class TestMemoryToolsShared(UsesEditableBlock):
 
 # --- TestMemoryReplace (tool-specific) ---
 
-class TestMemoryReplace(UsesEditableBlock):
+class TestMemoryReplace(EditableBlockTestBase):
     """Tests specific to memory_replace behavior."""
 
 
@@ -500,7 +500,7 @@ class TestMemoryReplace(UsesEditableBlock):
 
 # --- TestMemoryInsert (tool-specific) ---
 
-class TestMemoryInsert(UsesEditableBlock):
+class TestMemoryInsert(EditableBlockTestBase):
     """Tests specific to memory_insert behavior."""
 
 
@@ -574,7 +574,7 @@ class TestMemoryInsert(UsesEditableBlock):
 
 # --- TestMemoryInsertLineBoundary (line-boundary insert semantics) ---
 
-class TestMemoryInsertLineBoundary(UsesEditableBlock):
+class TestMemoryInsertLineBoundary(EditableBlockTestBase):
     """Line-boundary insert semantics: insertion always lands at a line boundary.
 
     Rule: snap to the start of the line following the anchor's line; insert
@@ -650,7 +650,7 @@ class TestMemoryInsertLineBoundary(UsesEditableBlock):
 
 # --- TestMemoryRead (paginated read with computed line numbers) ---
 
-class TestMemoryRead(UsesEditableBlock):
+class TestMemoryRead(EditableBlockTestBase):
     """memory_read: exact current block content for retrying failed edits.
 
     Pagination with computed line numbers + total count; no anchor mode
