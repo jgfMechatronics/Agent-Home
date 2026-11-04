@@ -281,7 +281,7 @@ class TestPersistMessages(DBTestBase):
         assert len(records) == 2
         assert records[0].type == "ModelResponse"
         assert records[1].type == "ModelRequest"
-        restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
+        restored = deserialize_messages(records)
         assert restored == [response_with_call, request_with_response]
 
     async def test_records_isolated_per_agent(self, test_engine):
@@ -309,7 +309,7 @@ class TestPersistMessages(DBTestBase):
         other_records = await fetch_all_records(self.ro_session, other_agent.id)
 
         assert len(my_records) == 2
-        my_restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in my_records]
+        my_restored = deserialize_messages(my_records)
         assert my_restored[0] == my_first_expected_msg
         assert my_restored[1] == my_second_expected_msg
 
@@ -374,7 +374,7 @@ class TestPersistMessages(DBTestBase):
 
         # Both messages stored as-is; no error replacement, no summary warning appended
         assert len(records) == 2
-        restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
+        restored = deserialize_messages(records)
         assert restored == [empty_response, retry_request]
 
     async def test_output_retry_alongside_matched_tool_return_is_preserved(self):
@@ -389,7 +389,7 @@ class TestPersistMessages(DBTestBase):
         records = await self._persist_and_fetch([call_response, return_request])
 
         assert len(records) == 2
-        restored = [ModelMessagesTypeAdapter.validate_json(f"[{r.content}]")[0] for r in records]
+        restored = deserialize_messages(records)
         assert restored == [call_response, return_request]
 
     @pytest.mark.parametrize("toolsets", [
