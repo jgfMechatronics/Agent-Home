@@ -28,7 +28,7 @@ from db.models import (
 from memory.system_prompt_compilation import compile_system_prompt
 from messages.messages import _compute_sha256, deserialize_messages, load_messages
 from utils.ctx_reconstructor import ReconstructedContext, reconstruct_context
-from conftest import make_deps, make_ro_engine
+from conftest import as_read_session, make_deps, make_ro_engine
 
 
 UNIT_TEST_TOOL_DEF = ToolDefinition(
@@ -42,6 +42,7 @@ UNIT_TEST_AGENT_CONFIG = AgentConfig(
     tool_names=["test_tool"],
     soft_compaction_limit=10000,
 )
+
 
 # Pre-compute deterministic snapshot content and hashes
 UNIT_TEST_SYS_PROMPT = "You are a helpful assistant."
@@ -131,7 +132,7 @@ class TestReconstructContext:
         expected_agent_id: str,
     ):
         """Common assertions for reconstruction tests."""
-        result = await reconstruct_context(self.session, target.id)
+        result = await reconstruct_context(as_read_session(self.session), target.id)
         
         assert result.system_prompt == UNIT_TEST_SYS_PROMPT
         assert result.tool_definitions == [UNIT_TEST_TOOL_DEF]
@@ -199,7 +200,7 @@ class TestReconstructContext:
     async def test_raises_value_error_for_unknown_message_id(self):
         """Requesting a non-existent message_id raises ValueError."""
         with pytest.raises(ValueError, match="Message not found"):
-            await reconstruct_context(self.session, str(uuid4()))
+            await reconstruct_context(as_read_session(self.session), str(uuid4()))
 
 
 # =============================================================================
@@ -263,10 +264,10 @@ class TestReconstructContextIntegration:
                     pass
 
         # Get all persisted messages as ground truth
-        expected_messages = await load_messages(self.session, self.agent_record.id)
+        expected_messages = await load_messages(as_read_session(self.session), self.agent_record.id)
 
         last_msg_id = expected_messages[-1].id
-        reconstructed = await reconstruct_context(self.session, last_msg_id)
+        reconstructed = await reconstruct_context(as_read_session(self.session), last_msg_id)
         return reconstructed, expected_tool_definitions, expected_messages
 
     def _assert_standard_result(

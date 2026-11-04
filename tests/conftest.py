@@ -182,6 +182,18 @@ def make_ro_engine(engine) -> ReadOnlyEngine:
     return create_readonly_sqlite_engine(engine.url.database)
 
 
+def as_read_session(session: AsyncSession) -> ReadOnlySession:
+    """The test's own session, typed for read-path functions.
+
+    For tests that read rows they just flushed in the same session: a separate read
+    connection would see nothing (uncommitted), and committing would expire the
+    in-memory records their assertions hold. ReadOnlySession is a NewType erased at
+    runtime, so this is a typed pass-through that stays inside test code — every impl
+    call site still receives a real ReadOnlySession from ro_session or read_scope.
+    """
+    return ReadOnlySession(session)
+
+
 def make_deps(engine, agent_record) -> AgentDeps:
     """Test-side factory for AgentDeps — bypasses the factory guard (valid in tests only).
 

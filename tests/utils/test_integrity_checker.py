@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart
 
-from conftest import PARTIAL_MESSAGE_FIELDS, make_request, make_response, make_retry_pair, make_tool_pair
+from conftest import PARTIAL_MESSAGE_FIELDS, as_read_session, make_request, make_response, make_retry_pair, make_tool_pair
 from messages.messages import dump_msg_json, format_system_alert
 from db.models import AgentRecord, MessageRecord
 from messages.messages import deserialize_messages
@@ -771,7 +771,7 @@ class TestCheckAgentIntegrity:
         records = build_records(self.agent.id)
         self.session.add_all(records)
         await self.session.flush()
-        issues = await check_agent_integrity(self.session, self.agent.id)
+        issues = await check_agent_integrity(as_read_session(self.session), self.agent.id)
         assert issues == expected_issues
 
     # Per-category test methods (test_clean, test_seq_id, …) are generated via

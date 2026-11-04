@@ -56,7 +56,10 @@ async def _persist_messages_load_records(
     """Persist messages via the official persist_messages, then load and return the MessageRecords."""
     await session.commit()  # close any open write transaction so persist_messages' own connection can write (SQLite single-writer)
     await persist_messages(deps, messages, [])
-    return await load_messages(session, deps.agent_id)
+    # Serialized tests own this helper's write session; deps.read_scope() is how prod reads,
+    # and the caller has already committed, so the ro connection sees the persisted rows.
+    async with deps.read_scope() as ro_session:
+        return await load_messages(ro_session, deps.agent_id)
 
 
 async def _make_agent_with_messages(
