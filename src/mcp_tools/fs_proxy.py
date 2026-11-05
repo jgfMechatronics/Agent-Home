@@ -119,9 +119,13 @@ def create_fs_proxy(env: dict[str, str] | None = None):
         # GIT_PATH is set in the container image (Dockerfile ENV GIT_PATH) and falls back
         # to the conventional mount path if unset.
         "cwd": os.environ.get("GIT_PATH", "/home/gossf/git"),
+        # Reset cwd to the project dir before each Bash call rather than maintaining
+        # agent-set state. Required for shared-server correctness — multiple agents share
+        # one claude mcp serve subprocess, so without this one agent's cd pollutes others.
+        # Required value is set last so it wins over anything in the caller-supplied env.
+        # When per-agent subprocesses are implemented, this can be removed.
+        "env": {**(env or {}), "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1"},
     }
-    if env:
-        server_config["env"] = env
 
     proxy = create_proxy(
         {"mcpServers": {"claude-code": server_config}},
