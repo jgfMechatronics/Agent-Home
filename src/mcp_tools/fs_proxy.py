@@ -43,14 +43,16 @@ _ALLOWED_TOOLS = {
     "Bash",
 }
 
-_BASH_DESCRIPTION = (
-    "Execute a shell command; synchronous — returns when the command completes or the timeout is hit. "
-    "The working directory persists across calls within a session. "
-    "Foreground commands are capped (~10 minutes); for longer-running or background work, start the job "
-    "detached (nohup sh -c '...' >log 2>&1 &) and poll the log with later calls. "
-    "Prefer absolute paths. "
-    "find/grep are shell functions backed by the claude executable — plain output, no structured search params."
-)
+def _bash_description() -> str:
+    git_path = os.environ.get("GIT_PATH", "/home/gossf/git")
+    return (
+        "Execute a shell command; synchronous — returns when the command completes or the timeout is hit. "
+        f"The working directory resets to {git_path} after each call — relative paths resolve from there, absolute paths work anywhere. "
+        "Foreground commands are capped (~10 minutes); for longer-running or background work, start the job "
+        "detached (nohup sh -c '...' >log 2>&1 &) and poll the log with later calls. "
+        "Prefer absolute paths. "
+        "find/grep are shell functions backed by the claude executable — plain output, no structured search params."
+    )
 
 
 @asynccontextmanager
@@ -113,6 +115,10 @@ def create_fs_proxy(env: dict[str, str] | None = None):
     server_config: dict = {
         "command": "claude",
         "args": ["mcp", "serve"],
+        # Set cwd so CC resets to a useful root rather than wherever the proxy was launched.
+        # GIT_PATH is set in the container image (Dockerfile ENV GIT_PATH) and falls back
+        # to the conventional mount path if unset.
+        "cwd": os.environ.get("GIT_PATH", "/home/gossf/git"),
     }
     if env:
         server_config["env"] = env
@@ -126,7 +132,7 @@ def create_fs_proxy(env: dict[str, str] | None = None):
     proxy.add_middleware(_CCResultFormatMiddleware())
     proxy.add_transform(ToolTransform({
         "Bash": ToolTransformConfig(
-            description=_BASH_DESCRIPTION,
+            description=_bash_description(),
         )
     }))
     return proxy
