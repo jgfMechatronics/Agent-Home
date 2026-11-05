@@ -10,7 +10,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from conftest import (
-    mock_run_context, SAMPLE_AGENT_CONFIG, make_deps, commit_and_detach_fixture_record
+    DBTestBase, mock_run_context, SAMPLE_AGENT_CONFIG, make_deps, commit_and_detach_fixture_record
 )
 from agent.deps import AgentDeps
 from db.models import AgentRecord, MemoryBlockRecord, utcnow
@@ -23,9 +23,9 @@ from memory.system_prompt_compilation import compile_system_prompt, get_system_p
 # Note: agent_with_blocks comes from conftest.py
 
 @pytest_asyncio.fixture
-async def agent_with_blocks_and_deps(session: AsyncSession, test_engine, agent_with_blocks: dict):
+async def agent_with_blocks_and_deps(test_engine, agent_with_blocks: dict):
     """Extends agent_with_blocks with AgentDeps for write operations."""
-    return {**agent_with_blocks, "deps": make_deps(test_engine, agent_with_blocks["agent"]), "session": session}
+    return {**agent_with_blocks, "deps": make_deps(test_engine, agent_with_blocks["agent"])}
 
 
 @pytest_asyncio.fixture
@@ -62,11 +62,11 @@ def _extract_tag(text: str, tag: str) -> str | None:
     return text[start + len(start_tag):end]
 
 
-# --- compile_system_prompt tests ---
-
-class TestCompileSystemPrompt:
+class TestCompileSystemPrompt(DBTestBase):
     """
-    Tests for compile_system_prompt() that use the standard agent_with_blocks fixture.
+    Tests for compile_system_prompt() that use the standard agent_with_blocks fixture:
+    compilation output and the deferred-compilation boundary (block edits must NOT
+    trigger recompilation — compilation happens only when explicitly invoked).
 
     pytest creates a fresh instance per test method (default behavior).
     _autouse_setup unpacks fixture, compiles, and stores result on self.
@@ -77,7 +77,7 @@ class TestCompileSystemPrompt:
         self.deps = agent_with_blocks_and_deps["deps"]
         self.agent = agent_with_blocks_and_deps["agent"]
         self.blocks = agent_with_blocks_and_deps["blocks"]
-        self.session = agent_with_blocks_and_deps["session"]
+        self.ctx = mock_run_context(self.deps)
         async with self.deps.write_scope() as session:
             await compile_system_prompt(self.deps, session)
         self.compiled = self.agent.compiled_system_prompt
@@ -176,8 +176,48 @@ class TestCompileSystemPrompt:
 
         assert "Updated persona content after first compile." in self.agent.compiled_system_prompt
 
+    async def test_compile_updates_sys_prompt_compiled_at(self):
+        """compile_system_prompt should update the sys_prompt_compiled_at timestamp.
 
-# --- compile_system_prompt formatting test (standalone, different fixtures). Was written to enable easy inspection of format ---
+        The class setup compiles once before this test runs, so this re-compiles and
+        asserts the timestamp bumps; the initially-None default is covered by
+        TestAgentRecordModel.test_agent_record_defaults.
+        """
+        first_compiled_at = self.agent.sys_prompt_compiled_at
+
+        before = utcnow()
+        async with self.deps.write_scope() as session:
+            await compile_system_prompt(self.deps, session)
+            # Naive UTC like every other timestamp column (see db.models.utcnow), even before the
+            # post-commit refresh reloads it from the DB.
+            assert self.deps.sys_prompt_compiled_at.tzinfo is None
+        after = utcnow()
+
+        assert self.agent.sys_prompt_compiled_at is not None
+        assert before < self.agent.sys_prompt_compiled_at < after
+        assert self.agent.sys_prompt_compiled_at > first_compiled_at
+
+    async def test_get_returns_stale_prompt_after_block_edit(self):
+        """
+        Deferred compilation: editing blocks should NOT trigger recompilation.
+        get_system_prompt should return the old cached prompt even after blocks change.
+        """
+        # The setup compiled already — self.compiled is the pre-edit prompt
+        original_compiled = self.compiled
+
+        # Modify a block directly (simulating what memory tools would do)
+        self.blocks[0].content = "COMPLETELY NEW CONTENT THAT SHOULD NOT APPEAR"
+        await self.session.merge(self.blocks[0])
+        await self.session.commit()
+
+        # get_system_prompt should return the OLD compiled prompt
+        result = await get_system_prompt(self.ctx)
+
+        assert result == original_compiled
+        assert "COMPLETELY NEW CONTENT" not in result
+
+
+# Standalone: bespoke memory structure + fixtures, for exact-format inspection
 
 async def test_exact_compiled_format(session: AsyncSession, agent_deps: AgentDeps, agent_record: AgentRecord):
     """
@@ -238,25 +278,6 @@ async def test_compile_handles_agent_with_no_blocks(agent_no_blocks_with_deps: d
     assert f"<system_instructions>\n{agent.system_instructions}\n</system_instructions>" == compiled
 
 
-async def test_compile_updates_sys_prompt_compiled_at(agent_with_blocks_and_deps: dict):
-    """compile_system_prompt should update the sys_prompt_compiled_at timestamp."""
-    deps = agent_with_blocks_and_deps["deps"]
-    agent = agent_with_blocks_and_deps["agent"]
-
-    assert agent.sys_prompt_compiled_at is None
-
-    before = utcnow()
-    async with deps.write_scope() as session:
-        await compile_system_prompt(deps, session)
-        # Naive UTC like every other timestamp column (see db.models.utcnow), even before the
-        # post-commit refresh reloads it from the DB.
-        assert deps.sys_prompt_compiled_at.tzinfo is None
-    after = utcnow()
-
-    assert agent.sys_prompt_compiled_at is not None
-    assert before < agent.sys_prompt_compiled_at < after
-
-
 async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession, test_engine):
     """Compilation should only include blocks belonging to the target agent."""
     agent_a = await commit_and_detach_fixture_record(session, AgentRecord(
@@ -295,9 +316,6 @@ async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession
     assert "b_block" not in compiled_a
 
 
-# --- get_system_prompt tests ---
-
-
 class TestGetSystemPrompt:
     """
     Tests for get_system_prompt() using an agent with pre-compiled prompt.
@@ -326,7 +344,7 @@ class TestGetSystemPrompt:
         assert self.agent.sys_prompt_compiled_at == original_timestamp
 
 
-# --- get_system_prompt standalone tests (different fixtures) ---
+# Standalone: bespoke setup (null compiled prompt), not part of the class fixtures
 
 async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession, test_engine):
     """get_system_prompt should return empty string when compiled_system_prompt is empty/unset."""
@@ -342,30 +360,3 @@ async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession
     ctx = mock_run_context(make_deps(test_engine, agent))
     result = await get_system_prompt(ctx)
     assert result == ""
-
-
-async def test_get_returns_stale_prompt_after_block_edit(agent_with_blocks_and_deps: dict):
-    """
-    Deferred compilation: editing blocks should NOT trigger recompilation.
-    get_system_prompt should return the old cached prompt even after blocks change.
-    """
-    deps = agent_with_blocks_and_deps["deps"]
-    agent = agent_with_blocks_and_deps["agent"]
-    ctx = mock_run_context(deps)
-
-    # Compile initial prompt
-    async with deps.write_scope() as session:
-        await compile_system_prompt(deps, session)
-    original_compiled = agent.compiled_system_prompt
-
-    # Modify a block directly (simulating what memory tools would do)
-    blocks = agent_with_blocks_and_deps["blocks"]
-    blocks[0].content = "COMPLETELY NEW CONTENT THAT SHOULD NOT APPEAR"
-    await agent_with_blocks_and_deps["session"].merge(blocks[0])
-    await agent_with_blocks_and_deps["session"].commit()
-
-    # get_system_prompt should return the OLD compiled prompt
-    result = await get_system_prompt(ctx)
-
-    assert result == original_compiled
-    assert "COMPLETELY NEW CONTENT" not in result

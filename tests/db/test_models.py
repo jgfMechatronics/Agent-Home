@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.types import AgentConfig
 from conftest import (
+    DBTestBase,
     PARTIAL_MEMORY_BLOCK_FIELDS,
     PARTIAL_MESSAGE_FIELDS,
     SAMPLE_AGENT_CONFIG,
@@ -84,207 +85,196 @@ async def assert_updated_at_bumps_on_modify(session: AsyncSession, record: Any, 
     )
 
 
-# --- UUID auto-generation ---
+class TestSharedModelBehaviors(DBTestBase):
+    """Behaviors defined across model types rather than belonging to one.
 
-@pytest.mark.parametrize("make_record", [
-    lambda agent_id: AgentRecord(name="uuid-test", agent_config=SAMPLE_AGENT_CONFIG, system_instructions=""),
-    lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="uuid-test", content="", **PARTIAL_MEMORY_BLOCK_FIELDS),
-    lambda agent_id: MessageRecord(agent_id=agent_id, seq_id=0, timestamp=datetime.now(timezone.utc), **PARTIAL_MESSAGE_FIELDS),
-])
-async def test_id_auto_generated_as_uuid_string(session: AsyncSession, agent_record: AgentRecord, make_record: Any):
-    """All models auto-generate a UUID string id on insert — not required at construction."""
-    record = make_record(agent_record.id)
-    assert record.id is None, "id should not be set before add and flush"
-    session.add(record)
-    await session.flush()
-    await session.refresh(record)
-    assert record.id is not None, "id should be populated after flush"
-    assert isinstance(record.id, str), "id should be stored as a string"
-    assert _UUID_RE.match(record.id), f"id should be a valid UUID string, got: {record.id!r}"
+    Column behaviors (id auto-generation) are parametrized over every concrete
+    record model; relationship behaviors (FK enforcement, cascade delete) exercise
+    how the models interact.
+    """
 
+    @pytest.mark.parametrize("make_record", [
+        lambda agent_id: AgentRecord(name="uuid-test", agent_config=SAMPLE_AGENT_CONFIG, system_instructions=""),
+        lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="uuid-test", content="", **PARTIAL_MEMORY_BLOCK_FIELDS),
+        lambda agent_id: MessageRecord(agent_id=agent_id, seq_id=0, timestamp=datetime.now(timezone.utc), **PARTIAL_MESSAGE_FIELDS),
+    ])
+    async def test_id_auto_generated_as_uuid_string(self, agent_record: AgentRecord, make_record: Any):
+        """All models auto-generate a UUID string id on insert — not required at construction."""
+        record = make_record(agent_record.id)
+        assert record.id is None, "id should not be set before add and flush"
+        self.session.add(record)
+        await self.session.flush()
+        await self.session.refresh(record)
+        assert record.id is not None, "id should be populated after flush"
+        assert isinstance(record.id, str), "id should be stored as a string"
+        assert _UUID_RE.match(record.id), f"id should be a valid UUID string, got: {record.id!r}"
 
-# --- AgentRecord ---
+    @pytest.mark.parametrize("fixture_name", ["memory_block_record", "message_record"])
+    async def test_fk_enforced(
+        self,
+        agent_record: AgentRecord,  # pre-resolved so getfixturevalue can resolve sync fixtures that depend on it without needing to spin up a new Runner inside the running event loop
+        request: pytest.FixtureRequest,
+        fixture_name: str,
+    ):
+        """MemoryBlockRecord and MessageRecord cannot reference a nonexistent agent."""
+        record = request.getfixturevalue(fixture_name)
+        record.agent_id = str(uuid.uuid4())
+        self.session.add(record)
+        with pytest.raises(IntegrityError):
+            await self.session.flush()
 
-async def test_agent_record_stores_all_fields(session: AsyncSession):
-    # Use naive datetimes: SQLAlchemy DateTime stores TEXT in SQLite and may strip
-    # timezone info depending on the timezone= flag, making tz-aware comparisons brittle.
-    fields = {
-        "name": "my-agent",
-        "agent_config": SAMPLE_AGENT_CONFIG,
-        "system_instructions": "Be helpful.",
-        "compiled_system_prompt": "<compiled>Be helpful.</compiled>",
-        "sys_prompt_compiled_at": datetime(2026, 1, 1, 12, 0, 0),
-        "context_window_start": 42,
-    }
-    await assert_round_trips(session, AgentRecord(**fields), fields)
+    @pytest.mark.parametrize("delete_fixture, survive_fixture", [
+        ("memory_block_record", "message_record"),
+        ("message_record", "memory_block_record"),
+    ])
+    async def test_child_delete_is_isolated(
+        self,
+        agent_record: AgentRecord,  # pre-resolved so getfixturevalue can resolve sync fixtures that depend on it without needing to spin up a new Runner inside the running event loop
+        memory_block_record: MemoryBlockRecord,
+        message_record: MessageRecord,
+        request: pytest.FixtureRequest,
+        delete_fixture: str,
+        survive_fixture: str,
+    ):
+        """Deleting a child record removes only that record — agent and sibling survive."""
+        self.session.add(memory_block_record)
+        self.session.add(message_record)
+        await self.session.flush()
 
+        to_delete = request.getfixturevalue(delete_fixture)
+        survivor = request.getfixturevalue(survive_fixture)
 
-async def test_agent_config_roundtrip_via_type_decorator(session: AsyncSession):
-    """AgentConfig round-trips through the DB: stored as JSON, loaded back as an AgentConfig instance."""
-    config = SAMPLE_AGENT_CONFIG
-    agent = AgentRecord(name="roundtrip-test", agent_config=config.model_copy())
-    session.add(agent)
-    await session.flush()
-    await session.refresh(agent)
-    assert isinstance(agent.agent_config, AgentConfig)
-    assert agent.agent_config == config
+        await self.session.delete(to_delete)
+        await self.session.flush()
 
+        assert await self.session.get(AgentRecord, agent_record.id) is not None
+        assert await self.session.get(type(survivor), survivor.id) is not None
 
-async def test_agent_config_type_decorator_rejects_wrong_type(session: AsyncSession):
-    agent = AgentRecord(name="wrong_type_agent_config", agent_config="not a config")
-    with pytest.raises(StatementError):
-        session.add(agent)
-        await session.flush()
+    async def test_cascade_delete_removes_blocks_and_messages(self, agent_record: AgentRecord, memory_block_record: MemoryBlockRecord, message_record: MessageRecord):
+        """Deleting an agent cascades to all associated blocks and messages."""
+        self.session.add(memory_block_record)
+        self.session.add(message_record)
+        await self.session.flush()
 
+        block_id, message_id = memory_block_record.id, message_record.id
 
-async def test_agent_record_defaults(session: AsyncSession):
-    """Verify default values on a freshly created agent (no optional fields provided)."""
-    agent = AgentRecord(name="defaults-test", agent_config=SAMPLE_AGENT_CONFIG)
-    session.add(agent)
-    await session.flush()
-    await session.refresh(agent)
-    assert agent.context_window_start == 0
-    assert agent.sys_prompt_compiled_at is None
-    assert agent.system_instructions == ""
+        await self.session.delete(agent_record)
+        await self.session.flush()
 
-
-async def test_agent_record_timestamps_auto_populated(session: AsyncSession, agent_record: AgentRecord):
-    """created_at and updated_at are automatically set when an agent is created."""
-    await assert_timestamps_auto_populated(agent_record)
-
-
-async def test_agent_record_updated_at_bumps_on_modify(session: AsyncSession, agent_record: AgentRecord):
-    """AgentRecord.updated_at should bump when modified (onupdate=func.now())."""
-    await assert_updated_at_bumps_on_modify(session, agent_record, lambda r: setattr(r, "name", "modified"))
-
-
-# --- MemoryBlockRecord ---
-
-async def test_memory_block_stores_all_fields(session: AsyncSession, memory_block_record: MemoryBlockRecord):
-    fields = {
-        "agent_id": memory_block_record.agent_id,
-        "label": memory_block_record.label,
-        "content": memory_block_record.content,
-        "description": memory_block_record.description,
-        "char_limit": memory_block_record.char_limit,
-        "position": memory_block_record.position
-    }
-    await assert_round_trips(session, memory_block_record, fields)
+        assert await self.session.get(MemoryBlockRecord, block_id) is None
+        assert await self.session.get(MessageRecord, message_id) is None
 
 
-async def test_memory_block_timestamps_auto_populated(session: AsyncSession, memory_block_record: MemoryBlockRecord):
-    """created_at and updated_at are automatically set when a memory block is created."""
-    session.add(memory_block_record)
-    await session.flush()
-    await session.refresh(memory_block_record)
-    await assert_timestamps_auto_populated(memory_block_record)
+class TestAgentRecordModel(DBTestBase):
+
+    async def test_agent_record_stores_all_fields(self):
+        # Use naive datetimes: SQLAlchemy DateTime stores TEXT in SQLite and may strip
+        # timezone info depending on the timezone= flag, making tz-aware comparisons brittle.
+        fields = {
+            "name": "my-agent",
+            "agent_config": SAMPLE_AGENT_CONFIG,
+            "system_instructions": "Be helpful.",
+            "compiled_system_prompt": "<compiled>Be helpful.</compiled>",
+            "sys_prompt_compiled_at": datetime(2026, 1, 1, 12, 0, 0),
+            "context_window_start": 42,
+        }
+        await assert_round_trips(self.session, AgentRecord(**fields), fields)
+
+    async def test_agent_config_roundtrip_via_type_decorator(self):
+        """AgentConfig round-trips through the DB: stored as JSON, loaded back as an AgentConfig instance."""
+        config = SAMPLE_AGENT_CONFIG
+        agent = AgentRecord(name="roundtrip-test", agent_config=config.model_copy())
+        self.session.add(agent)
+        await self.session.flush()
+        await self.session.refresh(agent)
+        assert isinstance(agent.agent_config, AgentConfig)
+        assert agent.agent_config == config
+
+    async def test_agent_config_type_decorator_rejects_wrong_type(self):
+        agent = AgentRecord(name="wrong_type_agent_config", agent_config="not a config")
+        with pytest.raises(StatementError):
+            self.session.add(agent)
+            await self.session.flush()
+
+    async def test_agent_record_defaults(self):
+        """Verify default values on a freshly created agent (no optional fields provided)."""
+        agent = AgentRecord(name="defaults-test", agent_config=SAMPLE_AGENT_CONFIG)
+        self.session.add(agent)
+        await self.session.flush()
+        await self.session.refresh(agent)
+        assert agent.context_window_start == 0
+        assert agent.sys_prompt_compiled_at is None
+        assert agent.system_instructions == ""
+
+    async def test_agent_record_timestamps_auto_populated(self, agent_record: AgentRecord):
+        """created_at and updated_at are automatically set when an agent is created."""
+        await assert_timestamps_auto_populated(agent_record)
+
+    async def test_agent_record_updated_at_bumps_on_modify(self, agent_record: AgentRecord):
+        """AgentRecord.updated_at should bump when modified (onupdate=func.now())."""
+        await assert_updated_at_bumps_on_modify(self.session, agent_record, lambda r: setattr(r, "name", "modified"))
 
 
-async def test_memory_block_updated_at_bumps_on_modify(session: AsyncSession, memory_block_record: MemoryBlockRecord):
-    """MemoryBlockRecord.updated_at should bump when modified (onupdate=func.now())."""
-    await assert_updated_at_bumps_on_modify(session, memory_block_record, lambda r: setattr(r, "content", "modified"))
+class TestMemoryBlockRecordModel(DBTestBase):
+
+    async def test_memory_block_stores_all_fields(self, memory_block_record: MemoryBlockRecord):
+        fields = {
+            "agent_id": memory_block_record.agent_id,
+            "label": memory_block_record.label,
+            "content": memory_block_record.content,
+            "description": memory_block_record.description,
+            "char_limit": memory_block_record.char_limit,
+            "position": memory_block_record.position
+        }
+        await assert_round_trips(self.session, memory_block_record, fields)
+
+    async def test_memory_block_timestamps_auto_populated(self, memory_block_record: MemoryBlockRecord):
+        """created_at and updated_at are automatically set when a memory block is created."""
+        self.session.add(memory_block_record)
+        await self.session.flush()
+        await self.session.refresh(memory_block_record)
+        await assert_timestamps_auto_populated(memory_block_record)
+
+    async def test_memory_block_updated_at_bumps_on_modify(self, memory_block_record: MemoryBlockRecord):
+        """MemoryBlockRecord.updated_at should bump when modified (onupdate=func.now())."""
+        await assert_updated_at_bumps_on_modify(self.session, memory_block_record, lambda r: setattr(r, "content", "modified"))
+
+    @pytest.mark.parametrize("overrides", [
+        pytest.param({"label": "persona", "position": 1}, id="duplicate_label"),
+        pytest.param({"label": "other",   "position": 0}, id="duplicate_position"),
+    ])
+    async def test_memory_block_unique_constraints_per_agent(self, memory_block_record: MemoryBlockRecord, overrides: dict):
+        """Duplicate (agent_id, label) or (agent_id, position) under the same agent violates unique constraints."""
+        self.session.add(memory_block_record)
+        self.session.add(MemoryBlockRecord(agent_id=memory_block_record.agent_id, content="x", description="", char_limit=2000, **overrides))
+        with pytest.raises(IntegrityError):
+            await self.session.flush()
 
 
-@pytest.mark.parametrize("overrides", [
-    pytest.param({"label": "persona", "position": 1}, id="duplicate_label"),
-    pytest.param({"label": "other",   "position": 0}, id="duplicate_position"),
-])
-async def test_memory_block_unique_constraints_per_agent(session: AsyncSession, memory_block_record: MemoryBlockRecord, overrides: dict):
-    """Duplicate (agent_id, label) or (agent_id, position) under the same agent violates unique constraints."""
-    session.add(memory_block_record)
-    session.add(MemoryBlockRecord(agent_id=memory_block_record.agent_id, content="x", description="", char_limit=2000, **overrides))
-    with pytest.raises(IntegrityError):
-        await session.flush()
+class TestMessageRecordModel(DBTestBase):
 
+    async def test_message_record_stores_all_fields(self, message_record: MessageRecord):
+        message_record.total_tokens = 150  # use a non-null value to verify integer persistence
+        fields = {
+            "agent_id": message_record.agent_id,
+            "seq_id": message_record.seq_id,
+            "type": message_record.type,
+            "content": message_record.content,
+            "total_tokens": message_record.total_tokens,
+            "timestamp": message_record.timestamp,
+            "system_prompt_hash": STUB_SYS_HASH,
+            "tool_definition_hash": STUB_TOOL_HASH,
+            "agent_config_hash": STUB_CONFIG_HASH,
+            "context_window_start_msg_id": STUB_CTX_MSG_ID,
+        }
+        await assert_round_trips(self.session, message_record, fields)
 
-# --- MessageRecord ---
+    async def test_message_total_tokens_nullable(self, message_record: MessageRecord):
+        """total_tokens may be NULL — only set on the final response row that closes a run."""
+        message_record.total_tokens = None
+        await assert_round_trips(self.session, message_record, {"total_tokens": None})
 
-async def test_message_record_stores_all_fields(session: AsyncSession, message_record: MessageRecord):
-    message_record.total_tokens = 150  # use a non-null value to verify integer persistence
-    fields = {
-        "agent_id": message_record.agent_id,
-        "seq_id": message_record.seq_id,
-        "type": message_record.type,
-        "content": message_record.content,
-        "total_tokens": message_record.total_tokens,
-        "timestamp": message_record.timestamp,
-        "system_prompt_hash": STUB_SYS_HASH,
-        "tool_definition_hash": STUB_TOOL_HASH,
-        "agent_config_hash": STUB_CONFIG_HASH,
-        "context_window_start_msg_id": STUB_CTX_MSG_ID,
-    }
-    await assert_round_trips(session, message_record, fields)
-
-
-async def test_message_total_tokens_nullable(session: AsyncSession, message_record: MessageRecord):
-    """total_tokens may be NULL — only set on the final response row that closes a run."""
-    message_record.total_tokens = None
-    await assert_round_trips(session, message_record, {"total_tokens": None})
-
-
-async def test_message_content_stores_nested_json(session: AsyncSession, message_record: MessageRecord):
-    """Message content preserves nested JSON structures including unicode escapes."""
-    message_record.content = '{"parts": [{"type": "user-prompt", "content": "hello \\u2603"}]}'
-    await assert_round_trips(session, message_record, {"content": message_record.content})
-
-
-# --- FK enforcement ---
-
-@pytest.mark.parametrize("fixture_name", ["memory_block_record", "message_record"])
-async def test_fk_enforced(
-    session: AsyncSession,
-    agent_record: AgentRecord,  # pre-resolved so getfixturevalue can resolve sync fixtures that depend on it without needing to spin up a new Runner inside the running event loop
-    request: pytest.FixtureRequest,
-    fixture_name: str,
-):
-    """MemoryBlockRecord and MessageRecord cannot reference a nonexistent agent."""
-    record = request.getfixturevalue(fixture_name)
-    record.agent_id = str(uuid.uuid4())
-    session.add(record)
-    with pytest.raises(IntegrityError):
-        await session.flush()
-
-
-# --- Cascade delete / isolation ---
-
-@pytest.mark.parametrize("delete_fixture, survive_fixture", [
-    ("memory_block_record", "message_record"),
-    ("message_record", "memory_block_record"),
-])
-async def test_child_delete_is_isolated(
-    session: AsyncSession,
-    agent_record: AgentRecord,  # pre-resolved so getfixturevalue can resolve sync fixtures that depend on it without needing to spin up a new Runner inside the running event loop
-    memory_block_record: MemoryBlockRecord,
-    message_record: MessageRecord,
-    request: pytest.FixtureRequest,
-    delete_fixture: str,
-    survive_fixture: str,
-):
-    """Deleting a child record removes only that record — agent and sibling survive."""
-    session.add(memory_block_record)
-    session.add(message_record)
-    await session.flush()
-
-    to_delete = request.getfixturevalue(delete_fixture)
-    survivor = request.getfixturevalue(survive_fixture)
-
-    await session.delete(to_delete)
-    await session.flush()
-
-    assert await session.get(AgentRecord, agent_record.id) is not None
-    assert await session.get(type(survivor), survivor.id) is not None
-
-
-async def test_cascade_delete_removes_blocks_and_messages(session: AsyncSession, agent_record: AgentRecord, memory_block_record: MemoryBlockRecord, message_record: MessageRecord):
-    """Deleting an agent cascades to all associated blocks and messages."""
-    session.add(memory_block_record)
-    session.add(message_record)
-    await session.flush()
-
-    block_id, message_id = memory_block_record.id, message_record.id
-
-    await session.delete(agent_record)
-    await session.flush()
-
-    assert await session.get(MemoryBlockRecord, block_id) is None
-    assert await session.get(MessageRecord, message_id) is None
+    async def test_message_content_stores_nested_json(self, message_record: MessageRecord):
+        """Message content preserves nested JSON structures including unicode escapes."""
+        message_record.content = '{"parts": [{"type": "user-prompt", "content": "hello \\u2603"}]}'
+        await assert_round_trips(self.session, message_record, {"content": message_record.content})
