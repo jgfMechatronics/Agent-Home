@@ -85,7 +85,14 @@ async def assert_updated_at_bumps_on_modify(session: AsyncSession, record: Any, 
     )
 
 
-class TestUUIDAutoGeneration(DBTestBase):
+class TestSharedModelBehaviors(DBTestBase):
+    """Behaviors defined across model types rather than belonging to one.
+
+    Column behaviors (id auto-generation) are parametrized over every concrete
+    record model; relationship behaviors (FK enforcement, cascade delete) exercise
+    how the models interact.
+    """
+
     @pytest.mark.parametrize("make_record", [
         lambda agent_id: AgentRecord(name="uuid-test", agent_config=SAMPLE_AGENT_CONFIG, system_instructions=""),
         lambda agent_id: MemoryBlockRecord(agent_id=agent_id, label="uuid-test", content="", **PARTIAL_MEMORY_BLOCK_FIELDS),
@@ -101,6 +108,61 @@ class TestUUIDAutoGeneration(DBTestBase):
         assert record.id is not None, "id should be populated after flush"
         assert isinstance(record.id, str), "id should be stored as a string"
         assert _UUID_RE.match(record.id), f"id should be a valid UUID string, got: {record.id!r}"
+
+    @pytest.mark.parametrize("fixture_name", ["memory_block_record", "message_record"])
+    async def test_fk_enforced(
+        self,
+        agent_record: AgentRecord,  # pre-resolved so getfixturevalue can resolve sync fixtures that depend on it without needing to spin up a new Runner inside the running event loop
+        request: pytest.FixtureRequest,
+        fixture_name: str,
+    ):
+        """MemoryBlockRecord and MessageRecord cannot reference a nonexistent agent."""
+        record = request.getfixturevalue(fixture_name)
+        record.agent_id = str(uuid.uuid4())
+        self.session.add(record)
+        with pytest.raises(IntegrityError):
+            await self.session.flush()
+
+    @pytest.mark.parametrize("delete_fixture, survive_fixture", [
+        ("memory_block_record", "message_record"),
+        ("message_record", "memory_block_record"),
+    ])
+    async def test_child_delete_is_isolated(
+        self,
+        agent_record: AgentRecord,  # pre-resolved so getfixturevalue can resolve sync fixtures that depend on it without needing to spin up a new Runner inside the running event loop
+        memory_block_record: MemoryBlockRecord,
+        message_record: MessageRecord,
+        request: pytest.FixtureRequest,
+        delete_fixture: str,
+        survive_fixture: str,
+    ):
+        """Deleting a child record removes only that record — agent and sibling survive."""
+        self.session.add(memory_block_record)
+        self.session.add(message_record)
+        await self.session.flush()
+
+        to_delete = request.getfixturevalue(delete_fixture)
+        survivor = request.getfixturevalue(survive_fixture)
+
+        await self.session.delete(to_delete)
+        await self.session.flush()
+
+        assert await self.session.get(AgentRecord, agent_record.id) is not None
+        assert await self.session.get(type(survivor), survivor.id) is not None
+
+    async def test_cascade_delete_removes_blocks_and_messages(self, agent_record: AgentRecord, memory_block_record: MemoryBlockRecord, message_record: MessageRecord):
+        """Deleting an agent cascades to all associated blocks and messages."""
+        self.session.add(memory_block_record)
+        self.session.add(message_record)
+        await self.session.flush()
+
+        block_id, message_id = memory_block_record.id, message_record.id
+
+        await self.session.delete(agent_record)
+        await self.session.flush()
+
+        assert await self.session.get(MemoryBlockRecord, block_id) is None
+        assert await self.session.get(MessageRecord, message_id) is None
 
 
 class TestAgentRecordModel(DBTestBase):
@@ -216,62 +278,3 @@ class TestMessageRecordModel(DBTestBase):
         """Message content preserves nested JSON structures including unicode escapes."""
         message_record.content = '{"parts": [{"type": "user-prompt", "content": "hello \\u2603"}]}'
         await assert_round_trips(self.session, message_record, {"content": message_record.content})
-
-
-class TestForeignKeyEnforcement(DBTestBase):
-    @pytest.mark.parametrize("fixture_name", ["memory_block_record", "message_record"])
-    async def test_fk_enforced(
-        self,
-        agent_record: AgentRecord,  # pre-resolved so getfixturevalue can resolve sync fixtures that depend on it without needing to spin up a new Runner inside the running event loop
-        request: pytest.FixtureRequest,
-        fixture_name: str,
-    ):
-        """MemoryBlockRecord and MessageRecord cannot reference a nonexistent agent."""
-        record = request.getfixturevalue(fixture_name)
-        record.agent_id = str(uuid.uuid4())
-        self.session.add(record)
-        with pytest.raises(IntegrityError):
-            await self.session.flush()
-
-
-class TestCascadeDelete(DBTestBase):
-    @pytest.mark.parametrize("delete_fixture, survive_fixture", [
-        ("memory_block_record", "message_record"),
-        ("message_record", "memory_block_record"),
-    ])
-    async def test_child_delete_is_isolated(
-        self,
-        agent_record: AgentRecord,  # pre-resolved so getfixturevalue can resolve sync fixtures that depend on it without needing to spin up a new Runner inside the running event loop
-        memory_block_record: MemoryBlockRecord,
-        message_record: MessageRecord,
-        request: pytest.FixtureRequest,
-        delete_fixture: str,
-        survive_fixture: str,
-    ):
-        """Deleting a child record removes only that record — agent and sibling survive."""
-        self.session.add(memory_block_record)
-        self.session.add(message_record)
-        await self.session.flush()
-
-        to_delete = request.getfixturevalue(delete_fixture)
-        survivor = request.getfixturevalue(survive_fixture)
-
-        await self.session.delete(to_delete)
-        await self.session.flush()
-
-        assert await self.session.get(AgentRecord, agent_record.id) is not None
-        assert await self.session.get(type(survivor), survivor.id) is not None
-
-    async def test_cascade_delete_removes_blocks_and_messages(self, agent_record: AgentRecord, memory_block_record: MemoryBlockRecord, message_record: MessageRecord):
-        """Deleting an agent cascades to all associated blocks and messages."""
-        self.session.add(memory_block_record)
-        self.session.add(message_record)
-        await self.session.flush()
-
-        block_id, message_id = memory_block_record.id, message_record.id
-
-        await self.session.delete(agent_record)
-        await self.session.flush()
-
-        assert await self.session.get(MemoryBlockRecord, block_id) is None
-        assert await self.session.get(MessageRecord, message_id) is None
