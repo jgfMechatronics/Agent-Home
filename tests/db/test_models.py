@@ -85,8 +85,6 @@ async def assert_updated_at_bumps_on_modify(session: AsyncSession, record: Any, 
     )
 
 
-# --- UUID auto-generation ---
-
 class TestUUIDAutoGeneration(DBTestBase):
     @pytest.mark.parametrize("make_record", [
         lambda agent_id: AgentRecord(name="uuid-test", agent_config=SAMPLE_AGENT_CONFIG, system_instructions=""),
@@ -104,8 +102,6 @@ class TestUUIDAutoGeneration(DBTestBase):
         assert isinstance(record.id, str), "id should be stored as a string"
         assert _UUID_RE.match(record.id), f"id should be a valid UUID string, got: {record.id!r}"
 
-
-# --- AgentRecord ---
 
 class TestAgentRecordModel(DBTestBase):
 
@@ -157,8 +153,6 @@ class TestAgentRecordModel(DBTestBase):
         await assert_updated_at_bumps_on_modify(self.session, agent_record, lambda r: setattr(r, "name", "modified"))
 
 
-# --- MemoryBlockRecord ---
-
 class TestMemoryBlockRecordModel(DBTestBase):
 
     async def test_memory_block_stores_all_fields(self, memory_block_record: MemoryBlockRecord):
@@ -195,8 +189,6 @@ class TestMemoryBlockRecordModel(DBTestBase):
             await self.session.flush()
 
 
-# --- MessageRecord ---
-
 class TestMessageRecordModel(DBTestBase):
 
     async def test_message_record_stores_all_fields(self, message_record: MessageRecord):
@@ -226,8 +218,6 @@ class TestMessageRecordModel(DBTestBase):
         await assert_round_trips(self.session, message_record, {"content": message_record.content})
 
 
-# --- FK enforcement ---
-
 class TestForeignKeyEnforcement(DBTestBase):
     @pytest.mark.parametrize("fixture_name", ["memory_block_record", "message_record"])
     async def test_fk_enforced(
@@ -243,8 +233,6 @@ class TestForeignKeyEnforcement(DBTestBase):
         with pytest.raises(IntegrityError):
             await self.session.flush()
 
-
-# --- Cascade delete / isolation ---
 
 class TestCascadeDelete(DBTestBase):
     @pytest.mark.parametrize("delete_fixture, survive_fixture", [

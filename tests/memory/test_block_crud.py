@@ -101,8 +101,6 @@ async def multi_tenant_with_deps(test_engine, multi_tenant_agents_with_core_memo
     return {**data, "deps_a": deps_a, "deps_b": deps_b}
 
 
-# --- Read operation tests ---
-
 class TestBlockReads(DBTestBase):
     @pytest.mark.parametrize("fn,args,expected", [
         pytest.param(get_blocks, (), [], id="get_blocks_returns_empty_list"),
@@ -156,8 +154,6 @@ class TestBlockReads(DBTestBase):
         got_block = await get_block(self.ro_session, agent_b.id, "system")
         assert got_block is None
 
-
-# --- update_block tests ---
 
 class TestUpdateBlock(DBTestBase):
     async def test_update_block_modifies_content_and_updated_at(self, multi_tenant_with_deps: dict):
@@ -272,8 +268,6 @@ class TestUpdateBlockSettings(DBTestBase):
             await update_block_settings(self.deps, self.target.label, new_settings)
 
 
-# --- create_block tests ---
-
 class TestCreateBlock(DBTestBase):
     async def test_create_block_inserts_with_defaults(self, multi_tenant_with_deps: dict):
         """create_block with minimal args should use correct defaults."""
@@ -333,8 +327,6 @@ class TestCreateBlock(DBTestBase):
             await create_block(deps, BlockSettings(label="notes", position=0))
 
 
-# --- delete_block tests ---
-
 class TestDeleteBlock(DBTestBase):
     async def test_delete_block_removes_block(self, multi_tenant_with_deps: dict):
         """delete_block should remove the block from the database."""
@@ -350,8 +342,6 @@ class TestDeleteBlock(DBTestBase):
         after = await get_block(self.ro_session, deps.agent_id, "persona")
         assert after is None
 
-
-# --- Shared write-op behaviors (nonexistent blocks, isolation, DTO boundary) ---
 
 class TestWriteOpSharedBehaviors(DBTestBase):
     @pytest.mark.parametrize("operation,args", [
@@ -420,8 +410,6 @@ class TestWriteOpSharedBehaviors(DBTestBase):
         else:
             assert result is None
 
-
-# --- reorder_blocks tests ---
 
 class TestReorderBlocks(DBTestBase):
     async def test_reorder_blocks_assigns_positions_by_list_order(self, multi_tenant_with_deps: dict):

@@ -62,8 +62,6 @@ def _extract_tag(text: str, tag: str) -> str | None:
     return text[start + len(start_tag):end]
 
 
-# --- compile_system_prompt tests ---
-
 class TestCompileSystemPrompt(DBTestBase):
     """
     Tests for compile_system_prompt() that use the standard agent_with_blocks fixture.
@@ -197,7 +195,7 @@ class TestCompileSystemPrompt(DBTestBase):
         assert self.agent.sys_prompt_compiled_at > first_compiled_at
 
 
-# --- compile_system_prompt formatting test (standalone, different fixtures). Was written to enable easy inspection of format ---
+# Standalone: bespoke memory structure + fixtures, for exact-format inspection
 
 async def test_exact_compiled_format(session: AsyncSession, agent_deps: AgentDeps, agent_record: AgentRecord):
     """
@@ -296,9 +294,6 @@ async def test_compile_only_includes_correct_agents_blocks(session: AsyncSession
     assert "b_block" not in compiled_a
 
 
-# --- get_system_prompt tests ---
-
-
 class TestGetSystemPrompt:
     """
     Tests for get_system_prompt() using an agent with pre-compiled prompt.
@@ -327,7 +322,7 @@ class TestGetSystemPrompt:
         assert self.agent.sys_prompt_compiled_at == original_timestamp
 
 
-# --- get_system_prompt standalone tests (different fixtures) ---
+# Standalone: bespoke setup (null compiled prompt), not part of the class fixtures
 
 async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession, test_engine):
     """get_system_prompt should return empty string when compiled_system_prompt is empty/unset."""
