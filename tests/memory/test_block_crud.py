@@ -3,8 +3,6 @@ Tests for block CRUD (memory/block_crud.py)
 
 Read operations take (session, agent_id) — no lock required.
 Write operations take (deps) — proves caller holds per-agent lock.
-
-TODO: These should be grouped into test classes for consistency with rest of code base
 """
 import asyncio
 
@@ -16,8 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.deps import AgentDeps
 from agent.types import BlockSettings
-from conftest import SAMPLE_AGENT_CONFIG, make_deps, commit_and_detach_fixture_record
-from db.connection import ReadOnlySession
+from conftest import DBTestBase, SAMPLE_AGENT_CONFIG, as_read_session, make_deps, commit_and_detach_fixture_record
 from db.models import AgentRecord, MemoryBlockRecord
 
 from memory.block_crud import (
@@ -92,127 +89,113 @@ async def multi_tenant_agents_with_core_memory(session: AsyncSession):
 
 
 @pytest_asyncio.fixture
-async def multi_tenant_with_deps(session: AsyncSession, test_engine, multi_tenant_agents_with_core_memory: dict):
+async def multi_tenant_with_deps(test_engine, multi_tenant_agents_with_core_memory: dict):
     """
     Extends multi_tenant fixture with AgentDeps for both agents.
-    
+
     For testing that write operations respect agent_id boundaries.
     """
     data = multi_tenant_agents_with_core_memory
     deps_a = make_deps(test_engine, data["agent_a"])
     deps_b = make_deps(test_engine, data["agent_b"])
-    return {**data, "deps_a": deps_a, "deps_b": deps_b, "session": session}
+    return {**data, "deps_a": deps_a, "deps_b": deps_b}
 
 
-# --- Shared read operation tests ---
+# --- Read operation tests ---
 
-@pytest.mark.parametrize("fn,args,expected", [
-    pytest.param(get_blocks, (), [], id="get_blocks_returns_empty_list"),
-    pytest.param(get_block, ("any_label",), None, id="get_block_returns_none"),
-])
-async def test_read_ops_handle_nonexistent_agent_gracefully(session: AsyncSession, fn, args, expected):
-    """Both read functions should return empty/None for nonexistent agent_id, not raise."""
-    nonexistent_agent_id = "agent-does-not-exist"
-    result = await fn(session, nonexistent_agent_id, *args)
-    assert result == expected
+class TestBlockReads(DBTestBase):
+    @pytest.mark.parametrize("fn,args,expected", [
+        pytest.param(get_blocks, (), [], id="get_blocks_returns_empty_list"),
+        pytest.param(get_block, ("any_label",), None, id="get_block_returns_none"),
+    ])
+    async def test_read_ops_handle_nonexistent_agent_gracefully(self, fn, args, expected):
+        """Both read functions should return empty/None for nonexistent agent_id, not raise."""
+        nonexistent_agent_id = "agent-does-not-exist"
+        result = await fn(self.session, nonexistent_agent_id, *args)
+        assert result == expected
 
+    async def test_get_blocks_in_order_from_correct_agent(self, multi_tenant_agents_with_core_memory: dict):
+        agent_id = multi_tenant_agents_with_core_memory["agent_a"].id
+        expected_blocks = multi_tenant_agents_with_core_memory["blocks_a"]
+        got_blocks = await get_blocks(self.ro_session, agent_id)
+        assert [column_state(b) for b in got_blocks] == [column_state(b) for b in expected_blocks]
 
-# --- get_blocks tests ---
+    async def test_get_blocks_returns_empty_list_for_agent_with_no_blocks(self, multi_tenant_agents_with_core_memory: dict):
+        _ = multi_tenant_agents_with_core_memory  # this fixture being included populates DB with agents that HAVE blocks
 
-async def test_get_blocks_in_order_from_correct_agent(ro_session: ReadOnlySession, multi_tenant_agents_with_core_memory: dict):
-    agent_id = multi_tenant_agents_with_core_memory["agent_a"].id
-    expected_blocks = multi_tenant_agents_with_core_memory["blocks_a"]
-    got_blocks = await get_blocks(ro_session, agent_id)
-    assert [column_state(b) for b in got_blocks] == [column_state(b) for b in expected_blocks]
+        # Create a third agent with no blocks to test isolation. Committed (not just flushed)
+        # so the read path, which runs on its own connection, can see it.
+        agent = await commit_and_detach_fixture_record(
+            self.session,
+            AgentRecord(name="empty-agent", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Empty"),
+        )
 
+        got_blocks = await get_blocks(self.ro_session, agent.id)
+        assert got_blocks == []
 
-async def test_get_blocks_returns_empty_list_for_agent_with_no_blocks(
-    session: AsyncSession, ro_session: ReadOnlySession, multi_tenant_agents_with_core_memory: dict
-):
-    _ = multi_tenant_agents_with_core_memory  # this fixture being included populates DB with agents that HAVE blocks
+    async def test_get_block_returns_correct_block_by_label(self, multi_tenant_agents_with_core_memory: dict):
+        agent_a = multi_tenant_agents_with_core_memory["agent_a"]
+        expected_block = multi_tenant_agents_with_core_memory["blocks_a"][1]  # human block at position 1
 
-    # Create a third agent with no blocks to test isolation. Committed (not just flushed)
-    # so the read path, which runs on its own connection, can see it.
-    agent = await commit_and_detach_fixture_record(
-        session,
-        AgentRecord(name="empty-agent", agent_config=SAMPLE_AGENT_CONFIG, system_instructions="Empty"),
-    )
+        got_block = await get_block(self.ro_session, agent_a.id, expected_block.label)
+        assert got_block is not None
+        assert column_state(got_block) == column_state(expected_block)
 
-    got_blocks = await get_blocks(ro_session, agent.id)
-    assert got_blocks == []
+    async def test_get_block_returns_none_for_nonexistent_label(self, multi_tenant_agents_with_core_memory: dict):
+        agent_a = multi_tenant_agents_with_core_memory["agent_a"]
 
-
-# --- get_block tests ---
-
-async def test_get_block_returns_correct_block_by_label(ro_session: ReadOnlySession, multi_tenant_agents_with_core_memory: dict):
-    agent_a = multi_tenant_agents_with_core_memory["agent_a"]
-    expected_block = multi_tenant_agents_with_core_memory["blocks_a"][1]  # human block at position 1
-    
-    got_block = await get_block(ro_session, agent_a.id, expected_block.label)
-    assert got_block is not None
-    assert column_state(got_block) == column_state(expected_block)
+        got_block = await get_block(self.ro_session, agent_a.id, "nonexistent")
+        assert got_block is None
 
 
-async def test_get_block_returns_none_for_nonexistent_label(ro_session: ReadOnlySession, multi_tenant_agents_with_core_memory: dict):
-    agent_a = multi_tenant_agents_with_core_memory["agent_a"]
-    
-    got_block = await get_block(ro_session, agent_a.id, "nonexistent")
-    assert got_block is None
+    async def test_get_block_isolates_by_agent(self, multi_tenant_agents_with_core_memory: dict):
+        """Agent A's 'system' block should not be returned when querying Agent B."""
+        agent_b = multi_tenant_agents_with_core_memory["agent_b"]
 
-
-async def test_get_block_isolates_by_agent(ro_session: ReadOnlySession, multi_tenant_agents_with_core_memory: dict):
-    """Agent A's 'system' block should not be returned when querying Agent B."""
-    agent_b = multi_tenant_agents_with_core_memory["agent_b"]
-    
-    # Agent A has 'system' block, Agent B does not — verify no cross-agent leakage
-    got_block = await get_block(ro_session, agent_b.id, "system")
-    assert got_block is None
+        # Agent A has 'system' block, Agent B does not — verify no cross-agent leakage
+        got_block = await get_block(self.ro_session, agent_b.id, "system")
+        assert got_block is None
 
 
 # --- update_block tests ---
 
-async def test_update_block_modifies_content_and_updated_at(multi_tenant_with_deps: dict):
-    """update_block should change content and bump updated_at timestamp."""
-    deps = multi_tenant_with_deps["deps_a"]
-    persona = multi_tenant_with_deps["blocks_a"][0]
-    original_updated_at = persona.updated_at
-    
-    new_content = "Updated persona content."
-    result = await update_block(deps, "persona", new_content)
+class TestUpdateBlock(DBTestBase):
+    async def test_update_block_modifies_content_and_updated_at(self, multi_tenant_with_deps: dict):
+        """update_block should change content and bump updated_at timestamp."""
+        deps = multi_tenant_with_deps["deps_a"]
+        persona = multi_tenant_with_deps["blocks_a"][0]
+        original_updated_at = persona.updated_at
 
-    assert result.content == new_content
-    assert result.updated_at > original_updated_at
-    # Expire cached blocks so get_block hits the DB for fresh data
-    session = multi_tenant_with_deps["session"]
-    session.expire_all()
-    fetched = await get_block(session, deps.agent_id, "persona")
-    assert fetched is not None, "persona block missing after update"
-    assert fetched.content == result.content  # sanity check: DB has the new content
+        new_content = "Updated persona content."
+        result = await update_block(deps, "persona", new_content)
 
+        assert result.content == new_content
+        assert result.updated_at > original_updated_at
+        # ro_session is a separate connection — reads committed state, no identity-map staleness
+        fetched = await get_block(self.ro_session, deps.agent_id, "persona")
+        assert fetched is not None, "persona block missing after update"
+        assert fetched.content == result.content  # sanity check: DB has the new content
 
-async def test_update_block_enforces_char_limit(multi_tenant_with_deps: dict):
-    """update_block should reject content exceeding the block's char_limit."""
-    deps = multi_tenant_with_deps["deps_a"]
-    human_block = multi_tenant_with_deps["blocks_a"][1]
-    
-    oversized_content = "x" * (human_block.char_limit + 1)
-    
-    with pytest.raises(ContentExceedsLimitError, match="new content exceeds char limit"):
-        await update_block(deps, "human", oversized_content)
+    async def test_update_block_enforces_char_limit(self, multi_tenant_with_deps: dict):
+        """update_block should reject content exceeding the block's char_limit."""
+        deps = multi_tenant_with_deps["deps_a"]
+        human_block = multi_tenant_with_deps["blocks_a"][1]
+
+        oversized_content = "x" * (human_block.char_limit + 1)
+
+        with pytest.raises(ContentExceedsLimitError, match="new content exceeds char limit"):
+            await update_block(deps, "human", oversized_content)
 
 
-
-
-class TestUpdateBlockSettings:
+class TestUpdateBlockSettings(DBTestBase):
     """Tests for update_block_settings helper."""
-    
+
     @pytest_asyncio.fixture(autouse=True)
     async def setup(self, multi_tenant_with_deps: dict):
         """Common setup: extract deps and target block."""
         self.deps = multi_tenant_with_deps["deps_a"]
         self.blocks = multi_tenant_with_deps["blocks_a"]
         self.target = self.blocks[0]  # persona at position 0
-        self.session = multi_tenant_with_deps["session"]
     
     async def test_modifies_all_fields(self):
         """update_block_settings should update label, description, char_limit, and position."""
@@ -230,9 +213,9 @@ class TestUpdateBlockSettings:
         assert BlockSettings.model_validate(result) == new_settings
         
         # Old label gone, new label exists with correct settings
-        self.session.expire_all()  # Clear identity map cache for fresh reads
-        assert await get_block(self.session, self.deps.agent_id, original_label) is None
-        fetched = await get_block(self.session, self.deps.agent_id, "persona_renamed")
+        # (ro_session: separate connection, sees committed state — no identity-map cache to clear)
+        assert await get_block(self.ro_session, self.deps.agent_id, original_label) is None
+        fetched = await get_block(self.ro_session, self.deps.agent_id, "persona_renamed")
         assert BlockSettings.model_validate(fetched) == new_settings
 
     async def test_position_none_keeps_current(self):
@@ -253,8 +236,7 @@ class TestUpdateBlockSettings:
         
         # DB matches
         label = self.target.label
-        self.session.expire_all()
-        fetched = await get_block(self.session, self.deps.agent_id, label)
+        fetched = await get_block(self.ro_session, self.deps.agent_id, label)
         assert BlockSettings.model_validate(fetched) == expected
 
     async def test_duplicate_label_raises(self):
@@ -292,193 +274,181 @@ class TestUpdateBlockSettings:
 
 # --- create_block tests ---
 
-async def test_create_block_inserts_with_defaults(multi_tenant_with_deps: dict):
-    """create_block with minimal args should use correct defaults."""
-    deps = multi_tenant_with_deps["deps_a"]
-    
-    result = await create_block(deps, BlockSettings(label="notes"), content="Some notes")
+class TestCreateBlock(DBTestBase):
+    async def test_create_block_inserts_with_defaults(self, multi_tenant_with_deps: dict):
+        """create_block with minimal args should use correct defaults."""
+        deps = multi_tenant_with_deps["deps_a"]
 
-    assert result.label == "notes"
-    assert result.content == "Some notes"
-    assert result.description == ""  # default
-    assert result.char_limit == 20000  # default
-    assert result.agent_id == deps.agent_id
-    
-    # Verify it's actually in the database
-    session = multi_tenant_with_deps["session"]
-    session.expire_all()
-    fetched = await get_block(session, deps.agent_id, "notes")
-    assert fetched is not None, "notes block missing after create"
-    assert fetched.description == result.description
-    assert fetched.char_limit == result.char_limit
+        result = await create_block(deps, BlockSettings(label="notes"), content="Some notes")
 
+        assert result.label == "notes"
+        assert result.content == "Some notes"
+        assert result.description == ""  # default
+        assert result.char_limit == 20000  # default
+        assert result.agent_id == deps.agent_id
 
-async def test_create_block_with_duplicate_label_raises(multi_tenant_with_deps: dict):
-    """create_block should fail when label already exists for this agent."""
-    deps = multi_tenant_with_deps["deps_a"]
-    
-    # "persona" already exists from fixture
-    with pytest.raises(DuplicateBlockError, match="already exists"):
-        await create_block(deps, BlockSettings(label="persona"), content="Duplicate!")
+        # Verify it's actually in the database
+        fetched = await get_block(self.ro_session, deps.agent_id, "notes")
+        assert fetched is not None, "notes block missing after create"
+        assert fetched.description == result.description
+        assert fetched.char_limit == result.char_limit
 
+    async def test_create_block_with_duplicate_label_raises(self, multi_tenant_with_deps: dict):
+        """create_block should fail when label already exists for this agent."""
+        deps = multi_tenant_with_deps["deps_a"]
 
-async def test_create_block_auto_assigns_position_at_end(multi_tenant_with_deps: dict):
-    """create_block without explicit position should append after existing blocks."""
-    deps = multi_tenant_with_deps["deps_a"]
-    existing_blocks = multi_tenant_with_deps["blocks_a"]
-    max_existing_position = max(b.position for b in existing_blocks)
-    
-    result = await create_block(deps, BlockSettings(label="notes"))
-    
-    assert result.position == max_existing_position + 1
+        # "persona" already exists from fixture
+        with pytest.raises(DuplicateBlockError, match="already exists"):
+            await create_block(deps, BlockSettings(label="persona"), content="Duplicate!")
 
+    async def test_create_block_auto_assigns_position_at_end(self, multi_tenant_with_deps: dict):
+        """create_block without explicit position should append after existing blocks."""
+        deps = multi_tenant_with_deps["deps_a"]
+        existing_blocks = multi_tenant_with_deps["blocks_a"]
+        max_existing_position = max(b.position for b in existing_blocks)
 
-async def test_create_block_on_agent_with_no_blocks(agent_deps: AgentDeps):
-    """create_block on agent with no blocks should assign position 0."""
-    result = await create_block(agent_deps, BlockSettings(label="first_block"))
-    assert result.position == 0
+        result = await create_block(deps, BlockSettings(label="notes"))
 
+        assert result.position == max_existing_position + 1
 
-async def test_create_block_with_explicit_position(multi_tenant_with_deps: dict):
-    """create_block with explicit position should use that position."""
-    deps = multi_tenant_with_deps["deps_a"]
-    
-    result = await create_block(deps, BlockSettings(label="notes", position=99))
-    
-    assert result.position == 99
+    async def test_create_block_on_agent_with_no_blocks(self, agent_deps: AgentDeps):
+        """create_block on agent with no blocks should assign position 0."""
+        result = await create_block(agent_deps, BlockSettings(label="first_block"))
+        assert result.position == 0
 
+    async def test_create_block_with_explicit_position(self, multi_tenant_with_deps: dict):
+        """create_block with explicit position should use that position."""
+        deps = multi_tenant_with_deps["deps_a"]
 
-async def test_create_block_with_duplicate_position_raises(multi_tenant_with_deps: dict):
-    """create_block should fail when position already exists for this agent."""
-    deps = multi_tenant_with_deps["deps_a"]
-    
-    # Position 0 already taken by "persona" from fixture
-    with pytest.raises(IntegrityError):
-        await create_block(deps, BlockSettings(label="notes", position=0))
+        result = await create_block(deps, BlockSettings(label="notes", position=99))
+
+        assert result.position == 99
+
+    async def test_create_block_with_duplicate_position_raises(self, multi_tenant_with_deps: dict):
+        """create_block should fail when position already exists for this agent."""
+        deps = multi_tenant_with_deps["deps_a"]
+
+        # Position 0 already taken by "persona" from fixture
+        with pytest.raises(IntegrityError):
+            await create_block(deps, BlockSettings(label="notes", position=0))
 
 
 # --- delete_block tests ---
 
-async def test_delete_block_removes_block(multi_tenant_with_deps: dict):
-    """delete_block should remove the block from the database."""
-    deps = multi_tenant_with_deps["deps_a"]
-    
-    # Verify block exists before delete
-    before = await get_block(multi_tenant_with_deps["session"], deps.agent_id, "persona")
-    assert before is not None
-    
-    await delete_block(deps, "persona")
+class TestDeleteBlock(DBTestBase):
+    async def test_delete_block_removes_block(self, multi_tenant_with_deps: dict):
+        """delete_block should remove the block from the database."""
+        deps = multi_tenant_with_deps["deps_a"]
 
-    # Verify block is gone
-    after = await get_block(multi_tenant_with_deps["session"], deps.agent_id, "persona")
-    assert after is None
+        # Verify block exists before delete
+        before = await get_block(self.ro_session, deps.agent_id, "persona")
+        assert before is not None
+
+        await delete_block(deps, "persona")
+
+        # Verify block is gone
+        after = await get_block(self.ro_session, deps.agent_id, "persona")
+        assert after is None
 
 
-# --- Shared: operations on nonexistent blocks ---
+# --- Shared write-op behaviors (nonexistent blocks, isolation, DTO boundary) ---
 
-@pytest.mark.parametrize("operation,args", [
-    pytest.param(update_block, ("nonexistent", "content"), id="update_block"),
-    pytest.param(update_block_settings, ("nonexistent", BlockSettings(label="new")), id="update_block_settings"),
-    pytest.param(delete_block, ("nonexistent",), id="delete_block"),
-])
-async def test_write_op_raises_on_nonexistent_block(multi_tenant_with_deps: dict, operation, args):
-    """Write operations should raise BlockNotFoundError when block doesn't exist."""
-    deps = multi_tenant_with_deps["deps_a"]
-    
-    with pytest.raises(BlockNotFoundError, match="not found"):
-        await operation(deps, *args)
+class TestWriteOpSharedBehaviors(DBTestBase):
+    @pytest.mark.parametrize("operation,args", [
+        pytest.param(update_block, ("nonexistent", "content"), id="update_block"),
+        pytest.param(update_block_settings, ("nonexistent", BlockSettings(label="new")), id="update_block_settings"),
+        pytest.param(delete_block, ("nonexistent",), id="delete_block"),
+    ])
+    async def test_write_op_raises_on_nonexistent_block(self, multi_tenant_with_deps: dict, operation, args):
+        """Write operations should raise BlockNotFoundError when block doesn't exist."""
+        deps = multi_tenant_with_deps["deps_a"]
+
+        with pytest.raises(BlockNotFoundError, match="not found"):
+            await operation(deps, *args)
+
+    async def test_write_operations_respect_agent_isolation(self, multi_tenant_with_deps: dict):
+        """
+        Write operations should only affect blocks for the specified agent_id.
+
+        This tests that deps.agent_id properly scopes all write operations,
+        preventing cross-agent contamination.
+        """
+        data = multi_tenant_with_deps
+        deps_a = data["deps_a"]
+        deps_b = data["deps_b"]
+
+        # Snapshot Agent B's state before we modify Agent A
+        b_blocks_before = await get_blocks(as_read_session(self.session), deps_b.agent_id)
+        b_snapshot_before = [(b.label, b.content, b.position) for b in b_blocks_before]
+
+        # Perform all write operations on Agent A
+        await update_block(deps_a, "persona", "Modified A's persona")
+        await update_block_settings(deps_a, "human", BlockSettings(label="human_renamed", description="new desc", char_limit=5000))
+        await create_block(deps_a, BlockSettings(label="new_block"), content="New for A")
+        await delete_block(deps_a, "system")  # Agent A has system block
+        await reorder_blocks(deps_a, ["human_renamed", "persona", "new_block"])
+        # Verify Agent B is completely unaffected. Expunge first: the before-snapshot
+        # query populated the session's identity map with B's blocks, and get_blocks
+        # returns those stale objects for already-loaded rows — without expunge the
+        # after-snapshot would compare stale-vs-stale and pass vacuously.
+        self.session.expunge_all()
+        b_blocks_after = await get_blocks(as_read_session(self.session), deps_b.agent_id)
+        b_snapshot_after = [(b.label, b.content, b.position) for b in b_blocks_after]
+
+        assert b_snapshot_after == b_snapshot_before, "Agent B was modified by operations on Agent A"
+
+    @pytest.mark.parametrize("write_op,call_args,returns_record", [
+        pytest.param(update_block, ("persona", "new content"), True, id="update_block"),
+        pytest.param(update_block_settings, ("persona", BlockSettings(label="persona_new", description="new")), True, id="update_block_settings"),
+        pytest.param(create_block, (BlockSettings(label="new_block"),), True, id="create_block"),
+        pytest.param(delete_block, ("persona",), False, id="delete_block"),
+        pytest.param(reorder_blocks, (["system", "human", "persona"],), False, id="reorder_blocks"),
+    ])
+    async def test_write_ops_return_dtos_not_orm_records(self, multi_tenant_with_deps, write_op, call_args, returns_record):
+        """Write ops must return MemoryBlock DTOs, never ORM records.
+
+        Guards the DTO boundary: a MemoryBlockRecord returned past the write scope
+        would leak session-bound state into caller code — exactly what the DTO
+        pattern (and the "ORM objects never outlive their session" rule) prevents.
+        """
+        deps = multi_tenant_with_deps["deps_a"]
+
+        result = await write_op(deps, *call_args)
+
+        if returns_record:
+            assert isinstance(result, MemoryBlock)
+        else:
+            assert result is None
 
 
 # --- reorder_blocks tests ---
 
-async def test_reorder_blocks_assigns_positions_by_list_order(multi_tenant_with_deps: dict):
-    """reorder_blocks should assign positions 0, 1, 2... based on list order."""
-    deps = multi_tenant_with_deps["deps_a"]
-    # Fixture has: persona (pos 0), human (pos 1), system (pos 2)
-    # Reverse the order
-    intended_order = ["system", "human", "persona"]
-    await reorder_blocks(deps, intended_order)
+class TestReorderBlocks(DBTestBase):
+    async def test_reorder_blocks_assigns_positions_by_list_order(self, multi_tenant_with_deps: dict):
+        """reorder_blocks should assign positions 0, 1, 2... based on list order."""
+        deps = multi_tenant_with_deps["deps_a"]
+        # Fixture has: persona (pos 0), human (pos 1), system (pos 2)
+        # Reverse the order
+        intended_order = ["system", "human", "persona"]
+        await reorder_blocks(deps, intended_order)
 
-    # Fetch fresh from DB to verify
-    session = multi_tenant_with_deps["session"]
-    session.expire_all()
-    blocks = await get_blocks(session, deps.agent_id)
-    labels_in_order = [b.label for b in blocks]
-    
-    assert labels_in_order == intended_order
-    assert blocks[0].position == 0
-    assert blocks[1].position == 1
-    assert blocks[2].position == 2
+        # Fetch fresh from DB to verify
+        blocks = await get_blocks(self.ro_session, deps.agent_id)
+        labels_in_order = [b.label for b in blocks]
 
+        assert labels_in_order == intended_order
+        assert blocks[0].position == 0
+        assert blocks[1].position == 1
+        assert blocks[2].position == 2
 
-@pytest.mark.parametrize("incomplete_list,error_match", [
-    pytest.param(["persona", "human"], "missing", id="missing_block"),  # missing "system"
-    pytest.param(["persona", "human", "system", "nonexistent"], "unknown", id="unknown_label"),
-    pytest.param(["persona", "nonexistent"], "missing.*unknown", id="missing_and_unknown"),
-])
-async def test_reorder_blocks_validates_label_list(multi_tenant_with_deps: dict, incomplete_list, error_match):
-    """reorder_blocks should reject lists that don't exactly match agent's blocks."""
-    deps = multi_tenant_with_deps["deps_a"]
-    
-    with pytest.raises(InvalidBlockOrderListError, match=error_match):
-        await reorder_blocks(deps, incomplete_list)
+    @pytest.mark.parametrize("incomplete_list,error_match", [
+        pytest.param(["persona", "human"], "missing", id="missing_block"),  # missing "system"
+        pytest.param(["persona", "human", "system", "nonexistent"], "unknown", id="unknown_label"),
+        pytest.param(["persona", "nonexistent"], "missing.*unknown", id="missing_and_unknown"),
+    ])
+    async def test_reorder_blocks_validates_label_list(self, multi_tenant_with_deps: dict, incomplete_list, error_match):
+        """reorder_blocks should reject lists that don't exactly match agent's blocks."""
+        deps = multi_tenant_with_deps["deps_a"]
 
-
-# --- Multi-tenant isolation (common to all write ops) ---
-
-async def test_write_operations_respect_agent_isolation(multi_tenant_with_deps: dict):
-    """
-    Write operations should only affect blocks for the specified agent_id.
-    
-    This tests that deps.agent_id properly scopes all write operations,
-    preventing cross-agent contamination.
-    """
-    data = multi_tenant_with_deps
-    deps_a = data["deps_a"]
-    deps_b = data["deps_b"]
-    
-    # Snapshot Agent B's state before we modify Agent A
-    b_blocks_before = await get_blocks(data["session"], deps_b.agent_id)
-    b_snapshot_before = [(b.label, b.content, b.position) for b in b_blocks_before]
-    
-    # Perform all write operations on Agent A
-    await update_block(deps_a, "persona", "Modified A's persona")
-    await update_block_settings(deps_a, "human", BlockSettings(label="human_renamed", description="new desc", char_limit=5000))
-    await create_block(deps_a, BlockSettings(label="new_block"), content="New for A")
-    await delete_block(deps_a, "system")  # Agent A has system block
-    await reorder_blocks(deps_a, ["human_renamed", "persona", "new_block"])
-    # Verify Agent B is completely unaffected. Expunge first: the before-snapshot
-    # query populated the session's identity map with B's blocks, and get_blocks
-    # returns those stale objects for already-loaded rows — without expunge the
-    # after-snapshot would compare stale-vs-stale and pass vacuously.
-    data["session"].expunge_all()
-    b_blocks_after = await get_blocks(data["session"], deps_b.agent_id)
-    b_snapshot_after = [(b.label, b.content, b.position) for b in b_blocks_after]
-    
-    assert b_snapshot_after == b_snapshot_before, "Agent B was modified by operations on Agent A"
-
-
-# --- DTO safety (common to all write ops) ---
-
-@pytest.mark.parametrize("write_op,call_args,returns_record", [
-    pytest.param(update_block, ("persona", "new content"), True, id="update_block"),
-    pytest.param(update_block_settings, ("persona", BlockSettings(label="persona_new", description="new")), True, id="update_block_settings"),
-    pytest.param(create_block, (BlockSettings(label="new_block"),), True, id="create_block"),
-    pytest.param(delete_block, ("persona",), False, id="delete_block"),
-    pytest.param(reorder_blocks, (["system", "human", "persona"],), False, id="reorder_blocks"),
-])
-async def test_write_ops_return_dtos_not_orm_records(multi_tenant_with_deps, write_op, call_args, returns_record):
-    """Write ops must return MemoryBlock DTOs, never ORM records.
-
-    Guards the DTO boundary: a MemoryBlockRecord returned past the write scope
-    would leak session-bound state into caller code — exactly what the DTO
-    pattern (and the "ORM objects never outlive their session" rule) prevents.
-    """
-    deps = multi_tenant_with_deps["deps_a"]
-
-    result = await write_op(deps, *call_args)
-
-    if returns_record:
-        assert isinstance(result, MemoryBlock)
-    else:
-        assert result is None
+        with pytest.raises(InvalidBlockOrderListError, match=error_match):
+            await reorder_blocks(deps, incomplete_list)
