@@ -64,7 +64,9 @@ def _extract_tag(text: str, tag: str) -> str | None:
 
 class TestCompileSystemPrompt(DBTestBase):
     """
-    Tests for compile_system_prompt() that use the standard agent_with_blocks fixture.
+    Tests for compile_system_prompt() that use the standard agent_with_blocks fixture:
+    compilation output and the deferred-compilation boundary (block edits must NOT
+    trigger recompilation — compilation happens only when explicitly invoked).
 
     pytest creates a fresh instance per test method (default behavior).
     _autouse_setup unpacks fixture, compiles, and stores result on self.
@@ -75,6 +77,7 @@ class TestCompileSystemPrompt(DBTestBase):
         self.deps = agent_with_blocks_and_deps["deps"]
         self.agent = agent_with_blocks_and_deps["agent"]
         self.blocks = agent_with_blocks_and_deps["blocks"]
+        self.ctx = mock_run_context(self.deps)
         async with self.deps.write_scope() as session:
             await compile_system_prompt(self.deps, session)
         self.compiled = self.agent.compiled_system_prompt
@@ -193,6 +196,25 @@ class TestCompileSystemPrompt(DBTestBase):
         assert self.agent.sys_prompt_compiled_at is not None
         assert before < self.agent.sys_prompt_compiled_at < after
         assert self.agent.sys_prompt_compiled_at > first_compiled_at
+
+    async def test_get_returns_stale_prompt_after_block_edit(self):
+        """
+        Deferred compilation: editing blocks should NOT trigger recompilation.
+        get_system_prompt should return the old cached prompt even after blocks change.
+        """
+        # The setup compiled already — self.compiled is the pre-edit prompt
+        original_compiled = self.compiled
+
+        # Modify a block directly (simulating what memory tools would do)
+        self.blocks[0].content = "COMPLETELY NEW CONTENT THAT SHOULD NOT APPEAR"
+        await self.session.merge(self.blocks[0])
+        await self.session.commit()
+
+        # get_system_prompt should return the OLD compiled prompt
+        result = await get_system_prompt(self.ctx)
+
+        assert result == original_compiled
+        assert "COMPLETELY NEW CONTENT" not in result
 
 
 # Standalone: bespoke memory structure + fixtures, for exact-format inspection
@@ -338,38 +360,3 @@ async def test_get_returns_empty_str_when_compiled_is_null(session: AsyncSession
     ctx = mock_run_context(make_deps(test_engine, agent))
     result = await get_system_prompt(ctx)
     assert result == ""
-
-
-class TestGetSystemPromptAfterBlockEdit(DBTestBase):
-    """
-    get_system_prompt() with the standard blocks fixture, verifying deferred
-    compilation semantics.
-    """
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def _autouse_setup(self, agent_with_blocks_and_deps: dict):
-        self.agent = agent_with_blocks_and_deps["agent"]
-        self.deps = agent_with_blocks_and_deps["deps"]
-        self.blocks = agent_with_blocks_and_deps["blocks"]
-        self.ctx = mock_run_context(self.deps)
-
-    async def test_get_returns_stale_prompt_after_block_edit(self):
-        """
-        Deferred compilation: editing blocks should NOT trigger recompilation.
-        get_system_prompt should return the old cached prompt even after blocks change.
-        """
-        # Compile initial prompt
-        async with self.deps.write_scope() as session:
-            await compile_system_prompt(self.deps, session)
-        original_compiled = self.agent.compiled_system_prompt
-
-        # Modify a block directly (simulating what memory tools would do)
-        self.blocks[0].content = "COMPLETELY NEW CONTENT THAT SHOULD NOT APPEAR"
-        await self.session.merge(self.blocks[0])
-        await self.session.commit()
-
-        # get_system_prompt should return the OLD compiled prompt
-        result = await get_system_prompt(self.ctx)
-
-        assert result == original_compiled
-        assert "COMPLETELY NEW CONTENT" not in result
