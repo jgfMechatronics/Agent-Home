@@ -45,6 +45,11 @@ from agent.tools import get_tools_for_agent
 
 LOCK_TIMEOUT_SECONDS: int = 60
 LOCK_TIMEOUT_FAST: int = 2
+# TODO: Rebase this branch (Testing/IsolatedEvalInfra) before carrying it forward. It's based on
+# Cursed/TempPseudoMain at 7b53b02, not main: old main (8f25d7c50) plus cherry-picks from
+# Development/ClaudeCodeMCPTools and Development/ImproveNoriToolDisplay. Once those two branches
+# are merged to main, run `git rebase --onto main 7b53b02 Testing/IsolatedEvalInfra` so only this
+# branch's own commits move, then clean up the conflicts (bridge.py is the most likely place).
 _DEFAULT_MCP_FILESYSTEM_URL = "http://host.docker.internal:8080/mcp"
 
 logger = logging.getLogger(__name__)
