@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import sys
 import time
@@ -41,6 +42,11 @@ THINKING_END_MARKER   = "\n\n`━━━━━ END THINKING ━━━━━`\n\n\
 # =============================================================================
 # JSON-RPC Helpers
 # =============================================================================
+
+def env_flag(name: str) -> bool:
+    """True if the env var is set to a truthy value (1/true/yes/on)."""
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
 
 def send(msg: dict[str, Any]) -> None:
     """Write a JSON-RPC message to stdout (newline-terminated, flushed)."""
@@ -461,6 +467,9 @@ class BridgeState:
     server_url: str = "http://localhost:8000"
     agent_id: str | None = None  # Set via config or session/new
 
+    # Observe-only: never send a mutating request (prompt, cancel) to the server.
+    watch_only: bool = False
+
     # Accumulated usage for the current turn
     usage: dict[str, int] | None = None
 
@@ -875,6 +884,8 @@ async def send_available_commands(
     state: BridgeState, session_id: str, client: httpx.AsyncClient
 ) -> None:
     """Fetch available slash commands from server and send to client."""
+    if state.watch_only:
+        return  # Nothing is sendable in watch-only mode, so don't advertise commands
     try:
         resp = await client.get(f"{state.server_url}/agents/slash-commands")
         resp.raise_for_status()
@@ -990,6 +1001,15 @@ async def handle_session_prompt(
     if not user_message:
         send(error_response(msg["id"], -32602, "Empty prompt"))
         return
+
+    if state.watch_only:
+        # Covers slash commands too: they are plain prompts to the server.
+        logger.debug("Watch-only: dropping prompt")
+        send(agent_message_chunk(
+            session_id, "Watch-only mode: this message was not sent to the agent."
+        ))
+        send(response(msg["id"], {"sessionId": session_id, "stopReason": "end_turn"}))
+        return
     
     # Mark stream as active so the SSE subscription knows to skip forwarding
     # (we're already streaming directly to Nori via the HTTP response).
@@ -1029,6 +1049,9 @@ async def handle_session_prompt(
 async def handle_session_cancel(state: BridgeState, msg: dict[str, Any], client: httpx.AsyncClient) -> None:
     """Handle session/cancel notification — POST cancel to Agent Home."""
     logger.debug("session/cancel received from Nori")
+    if state.watch_only:
+        logger.debug("Watch-only: ignoring cancel, no request sent")
+        return
     if not state.agent_id:
         logger.warning("session/cancel received but no agent_id configured — ignoring")
         return
@@ -1064,9 +1087,13 @@ async def dispatch(state: BridgeState, msg: dict[str, Any], client: httpx.AsyncC
         # If no id, it's a notification — silently ignore unknown notifications
 
 
-async def main(agent_id: str | None = None, server_url: str = "http://localhost:8000") -> None:
+async def main(
+    agent_id: str | None = None,
+    server_url: str = "http://localhost:8000",
+    watch_only: bool = False,
+) -> None:
     """Main entry point for the ACP bridge."""
-    state = BridgeState(server_url=server_url, agent_id=agent_id)
+    state = BridgeState(server_url=server_url, agent_id=agent_id, watch_only=watch_only)
     
     # Set up async stdin reader
     loop = asyncio.get_event_loop()
@@ -1105,6 +1132,11 @@ if __name__ == "__main__":
         default=None,
         help="Agent Home server URL (overrides AGENT_HOME_SERVER_URL env var)",
     )
+    parser.add_argument(
+        "--watch-only",
+        action="store_true",
+        help="Observe only; never send prompts or cancels (also AGENT_HOME_WATCH_ONLY=1)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -1117,4 +1149,6 @@ if __name__ == "__main__":
     agent_id = os.environ.get("AGENT_HOME_AGENT_ID") or args.agent_id
     server_url = os.environ.get("AGENT_HOME_SERVER_URL") or args.server_url or "http://localhost:8000"
 
-    asyncio.run(main(agent_id=agent_id, server_url=server_url))
+    watch_only = args.watch_only or env_flag("AGENT_HOME_WATCH_ONLY")
+
+    asyncio.run(main(agent_id=agent_id, server_url=server_url, watch_only=watch_only))
