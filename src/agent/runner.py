@@ -32,8 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # pydantic-ai's default request_limit is 50, which proved too low for tool-heavy autonomous
-# sessions. 100 gives headroom while still catching genuinely runaway agents.
-# Per-agent configurability (like AgentConfig.retries) is the natural extension if 100 ever proves tight.
+# sessions. Goal is to give headroom while still catching genuinely runaway agents.
 _REQUEST_LIMIT = 200
 
 COMPACTION_RESUME_NOTICE = format_system_alert("Compaction complete, resuming run. Oldest context was trimmed to stay within limits. This notice does not mark the trim boundary, there are messages prior to this alert which were retained.\n" \
