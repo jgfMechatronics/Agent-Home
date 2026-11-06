@@ -627,6 +627,38 @@ class TestBuildModelSettings:
             "order": ["anthropic", "aws-bedrock"],
         }
 
+    def test_openrouter_data_collection_allow(self):
+        """openrouter_data_collection='allow' → used for provider data_collection."""
+        config = self._config("openrouter:z-ai/glm-5.3").model_copy(update={"openrouter_data_collection": "allow"})
+        provider = _build_model_settings(config).get("openrouter_provider")
+        assert provider == {"data_collection": "allow"}
+
+    def test_openrouter_provider_pin_disables_fallbacks(self):
+        """openrouter_provider_order → order set and allow_fallbacks False."""
+        config = self._config("openrouter:z-ai/glm-5.3").model_copy(
+            update={"openrouter_provider_order": ["deepinfra", "fireworks"]}
+        )
+        provider = _build_model_settings(config).get("openrouter_provider")
+        assert provider == {
+            "data_collection": "deny",
+            "order": ["deepinfra", "fireworks"],
+            "allow_fallbacks": False,
+        }
+
+    def test_openrouter_provider_pin_overrides_env(self, monkeypatch):
+        """Per-agent pin wins over OPENROUTER_PROVIDER_ORDER."""
+        monkeypatch.setenv("OPENROUTER_PROVIDER_ORDER", "anthropic")
+        config = self._config("openrouter:z-ai/glm-5.3").model_copy(update={"openrouter_provider_order": ["deepinfra"]})
+        provider = _build_model_settings(config).get("openrouter_provider")
+        assert provider["order"] == ["deepinfra"]
+        assert provider["allow_fallbacks"] is False
+
+    def test_openrouter_env_order_has_no_allow_fallbacks(self, monkeypatch):
+        """Env var path (no per-agent pin) leaves fallbacks at the OpenRouter default."""
+        monkeypatch.setenv("OPENROUTER_PROVIDER_ORDER", "anthropic")
+        provider = _build_model_settings(self._config("openrouter:z-ai/glm-5.3")).get("openrouter_provider")
+        assert "allow_fallbacks" not in provider
+
     def test_openrouter_usage_included(self):
         """OpenRouter model → usage details included in responses."""
         settings = _build_model_settings(self._config("openrouter:z-ai/glm-5.3"))
@@ -638,6 +670,27 @@ class TestBuildModelSettings:
             settings = _build_model_settings(self._config(model_name))
             assert "openrouter_provider" not in settings
             assert "openrouter_usage" not in settings
+
+
+# =============================================================================
+# _construct_toolsets unit tests
+# =============================================================================
+
+class TestConstructToolsetsMcpUrl:
+    """The mcp_filesystem URL defaults to the dev sandbox's proxy and is overridable per agent."""
+
+    @staticmethod
+    def _url(*args) -> str:
+        from agent.factory import _construct_toolsets
+        with patch("agent.factory.MCPToolset") as mock_toolset:
+            _construct_toolsets(["mcp_filesystem"], *args)
+        return mock_toolset.call_args[0][0]
+
+    def test_default_url(self):
+        assert self._url() == "http://host.docker.internal:8080/mcp"
+
+    def test_url_override(self):
+        assert self._url("http://host.docker.internal:8082/mcp") == "http://host.docker.internal:8082/mcp"
 
 
 # =============================================================================

@@ -119,6 +119,10 @@ class AgentConfig(BaseModel):
     - retries: how many times the agent can retry a failed tool call
     - thinking_mode: False (off) | True (on, provider default effort) | effort level
       ('minimal'/'low'/'medium'/'high'/'xhigh' — pydantic-ai ThinkingLevel, mapped per provider)
+    - openrouter_provider_order: Pin OpenRouter routing to these provider slugs, in order, with fallbacks
+      disabled (a provider failure fails the request). Overrides the OPENROUTER_PROVIDER_ORDER env var.
+    - openrouter_data_collection: OpenRouter provider data-collection policy, "allow" or "deny" (default "deny")
+    - mcp_filesystem_url: URL of the fs_proxy that serves the mcp_filesystem toolset (default: the dev sandbox's)
     """
     model_config = ConfigDict(extra="forbid") # prevent extra unexpected fields
 
@@ -136,6 +140,9 @@ class AgentConfig(BaseModel):
         default=False,
         validation_alias=AliasChoices("thinking_mode", "thinking_enabled"),
     )
+    openrouter_provider_order: list[str] | None = None
+    openrouter_data_collection: Literal["allow", "deny"] = "deny"
+    mcp_filesystem_url: str | None = None
     
     @field_validator("model_name")
     @classmethod

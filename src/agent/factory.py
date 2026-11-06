@@ -45,7 +45,7 @@ from agent.tools import get_tools_for_agent
 
 LOCK_TIMEOUT_SECONDS: int = 60
 LOCK_TIMEOUT_FAST: int = 2
-_MCP_FILESYSTEM_URL = "http://host.docker.internal:8080/mcp"
+_DEFAULT_MCP_FILESYSTEM_URL = "http://host.docker.internal:8080/mcp"
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +107,14 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     elif isinstance(m, OpenRouterModel):
         # Default routing uses cache-adjusted "effective price" — smarter than raw list price.
         # Only override with provider.order when we need explicit provider control.
-        provider_config: dict = {"data_collection": "deny"}
+        provider_config: dict = {"data_collection": config.openrouter_data_collection}
+        # Per-agent pin wins over the env var, and disables fallbacks so a provider failure
+        # fails loudly instead of silently switching providers.
+        if config.openrouter_provider_order:
+            provider_config["order"] = list(config.openrouter_provider_order)
+            provider_config["allow_fallbacks"] = False
         # Optional provider pinning via env var (comma-separated slugs, e.g. "anthropic,aws-bedrock")
-        if pinned := os.environ.get("OPENROUTER_PROVIDER_ORDER"):
+        elif pinned := os.environ.get("OPENROUTER_PROVIDER_ORDER"):
             provider_config["order"] = [p.strip() for p in pinned.split(",")]
         settings = OpenRouterModelSettings(
             **settings,
@@ -120,13 +125,14 @@ def _build_model_settings(config: "AgentConfig") -> ModelSettings:
     return settings
 
 
-def _construct_toolsets(toolset_names: list[str]) -> list:
+def _construct_toolsets(toolset_names: list[str], mcp_filesystem_url: str | None = None) -> list:
     """Construct toolset instances from a list of toolset names.
 
     Maps toolset names to their constructors and builds instances.
 
     Args:
         toolset_names: List of toolset identifiers (e.g., ["mcp_filesystem"])
+        mcp_filesystem_url: Overrides the default mcp_filesystem URL
 
     Returns:
         List of constructed toolset instances ready for Agent consumption.
@@ -135,7 +141,7 @@ def _construct_toolsets(toolset_names: list[str]) -> list:
     toolsets = []
     for name in toolset_names:
         if name == "mcp_filesystem":
-            toolsets.append(MCPToolset(_MCP_FILESYSTEM_URL))
+            toolsets.append(MCPToolset(mcp_filesystem_url or _DEFAULT_MCP_FILESYSTEM_URL))
         else:
             logger.warning("Unknown toolset name %r — skipping. Check agent config for typos.", name)
     return toolsets
@@ -256,7 +262,7 @@ class AgentFactory:
         """
         async with self.build_deps() as deps:
             model_settings = _build_model_settings(deps.config)
-            toolsets = _construct_toolsets(deps.config.toolset_names)
+            toolsets = _construct_toolsets(deps.config.toolset_names, deps.config.mcp_filesystem_url)
             
             agent = Agent(deps.config.model_name,
                           instructions=get_system_prompt,
