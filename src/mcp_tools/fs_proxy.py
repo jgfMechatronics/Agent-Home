@@ -14,6 +14,7 @@ Or with uv:
     uv run python -m mcp_tools.fs_proxy
 """
 import argparse
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
@@ -23,7 +24,7 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.transforms import ToolTransform
 from fastmcp.tools.tool_transform import ToolTransformConfig
 
-from mcp_tools.cc_result_format import format_cc_tool_result
+from mcp_tools.cc_result_format import format_cc_tool_result, persisted_output_path
 
 if TYPE_CHECKING:
     from fastmcp.server.providers.proxy import FastMCPProxy
@@ -72,6 +73,19 @@ async def _warmup_lifespan(server: "FastMCPProxy"):
     yield
 
 
+def _read_persisted_output(path: str) -> str | None:
+    """Full text of a persisted Bash output file, or None if it can't be read.
+
+    Any failure yields None: the formatter then returns the cut output with a
+    visible incomplete-output note rather than an error.
+    """
+    try:
+        with open(path, "rb") as f:
+            return f.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
 class _CCResultFormatMiddleware(Middleware):
     """Rewrite claude mcp serve's JSON tool results into CC-native text.
 
@@ -79,6 +93,11 @@ class _CCResultFormatMiddleware(Middleware):
     strings. The formatter (cc_result_format) maps between them — pure
     function, defensive pass-through on anything unexpected. Only single
     text-content results are candidates; anything richer passes untouched.
+
+    Serve cuts large Bash output at 30k characters and spills the full text
+    to a file on this container's filesystem; it is read here and handed to
+    the formatter, which stays I/O-free. The agent-side ToolOutputLimits
+    capability then spills it like any other large tool result.
     """
 
     async def on_call_tool(
@@ -93,7 +112,12 @@ class _CCResultFormatMiddleware(Middleware):
             and getattr(content[0], "type", None) == "text"
         ):
             text = content[0].text
-            formatted = format_cc_tool_result(context.message.name, text, result.is_error)
+            name = context.message.name
+            path = persisted_output_path(name, text, result.is_error)
+            persisted = (
+                await asyncio.to_thread(_read_persisted_output, path) if path else None
+            )
+            formatted = format_cc_tool_result(name, text, result.is_error, persisted)
             if formatted != text:
                 content[0].text = formatted
         return result
