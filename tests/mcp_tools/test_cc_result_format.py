@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from mcp_tools.cc_result_format import format_cc_tool_result
+from mcp_tools.cc_result_format import format_cc_tool_result, persisted_output_path
 
 
 def _read_json(content: str, start_line: int = 1) -> str:
@@ -141,6 +141,55 @@ class TestBash:
     def test_timeout_passes_through(self):
         """[doc] serve's timeout text (Exit code 143 + partial output) passes through."""
         err = "Exit code 143\nCommand timed out after 30000\npartial output"
+        assert format_cc_tool_result("Bash", err, True) == err
+
+
+def _cut_bash(size: int = 1288895, stdout: str = "x" * 30000) -> str:
+    """Serve's result for output over its 30k cap (CC 2.1.300)."""
+    return json.dumps({
+        "stdout": stdout, "stderr": "", "interrupted": False, "isImage": False,
+        "noOutputExpected": False, "persistedOutputPath": "/p/tool-results/a.txt",
+        "persistedOutputSize": size,
+    })
+
+
+class TestBashCutOutput:
+    def test_persisted_output_replaces_the_cut(self):
+        full = "line\n" * 100000
+        result = format_cc_tool_result("Bash", _cut_bash(len(full)), False, full)
+        assert result == full.rstrip("\n")
+
+    def test_spill_file_shorter_than_reported_size_gets_note(self):
+        """Serve caps the spill file but reports the real size."""
+        result = format_cc_tool_result("Bash", _cut_bash(), False, "ab\n" * 10)
+        assert result.startswith("ab\n" * 9 + "ab\n[Output incomplete: only the first 30 of 1288895 bytes")
+
+    def test_non_ascii_spill_file_counted_in_bytes(self):
+        payload = json.dumps({"stdout": "", "persistedOutputPath": "/p", "persistedOutputSize": 4})
+        assert format_cc_tool_result("Bash", payload, False, "éé\n"[:2]) == "éé"
+
+    def test_unreadable_file_returns_cut_with_visible_note(self):
+        result = format_cc_tool_result("Bash", _cut_bash(), False, None)
+        assert result.startswith("x" * 30000 + "\n[Output incomplete")
+        assert "1288895 bytes" in result
+        assert "first 30000 characters" in result
+
+    def test_path_found_only_for_cut_bash_results(self):
+        assert persisted_output_path("Bash", _cut_bash(), False) == "/p/tool-results/a.txt"
+        assert persisted_output_path("Read", _cut_bash(), False) is None
+        assert persisted_output_path("Bash", _cut_bash(), True) is None
+        assert persisted_output_path("Bash", "not json", False) is None
+        assert persisted_output_path("Bash", "[1]", False) is None
+        assert persisted_output_path("Bash", json.dumps({"stdout": "a"}), False) is None
+
+    def test_cut_failed_command_gets_note(self):
+        """Failed runs are cut at 30k with no file; the cut is flagged."""
+        err = "Exit code 1\n" + "y" * 30000
+        result = format_cc_tool_result("Bash", err, True)
+        assert result.startswith(err + "\n[Output may be incomplete")
+
+    def test_short_failed_command_unchanged(self):
+        err = "Exit code 1\n" + "y" * 29999
         assert format_cc_tool_result("Bash", err, True) == err
 
 
