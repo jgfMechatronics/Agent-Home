@@ -60,6 +60,31 @@ class TestRead:
         assert format_cc_tool_result("Read", err, True) == err
 
 
+class TestReadTokenCap:
+    def _capped(self, flag=True) -> str:
+        return json.dumps({"type": "text", "file": {
+            "filePath": "/x/f.txt", "content": "a\nb\nc", "numLines": 3,
+            "startLine": 11, "totalLines": 99, "truncatedByTokenCap": flag}})
+
+    def test_note_after_content_header_unchanged(self):
+        lines = format_cc_tool_result("Read", self._capped(), False).split("\n")
+        assert lines[0] == "[/x/f.txt — lines 11-13 of 99]"
+        assert lines[1:4] == ["11\ta", "12\tb", "13\tc"]
+        assert lines[4] == (
+            "[File cut by the token cap after line 13. "
+            "Read the rest with offset=14 and a limit of at most 3 lines.]"
+        )
+        assert len(lines) == 5
+
+    def test_note_is_not_a_numbered_line(self):
+        note = format_cc_tool_result("Read", self._capped(), False).split("\n")[-1]
+        assert not note[:1].isdigit() and note.startswith("[")
+
+    def test_no_note_without_flag(self):
+        for text in (self._capped(False), _read_json("a\nb")):
+            assert "token cap" not in format_cc_tool_result("Read", text, False)
+
+
 class TestWrite:
     def test_create_message(self):
         payload = json.dumps({"type": "create", "filePath": "/x/new.md", "content": "",
