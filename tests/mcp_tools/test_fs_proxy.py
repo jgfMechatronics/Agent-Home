@@ -1,7 +1,15 @@
 """Tests for fs_proxy environment passthrough functionality."""
+import json
+from types import SimpleNamespace
+
 import pytest
 
-from mcp_tools.fs_proxy import _build_passthrough_env, create_fs_proxy
+from mcp_tools.fs_proxy import (
+    _build_passthrough_env,
+    _CCResultFormatMiddleware,
+    _read_persisted_output,
+    create_fs_proxy,
+)
 
 
 class TestBuildPassthroughEnv:
@@ -85,3 +93,46 @@ class TestCreateFsProxy:
         kwargs = mock_proxy.enable.call_args.kwargs
         assert kwargs["names"] == {"Read", "Edit", "Write", "Bash"}
         assert kwargs["only"] is True
+
+
+async def _run_bash_middleware(stdout_json: dict, is_error: bool = False) -> str:
+    content = SimpleNamespace(type="text", text=json.dumps(stdout_json))
+    result = SimpleNamespace(content=[content], is_error=is_error)
+
+    async def call_next(_context):
+        return result
+
+    context = SimpleNamespace(message=SimpleNamespace(name="Bash"))
+    await _CCResultFormatMiddleware().on_call_tool(context, call_next)
+    return content.text
+
+
+def _cut_payload(path, size: int) -> dict:
+    return {"stdout": "x" * 30000, "stderr": "", "interrupted": False,
+            "persistedOutputPath": str(path), "persistedOutputSize": size}
+
+
+class TestPersistedBashOutput:
+    """Large Bash output: serve cuts it and names a file holding the full text."""
+
+    async def test_full_output_read_from_file(self, tmp_path):
+        spill = tmp_path / "out.txt"
+        spill.write_text("row\n" * 150000)
+        text = await _run_bash_middleware(_cut_payload(spill, spill.stat().st_size))
+        assert text == ("row\n" * 150000).rstrip("\n")
+
+    async def test_missing_file_gives_cut_with_note(self, tmp_path):
+        text = await _run_bash_middleware(_cut_payload(tmp_path / "gone.txt", 600000))
+        assert text.startswith("x" * 30000)
+        assert "[Output incomplete" in text
+
+    async def test_non_utf8_file_does_not_crash(self, tmp_path):
+        spill = tmp_path / "bin.txt"
+        spill.write_bytes(b"ok \xff\xfe bytes\n")
+        text = await _run_bash_middleware(_cut_payload(spill, spill.stat().st_size))
+        assert text.startswith("ok ")
+        assert text.endswith(" bytes")
+
+    def test_read_failure_returns_none(self, tmp_path):
+        assert _read_persisted_output(str(tmp_path / "gone.txt")) is None
+        assert _read_persisted_output(str(tmp_path)) is None  # a directory
