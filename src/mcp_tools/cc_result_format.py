@@ -31,6 +31,15 @@ _EXIT_CODE_PREFIX = "Exit code "
 
 def persisted_output_path(tool_name: str, text: str, is_error: bool) -> str | None:
     """Path of the file holding the full output of a cut Bash result, if any."""
+    return _bash_file_path(tool_name, text, is_error, "persistedOutputPath")
+
+
+def background_output_path(tool_name: str, text: str, is_error: bool) -> str | None:
+    """Path of the output-so-far file of a timed-out (now backgrounded) Bash command."""
+    return _bash_file_path(tool_name, text, is_error, "backgroundOutputPath")
+
+
+def _bash_file_path(tool_name: str, text: str, is_error: bool, key: str) -> str | None:
     if tool_name != "Bash" or is_error:
         return None
     try:
@@ -39,7 +48,7 @@ def persisted_output_path(tool_name: str, text: str, is_error: bool) -> str | No
         return None
     if not isinstance(payload, dict):
         return None
-    path = payload.get("persistedOutputPath")
+    path = payload.get(key)
     return path if isinstance(path, str) and path else None
 
 
@@ -48,11 +57,13 @@ def format_cc_tool_result(
     text: str,
     is_error: bool,
     persisted_output: str | None = None,
+    background_output: str | None = None,
 ) -> str:
     """Dispatch a serve-mode tool result to its native-format string.
 
     `persisted_output` is the contents of the file at `persisted_output_path`,
-    or None if there was none or it couldn't be read.
+    or None if there was none or it couldn't be read. `background_output` is
+    the same for `background_output_path`.
     """
     if is_error:
         return _format_error(tool_name, text)
@@ -66,7 +77,7 @@ def format_cc_tool_result(
     if formatter is None:
         return text
     if tool_name == "Bash":
-        return _format_bash(payload, persisted_output)
+        return _format_bash(payload, persisted_output, background_output)
     return formatter(payload)
 
 
@@ -124,7 +135,11 @@ def _format_edit(payload: dict) -> str:
     return f"The file {file_path} has been updated successfully."
 
 
-def _format_bash(payload: dict, persisted_output: str | None = None) -> str:
+def _format_bash(
+    payload: dict,
+    persisted_output: str | None = None,
+    background_output: str | None = None,
+) -> str:
     """stdout then stderr as plain text, trailing newline trimmed.
 
     When serve cut the output (`persistedOutputPath` set), the file holds the
@@ -132,7 +147,13 @@ def _format_bash(payload: dict, persisted_output: str | None = None) -> str:
     replaces the cut. Without it the cut is returned with an explicit note.
     Empty combined output renders as the native no-output marker.
     Non-zero-exit failures arrive as isError text and never reach this function.
+
+    A timeout does not kill the command: serve moves it to a background task
+    (`timedOutAfterMs`, `backgroundOutputPath`) with stdout/stderr empty. The
+    result says so and carries the output so far.
     """
+    if "timedOutAfterMs" in payload:
+        return _format_bash_timeout(payload, background_output)
     combined = payload.get("stdout", "") + payload.get("stderr", "")
     if persisted_output is not None:
         combined = persisted_output.rstrip("\n")
@@ -156,6 +177,17 @@ def _format_bash(payload: dict, persisted_output: str | None = None) -> str:
         return combined.rstrip("\n") + "\n" + note
     combined = combined.rstrip("\n")
     return combined if combined else "(Bash completed with no output)"
+
+
+def _format_bash_timeout(payload: dict, background_output: str | None) -> str:
+    head = (
+        f"Command timed out after {payload['timedOutAfterMs']} ms and is still "
+        "running in the background."
+    )
+    if background_output is None:
+        return f"{head}\n[Output so far could not be retrieved.]"
+    output = background_output.rstrip("\n")
+    return f"{head} Output so far:\n{output}" if output else f"{head} No output so far."
 
 
 def _format_error(tool_name: str, text: str) -> str:

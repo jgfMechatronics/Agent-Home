@@ -7,7 +7,11 @@ import json
 
 import pytest
 
-from mcp_tools.cc_result_format import format_cc_tool_result, persisted_output_path
+from mcp_tools.cc_result_format import (
+    background_output_path,
+    format_cc_tool_result,
+    persisted_output_path,
+)
 
 
 def _read_json(content: str, start_line: int = 1) -> str:
@@ -217,6 +221,40 @@ class TestBashCutOutput:
     def test_short_failed_command_unchanged(self):
         err = "Exit code 1\n" + "y" * 29999
         assert format_cc_tool_result("Bash", err, True) == err
+
+
+def _timed_out(ms: int = 3000) -> str:
+    """Serve's result for a command that hit its timeout (CC 2.1.300)."""
+    return json.dumps({
+        "stdout": "", "stderr": "", "interrupted": False, "isImage": False,
+        "noOutputExpected": False, "backgroundTaskId": 9, "timedOutAfterMs": ms,
+        "backgroundOutputPath": "/t/tasks/a.output",
+    })
+
+
+class TestBashTimeout:
+    def test_reports_timeout_with_output_so_far(self):
+        result = format_cc_tool_result("Bash", _timed_out(), False, None, "1\n2\n3\n")
+        assert result == (
+            "Command timed out after 3000 ms and is still running in the background."
+            " Output so far:\n1\n2\n3"
+        )
+
+    def test_no_output_so_far(self):
+        result = format_cc_tool_result("Bash", _timed_out(), False, None, "")
+        assert result.endswith("background. No output so far.")
+
+    def test_unreadable_output_still_reports_timeout(self):
+        result = format_cc_tool_result("Bash", _timed_out(), False, None, None)
+        assert result.startswith("Command timed out after 3000 ms")
+        assert "[Output so far could not be retrieved.]" in result
+        assert "no output" not in result
+
+    def test_background_path(self):
+        assert background_output_path("Bash", _timed_out(), False) == "/t/tasks/a.output"
+        assert background_output_path("Read", _timed_out(), False) is None
+        assert background_output_path("Bash", _timed_out(), True) is None
+        assert background_output_path("Bash", json.dumps({"stdout": ""}), False) is None
 
 
 class TestPassThrough:

@@ -136,3 +136,21 @@ class TestPersistedBashOutput:
     def test_read_failure_returns_none(self, tmp_path):
         assert _read_persisted_output(str(tmp_path / "gone.txt")) is None
         assert _read_persisted_output(str(tmp_path)) is None  # a directory
+
+
+class TestTimedOutBash:
+    def _payload(self, path) -> dict:
+        return {"stdout": "", "stderr": "", "interrupted": False, "backgroundTaskId": 9,
+                "timedOutAfterMs": 3000, "backgroundOutputPath": str(path)}
+
+    async def test_output_so_far_read_from_file(self, tmp_path):
+        out = tmp_path / "t.output"
+        out.write_text("1\n2\n")
+        text = await _run_bash_middleware(self._payload(out))
+        assert text.startswith("Command timed out after 3000 ms")
+        assert text.endswith("Output so far:\n1\n2")
+
+    async def test_missing_file_still_reports_timeout(self, tmp_path):
+        text = await _run_bash_middleware(self._payload(tmp_path / "gone.output"))
+        assert text.startswith("Command timed out after 3000 ms")
+        assert "could not be retrieved" in text
