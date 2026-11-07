@@ -81,6 +81,10 @@ def _format_read(payload: dict) -> str:
 
     A file ending with a newline produces a final empty line (`<n>\\t`),
     matching native. Partial reads keep absolute numbering via `startLine`.
+
+    A read cut by serve's token cap (`truncatedByTokenCap`) gets a note after
+    the content. It opens with `[`, never `<n>\\t`, so it can't pass for a
+    numbered line; the header stays unchanged (the ACP bridge parses it).
     """
     file_info = payload.get("file", payload)
     if not isinstance(file_info, dict):
@@ -94,7 +98,14 @@ def _format_read(payload: dict) -> str:
     numbered = "\n".join(
         f"{start_line + i}\t{line}" for i, line in enumerate(content.split("\n"))
     )
-    return f"{header}\n{numbered}"
+    result = f"{header}\n{numbered}"
+    if file_info.get("truncatedByTokenCap"):
+        result += (
+            f"\n[File cut by the token cap after line {start_line + num_lines - 1}. "
+            f"Read the rest with offset={start_line + num_lines} and a limit of "
+            f"at most {num_lines} lines.]"
+        )
+    return result
 
 
 def _format_write(payload: dict) -> str:
