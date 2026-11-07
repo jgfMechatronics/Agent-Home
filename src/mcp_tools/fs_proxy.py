@@ -24,7 +24,11 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.transforms import ToolTransform
 from fastmcp.tools.tool_transform import ToolTransformConfig
 
-from mcp_tools.cc_result_format import format_cc_tool_result, persisted_output_path
+from mcp_tools.cc_result_format import (
+    background_output_path,
+    format_cc_tool_result,
+    persisted_output_path,
+)
 
 if TYPE_CHECKING:
     from fastmcp.server.providers.proxy import FastMCPProxy
@@ -74,7 +78,7 @@ async def _warmup_lifespan(server: "FastMCPProxy"):
 
 
 def _read_persisted_output(path: str) -> str | None:
-    """Full text of a persisted Bash output file, or None if it can't be read.
+    """Text of a Bash output file (persisted or background), or None if it can't be read.
 
     Any failure yields None: the formatter then returns the cut output with a
     visible incomplete-output note rather than an error.
@@ -97,7 +101,8 @@ class _CCResultFormatMiddleware(Middleware):
     Serve cuts large Bash output at 30k characters and spills the full text
     to a file on this container's filesystem; it is read here and handed to
     the formatter, which stays I/O-free. The agent-side ToolOutputLimits
-    capability then spills it like any other large tool result.
+    capability then spills it like any other large tool result. A timed-out
+    command's output-so-far file is read the same way.
     """
 
     async def on_call_tool(
@@ -113,11 +118,19 @@ class _CCResultFormatMiddleware(Middleware):
         ):
             text = content[0].text
             name = context.message.name
-            path = persisted_output_path(name, text, result.is_error)
+            persisted_path = persisted_output_path(name, text, result.is_error)
             persisted = (
-                await asyncio.to_thread(_read_persisted_output, path) if path else None
+                await asyncio.to_thread(_read_persisted_output, persisted_path)
+                if persisted_path else None
             )
-            formatted = format_cc_tool_result(name, text, result.is_error, persisted)
+            background_path = background_output_path(name, text, result.is_error)
+            background = (
+                await asyncio.to_thread(_read_persisted_output, background_path)
+                if background_path else None
+            )
+            formatted = format_cc_tool_result(
+                name, text, result.is_error, persisted, background
+            )
             if formatted != text:
                 content[0].text = formatted
         return result
