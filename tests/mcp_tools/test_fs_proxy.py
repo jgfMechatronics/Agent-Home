@@ -53,10 +53,25 @@ class TestCreateFsProxy:
         # Verify create_proxy was called with config containing our env
         mock_create_proxy.assert_called_once()
         config_arg = mock_create_proxy.call_args[0][0]
-        assert config_arg["mcpServers"]["claude-code"]["env"] == test_env
+        assert config_arg["mcpServers"]["claude-code"]["env"] == {
+            **test_env,
+            "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1",
+        }
 
-    def test_no_env_key_when_none(self, mocker):
-        """Verify env key is omitted from config when no env passed."""
+    def test_required_cwd_var_wins_over_caller_env(self, mocker):
+        """The required cwd-isolation value is set last, so a caller can't override it."""
+        mock_create_proxy = mocker.patch("mcp_tools.fs_proxy.create_proxy")
+        mock_create_proxy.return_value = mocker.MagicMock()
+
+        create_fs_proxy(env={"CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "0"})
+
+        config_arg = mock_create_proxy.call_args[0][0]
+        assert config_arg["mcpServers"]["claude-code"]["env"] == {
+            "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1"
+        }
+
+    def test_env_is_only_required_var_when_none(self, mocker):
+        """With no env passed, the env is exactly the required cwd-isolation var."""
         mock_create_proxy = mocker.patch("mcp_tools.fs_proxy.create_proxy")
         mock_proxy = mocker.MagicMock()
         mock_create_proxy.return_value = mock_proxy
@@ -65,7 +80,9 @@ class TestCreateFsProxy:
 
         mock_create_proxy.assert_called_once()
         config_arg = mock_create_proxy.call_args[0][0]
-        assert "env" not in config_arg["mcpServers"]["claude-code"]
+        assert config_arg["mcpServers"]["claude-code"]["env"] == {
+            "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1"
+        }
 
     def test_backend_is_claude_code_serve(self, mocker):
         """The proxied backend must be `claude mcp serve` — the pure tool server,
