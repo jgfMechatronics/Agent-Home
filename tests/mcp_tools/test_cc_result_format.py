@@ -187,6 +187,7 @@ class TestBashCutOutput:
         err = "Exit code 1\n" + "y" * 30000
         result = format_cc_tool_result("Bash", err, True)
         assert result.startswith(err + "\n[Output may be incomplete")
+        assert result.endswith("Re-run with output redirected to a file to see all of it.]")
 
     def test_short_failed_command_unchanged(self):
         err = "Exit code 1\n" + "y" * 29999

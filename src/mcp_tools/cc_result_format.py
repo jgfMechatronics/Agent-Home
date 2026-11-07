@@ -162,8 +162,9 @@ def _format_error(tool_name: str, text: str) -> str:
         _, _, output = text.partition("\n")
         if len(output) >= _BASH_OUTPUT_CAP:
             return (
-                f"{text}\n[Output may be incomplete: output of failed commands "
-                f"is cut at {_BASH_OUTPUT_CAP} characters and the rest is not available.]"
+                f"{text}\n[Output may be incomplete: output of failed commands is cut at "
+                f"{_BASH_OUTPUT_CAP} characters and the rest is not available. "
+                "Re-run with output redirected to a file to see all of it.]"
             )
     return text
 
