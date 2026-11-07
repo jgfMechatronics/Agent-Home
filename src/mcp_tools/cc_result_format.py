@@ -136,7 +136,7 @@ def _format_bash(payload: dict, persisted_output: str | None = None) -> str:
                 "were kept by Claude Code.]"
             )
         return combined
-    elif payload.get("persistedOutputPath"):
+    if payload.get("persistedOutputPath"):
         size = payload.get("persistedOutputSize", "unknown")
         note = (
             f"[Output incomplete: the full output ({size} bytes) could not be "
